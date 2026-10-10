@@ -24,6 +24,7 @@ enum CompanionTab: String, CaseIterable, Identifiable {
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     let diagnostics = CompanionDiagnostics()
+    let galaxyPage = GalaxyPageDiagnostics()
     @Published var showDiagnostics = false
     @Published var tab: CompanionTab = .connections
     private var phoneActive = false
@@ -239,7 +240,9 @@ struct GalaxyRootView: View {
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
             ZStack {
                 if model.opened, let url = server.url {
-                    GalaxyWebView(url: url, requestKey: server.localSecret)
+                    GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage) {
+                        model.galaxyPage.report(server: server, connection: model.transport.label)
+                    }
                         .opacity(model.tab == .galaxy ? 1 : 0)
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
@@ -343,6 +346,9 @@ struct GalaxyRootView: View {
                 }
                 Divider()
                 Text(assets.status).font(.caption).foregroundStyle(.secondary)
+                Button("Copy Galaxy error report") {
+                    UIPasteboard.general.string = model.galaxyPage.report(server: server, connection: model.transport.label)
+                }
                 Button("Check Galaxy updates") { Task { await assets.check() } }.disabled(assets.checking)
                 Text("Screens are saved on your iPhone. GitHub updates apply next time you open Galaxy, without interrupting your current screen.")
                     .font(.caption).foregroundStyle(.secondary)

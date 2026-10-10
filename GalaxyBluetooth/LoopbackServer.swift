@@ -8,6 +8,18 @@ import UniformTypeIdentifiers
 final class LoopbackServer: ObservableObject {
     @Published var url: URL?
     @Published var error = ""
+    private(set) var recentRequests: [String] = []
+    var diagnosticSummary: String {
+        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/index.html").path)
+        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/js/app.js").path)
+        return "Local server ready: \(url != nil)\nAsset source: \(webRoot.lastPathComponent == "Web" ? "bundled" : "saved update")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nLocal server error present: \(!error.isEmpty)"
+    }
+    static func reportPath(_ target: String) -> String {
+        let path = String(target.prefix(512)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
+        if path.hasPrefix("/assets/") { return String(path.prefix(200)) }
+        if path.hasPrefix("/api/") { return "/api/" + (path.split(separator: "/").dropFirst().first.map(String.init) ?? "") + "/…" }
+        return path == "/" ? "/" : "[other path]"
+    }
     let localSecret = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
     private var connections: [UUID: LocalConnection] = [:]
@@ -74,6 +86,14 @@ final class LoopbackServer: ObservableObject {
     }
 
     private func handle(_ request: LocalRequest) async -> LocalResponse {
+        let start = Date()
+        let response = await respond(request)
+        recentRequests.append("\(ISO8601DateFormatter().string(from: Date())) \(request.method) \(Self.reportPath(request.target)) → \(response.status), \(response.body.count) bytes, \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
+        if recentRequests.count > 60 { recentRequests.removeFirst(recentRequests.count - 60) }
+        return response
+    }
+
+    private func respond(_ request: LocalRequest) async -> LocalResponse {
         guard let base = url, let port = base.port, request.headers["host"] == "127.0.0.1:\(port)" else {
             return .error(403, "Invalid local host.")
         }
