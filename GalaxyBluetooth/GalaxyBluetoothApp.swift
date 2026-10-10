@@ -21,6 +21,18 @@ enum CompanionTab: String, CaseIterable, Identifiable {
     }
 }
 
+struct LegacyGalaxyStatus: Decodable {
+    let paired: Bool
+    let url: String
+    var browserURL: URL? {
+        guard let parsed = URL(string: url), parsed.scheme == "https",
+              parsed.host == "galaxy.firestar.link", parsed.port == nil,
+              parsed.user == nil, parsed.password == nil, parsed.query == nil, parsed.fragment == nil,
+              parsed.path.range(of: "^/[A-Za-z0-9]{16}$", options: .regularExpression) != nil else { return nil }
+        return parsed
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
@@ -60,6 +72,8 @@ final class AppModel: ObservableObject {
     @Published var opened = false
     @Published var connectionMessage = "Choose a connection, or use Automatic for Wi-Fi with Bluetooth fallback."
     @Published var wantsConnection = true
+    @Published var loadingLegacyURL = false
+    @Published var legacyMessage = ""
     let bluetooth: BluetoothTransport
     let lan: LANTransport
     let transport: PreferredTransport
@@ -153,6 +167,39 @@ final class AppModel: ObservableObject {
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
         connectionMessage = "Disconnected."
     }
+    func fetchLegacyURL() async -> URL? {
+        guard !loadingLegacyURL else { return nil }
+        legacyMessage = ""
+        guard wantsConnection, transport.connected else {
+            legacyMessage = "Connect to your comma first to get its Galaxy link."
+            return nil
+        }
+        loadingLegacyURL = true
+        defer { loadingLegacyURL = false }
+        let lanSession = lan.generation
+        let bluetoothSession = bluetooth.sessionIdentifier
+        do {
+            let response = try await transport.request(path: "/api/galaxy/status", method: "GET", headers: [:], body: Data())
+            guard wantsConnection, transport.connected, lan.generation == lanSession,
+                  bluetooth.sessionIdentifier == bluetoothSession else {
+                throw BridgeError.message("Connection changed. Try opening legacy Galaxy again.")
+            }
+            guard response.status == 200 else {
+                throw BridgeError.message("Couldn’t get your comma’s Galaxy link (HTTP \(response.status)).")
+            }
+            let status = try JSONDecoder().decode(LegacyGalaxyStatus.self, from: response.bodyData)
+            guard status.paired else {
+                throw BridgeError.message("Set up legacy Galaxy pairing on your comma first. Bluetooth pairing is separate.")
+            }
+            guard let url = status.browserURL else {
+                throw BridgeError.message("Your comma hasn’t provided a valid Galaxy link. Check its legacy Galaxy pairing.")
+            }
+            return url
+        } catch {
+            legacyMessage = (error as? BridgeError)?.localizedDescription ?? "Couldn’t get your comma’s Galaxy link. Check the connection and try again."
+            return nil
+        }
+    }
     private func learnAddress() async {
         guard bluetooth.connected, Date().timeIntervalSince(lastAddressCheck) >= 20 || addressCheckSession != bluetooth.sessionIdentifier else { return }
         lastAddressCheck = Date()
@@ -217,6 +264,7 @@ struct GalaxyRootView: View {
     @ObservedObject var lan: LANTransport
     @ObservedObject var assets: GalaxyAssetStore
     @ObservedObject var server: LoopbackServer
+    @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
         self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server
@@ -375,11 +423,22 @@ struct GalaxyRootView: View {
                 }
                 Divider()
                 Text("Legacy connection").font(.headline)
-                Link(destination: URL(string: "https://galaxy.firestar.link")!) {
-                    Label("Open legacy Galaxy", systemImage: "safari")
-                }.buttonStyle(.bordered)
-                Text("Opens Galaxy in your default browser.")
+                Button {
+                    Task {
+                        if let url = await model.fetchLegacyURL() {
+                            openURL(url) { accepted in
+                                if !accepted { model.legacyMessage = "Couldn’t open your browser. Try again." }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(model.loadingLegacyURL ? "Getting Galaxy link…" : "Open legacy Galaxy", systemImage: "safari")
+                }.buttonStyle(.bordered).disabled(model.loadingLegacyURL)
+                Text("Gets this comma’s unique Galaxy link and opens it in your default browser.")
                     .font(.caption).foregroundStyle(.secondary)
+                if !model.legacyMessage.isEmpty {
+                    Text(model.legacyMessage).font(.caption).foregroundStyle(.secondary)
+                }
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }.background(Color.black).tint(brandPurple)
