@@ -14,6 +14,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     @Published var devices: [NearbyDevice] = []
     @Published var status = "Turn on Bluetooth, then scan for your comma."
     @Published var isScanning = false
+    var onEvent: ((String) -> Void)?
     @Published var connected = false
     @Published var connecting = false
 
@@ -108,6 +109,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         found.delegate = self
         connecting = true
         status = "Connecting to \(device.name)…"
+        onEvent?("Starting Bluetooth connection")
         central.connect(found, options: nil)
         connectionTimeout = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 20_000_000_000)
@@ -116,7 +118,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
     }
 
-    func disconnect() {
+    func disconnect(reason: String = "Bluetooth connection closed") {
+        let wasConnected = connected
         central.stopScan()
         scanTimeout?.cancel()
         connectionTimeout?.cancel()
@@ -138,10 +141,14 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         activeNotifications = false
         pairingVerified = false
         notificationBuffer = []
+        if wasConnected { onEvent?(reason) }
     }
 
     private func failConnection(_ message: String) {
-        disconnect()
+        let lower = message.lowercased()
+        let reason = lower.contains("timed out") ? "Bluetooth connection timed out" : lower.contains("pairing") ? "Bluetooth pairing or authentication failed" : lower.contains("encrypt") ? "Bluetooth encrypted response failed" : "Bluetooth connection failed"
+        disconnect(reason: reason)
+        onEvent?(reason)
         status = message
     }
 
@@ -281,7 +288,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         guard peripheral == self.peripheral else { return }
-        failConnection(error?.localizedDescription ?? "Your comma disconnected. Scan to reconnect.")
+        disconnect(reason: "Bluetooth peer disconnected: \(error.map { LANTransport.failureCode($0) } ?? "no OS error supplied")")
+        status = error?.localizedDescription ?? "Your comma disconnected. Scan to reconnect."
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -401,6 +409,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         connected = true
         connecting = false
         status = supportsNotifications ? "Connected with fast Bluetooth transfers" : "Connected over Bluetooth"
+        onEvent?("Bluetooth encrypted handshake completed")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {

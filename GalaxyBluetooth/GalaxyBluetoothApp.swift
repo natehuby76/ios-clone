@@ -8,13 +8,14 @@ struct GalaxyBluetoothApp: App {
 }
 
 enum CompanionTab: String, CaseIterable, Identifiable {
-    case galaxy = "Galaxy", live = "Live View", diagnostics = "Diagnostics", connections = "Settings"
+    case galaxy = "Galaxy", live = "Live View", diagnostics = "Diagnostics", logs = "Dev / Logs", connections = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .galaxy: "sparkles"
         case .live: "play.rectangle"
         case .diagnostics: "chart.xyaxis.line"
+        case .logs: "ladybug"
         case .connections: "gearshape.fill"
         }
     }
@@ -25,6 +26,8 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
     let diagnostics = CompanionDiagnostics()
     let galaxyPage = GalaxyPageDiagnostics()
+    let connectionLog = ConnectionEventLog()
+    private var lastRoute = "Reconnecting…"
     @Published var showDiagnostics = false
     @Published var tab: CompanionTab = .connections
     private var phoneActive = false
@@ -48,7 +51,8 @@ final class AppModel: ObservableObject {
             transport.mode = mode
             UserDefaults.standard.set(mode.rawValue, forKey: "galaxy.connection.mode")
             if mode == .lan { bluetooth.disconnect() }
-            if mode == .bluetooth { lan.invalidate() }
+            if mode == .bluetooth { lan.invalidate(reason: "Bluetooth-only mode selected") }
+            logConnection("Connection mode selected: \(mode.title)")
         }
     }
     @Published var showConnections = false
@@ -87,7 +91,7 @@ final class AppModel: ObservableObject {
     init() {
         let bluetooth = BluetoothTransport()
         let lan = LANTransport()
-        let transport = PreferredTransport(lan: lan, bluetooth: bluetooth, invalidateLAN: { lan.invalidate() })
+        let transport = PreferredTransport(lan: lan, bluetooth: bluetooth, invalidateLAN: { lan.invalidate(reason: $0) })
         let assets = GalaxyAssetStore()
         self.bluetooth = bluetooth; self.lan = lan; self.transport = transport; self.assets = assets
         let cache = GalaxyReadCache(transport: transport, sessionID: {
@@ -100,16 +104,28 @@ final class AppModel: ObservableObject {
         }
         diagnostics.transport = transport; diagnostics.lan = lan
         server.start()
-        pathMonitor.pathUpdateHandler = { [weak self] _ in
+        lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
+        bluetooth.onEvent = { [weak self] reason in self?.logConnection(reason) }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in
                 guard let self else { return }
-                self.lan.invalidate()
+                let route = path.usesInterfaceType(.wifi) ? "Wi-Fi" : path.usesInterfaceType(.cellular) ? "cellular" : "other"
+                let reason = "iOS network path updated: \(path.status == .satisfied ? "available" : "unavailable"), \(route), expensive=\(path.isExpensive), constrained=\(path.isConstrained)"
+                self.connectionLog.record(reason)
+                self.lan.invalidate(reason: reason)
                 self.lastAddressCheck = .distantPast
             }
         }
         pathMonitor.start(queue: .main)
     }
     deinit { pathMonitor.cancel() }
+    private func logConnection(_ reason: String) {
+        let route = transport.label
+        if route != lastRoute {
+            connectionLog.record("\(lastRoute) → \(route): \(reason)")
+            lastRoute = route
+        } else { connectionLog.record("\(route): \(reason)") }
+    }
     func connect() {
         do {
             if mode != .bluetooth, !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -134,7 +150,7 @@ final class AppModel: ObservableObject {
     }
     func disconnect() {
         wantsConnection = false; opened = false
-        bluetooth.disconnect(); lan.invalidate()
+        bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
         connectionMessage = "Disconnected."
     }
     private func learnAddress() async {
@@ -186,6 +202,7 @@ final class AppModel: ObservableObject {
                     }
                     _ = await lan.probe()
                 }
+                if transport.label != lastRoute { logConnection("Connection availability changed") }
                 if transport.connected { openIfReady(); connectionMessage = "Connected over \(transport.label)." }
                 else { connectionMessage = "Wi-Fi unavailable. Pair over Bluetooth below, or check your comma’s IP address." }
             }
@@ -247,7 +264,9 @@ struct GalaxyRootView: View {
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
                 }
-                if model.tab == .live || model.tab == .diagnostics {
+                if model.tab == .logs {
+                    DeveloperLogsView(model: model, log: model.connectionLog)
+                } else if model.tab == .live || model.tab == .diagnostics {
                     CompanionView(diagnostics: model.diagnostics)
                 } else if model.tab == .connections || !model.opened {
                     connectionView
@@ -346,9 +365,7 @@ struct GalaxyRootView: View {
                 }
                 Divider()
                 Text(assets.status).font(.caption).foregroundStyle(.secondary)
-                Button("Copy Galaxy error report") {
-                    UIPasteboard.general.string = model.galaxyPage.report(server: server, connection: model.transport.label)
-                }
+                Button("Open Dev / Logs") { select(.logs) }
                 Button("Check Galaxy updates") { Task { await assets.check() } }.disabled(assets.checking)
                 Text("Screens are saved on your iPhone. GitHub updates apply next time you open Galaxy, without interrupting your current screen.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -359,5 +376,78 @@ struct GalaxyRootView: View {
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }.background(Color.black).tint(brandPurple)
+    }
+}
+
+@MainActor
+final class ConnectionEventLog: ObservableObject {
+    @Published private(set) var events: [String] = []
+    @Published var section = "Connections"
+    @Published var detail = ""
+    @Published var copied = false
+    private var lastEvent = ""
+    func record(_ event: String) {
+        guard event != lastEvent else { return }
+        lastEvent = event
+        events.append("\(ISO8601DateFormatter().string(from: Date())) \(event.prefix(300))")
+        if events.count > 100 { events.removeFirst(events.count - 100) }
+    }
+    func clear() { events.removeAll(); lastEvent = ""; detail = ""; copied = false }
+    func report(model: AppModel) -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return """
+        StarPilot connection diagnostics
+        \(ISO8601DateFormatter().string(from: Date()))
+        App: \(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))
+        iOS: \(UIDevice.current.systemVersion)
+        Mode: \(model.mode.title)
+        Selected route: \(model.transport.label)
+        LAN verified: \(model.lan.connected)
+        Bluetooth verified: \(model.bluetooth.connected)
+        Recent connection events:
+        \(events.joined(separator: "\n"))
+        """
+    }
+}
+
+private struct DeveloperLogsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var log: ConnectionEventLog
+    private func selectedReport() -> String {
+        switch log.section {
+        case "Galaxy": return model.galaxyPage.report(server: model.server, connection: model.transport.label)
+        case "Live View": return model.diagnostics.diagnosticLog()
+        default: return log.report(model: model)
+        }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Dev / Logs").font(.title2.bold())
+                Text("Recent events stay in memory. Reports are shared only when you copy them.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Picker("Report", selection: $log.section) {
+                    ForEach(["Connections", "Galaxy", "Live View"], id: \.self) { Text($0).tag($0) }
+                }.pickerStyle(.segmented)
+                HStack {
+                    Button(log.copied ? "Copied" : "Copy report", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = selectedReport(); log.copied = true
+                    }.buttonStyle(.borderedProminent).tint(.purple)
+                    Button("Refresh") { log.detail = selectedReport(); log.copied = false }.buttonStyle(.bordered)
+                }
+                Button("Copy all reports") {
+                    UIPasteboard.general.string = [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog()].joined(separator: "\n\n")
+                    log.copied = true
+                }
+                Text(log.section == "Connections" ? log.report(model: model) : log.detail)
+                    .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                Button("Clear connection history") { log.clear(); log.detail = selectedReport() }
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(20)
+        }.background(Color.black)
+            .onAppear { log.detail = selectedReport() }
+            .onChange(of: log.section) { _, _ in log.detail = selectedReport(); log.copied = false }
     }
 }

@@ -69,6 +69,7 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 final class LANTransport: ObservableObject, GalaxyRequestTransport {
     @Published private(set) var connected = false
     @Published private(set) var status = "Local connection not checked yet."
+    var onEvent: ((String) -> Void)?
     private(set) var endpoint: URL?
     private(set) var generation = UUID().uuidString
     private(set) var expectedDeviceID: String?
@@ -87,7 +88,7 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     }
     func configure(address: String) throws {
         let new = try Self.endpoint(address)
-        if endpoint != new { endpoint = new; invalidate() }
+        if endpoint != new { endpoint = new; invalidate(reason: "Comma LAN address changed") }
     }
     static func reportedAddress(_ data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -100,10 +101,13 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         return value
     }
     func bind(to identity: String?) {
-        if expectedDeviceID != identity { expectedDeviceID = identity; invalidate() }
+        if expectedDeviceID != identity { expectedDeviceID = identity; invalidate(reason: "Paired comma identity changed") }
     }
-    func clearEndpoint() { endpoint = nil; invalidate() }
-    func invalidate() { connected = false; generation = UUID().uuidString }
+    func clearEndpoint() { endpoint = nil; invalidate(reason: "Saved LAN endpoint cleared") }
+    func invalidate(reason: String = "LAN verification reset") {
+        connected = false; generation = UUID().uuidString
+        onEvent?(reason)
+    }
     func probe() async -> Bool {
         guard let endpoint else { return false }
         var request = URLRequest(url: endpoint.appendingPathComponent("api/device/status"))
@@ -122,10 +126,33 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
                 available = identityResponse.statusCode == 200 && Self.deviceID(identity) == expectedDeviceID
             }
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
+            let changed = connected != available
             connected = available
             status = available ? "Local comma verified." : "Local endpoint unavailable or does not match the paired comma."
-        } catch { if !Task.isCancelled, expectedGeneration == generation { status = error.localizedDescription; invalidate() } }
+            if changed { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: HTTP \(response.statusCode), unavailable status or identity mismatch") }
+        } catch {
+            if !Task.isCancelled, expectedGeneration == generation {
+                status = error.localizedDescription
+                invalidate(reason: "LAN probe failed: \(Self.failureCode(error))")
+            }
+        }
         return connected
+    }
+    static func failureCode(_ error: Error) -> String {
+        let value = error as NSError
+        if let url = error as? URLError {
+            let name: String
+            switch url.code {
+            case .timedOut: name = "timeout"
+            case .networkConnectionLost: name = "connection lost"
+            case .notConnectedToInternet: name = "no network route"
+            case .cannotConnectToHost: name = "cannot reach comma"
+            case .cancelled: name = "cancelled"
+            default: name = "network error"
+            }
+            return "\(name) (\(value.domain) \(value.code))"
+        }
+        return "\(value.domain) \(value.code)"
     }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         guard connected, let endpoint else { throw URLError(.notConnectedToInternet) }
@@ -170,13 +197,13 @@ enum ConnectionMode: String, CaseIterable, Identifiable {
 final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
     let lan: any GalaxyRequestTransport
     let bluetooth: any GalaxyRequestTransport
-    var invalidateLAN: () -> Void
+    var invalidateLAN: (String) -> Void
     @Published var mode: ConnectionMode = .automatic
     var connected: Bool { (mode != .bluetooth && lan.connected) || (mode != .lan && bluetooth.connected) }
     var usesLAN: Bool { mode != .bluetooth && lan.connected }
     var label: String { usesLAN ? "Wi-Fi" : bluetooth.connected && mode != .lan ? "Bluetooth" : "Reconnecting…" }
     var catalogSHA256: String? { usesLAN ? lan.catalogSHA256 : bluetooth.catalogSHA256 }
-    init(lan: any GalaxyRequestTransport, bluetooth: any GalaxyRequestTransport, invalidateLAN: @escaping () -> Void) {
+    init(lan: any GalaxyRequestTransport, bluetooth: any GalaxyRequestTransport, invalidateLAN: @escaping (String) -> Void) {
         self.lan = lan; self.bluetooth = bluetooth; self.invalidateLAN = invalidateLAN
     }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
@@ -186,7 +213,7 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
             catch {
                 try Task.checkCancellation()
                 guard error is URLError else { throw error }
-                invalidateLAN()
+                invalidateLAN("LAN request failed: \(LANTransport.failureCode(error))")
                 // Retry reads only; never replay a setting change.
                 if !["GET", "HEAD"].contains(method) {
                     throw BridgeError.message("Wi-Fi disconnected. This change may have saved; reload the setting to confirm before trying again.")
