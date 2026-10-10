@@ -24,6 +24,7 @@
 		BC3706D8A74BDB5B0AA8063E /* PairingKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A1199899003FF3F5F30831 /* PairingKeyStore.swift */; };
 		DE64BADD40C934E610D4D505 /* GalaxyWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF41C7E4AB86DEB71B85E4F6 /* GalaxyWebView.swift */; };
 		FACE00000000000000000001 /* PairingScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACE00000000000000000002 /* PairingScanner.swift */; };
+		D15C00000000000000000001 /* LANDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C00000000000000000002 /* LANDiscovery.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +47,7 @@
 		F3032D4A3D2E5EE30499DF81 /* LiveStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveStream.swift; sourceTree = "<group>"; };
 		F48B8D06AA8D8C4AC21E5982 /* Wire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Wire.swift; sourceTree = "<group>"; };
 		FACE00000000000000000002 /* PairingScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingScanner.swift; sourceTree = "<group>"; };
+		D15C00000000000000000002 /* LANDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANDiscovery.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +72,7 @@
 		9E61AFF607A3704A97803240 /* GalaxyBluetooth */ = {
 			isa = PBXGroup;
 			children = (
+				D15C00000000000000000002 /* LANDiscovery.swift */,
 				114E3D37646B3A8626A8A232 /* NetworkTransport.swift */,
 				D3BBE1488FD8A83E3983FEDE /* GalaxyAssetStore.swift */,
 				5492C1BC71EB8D0DBF12896E /* PrivateLANHTTP.swift */,
@@ -163,6 +166,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D15C00000000000000000001 /* LANDiscovery.swift in Sources */,
 				754B6F8C853BDD47D7593948 /* NetworkTransport.swift in Sources */,
 				B2DE76B1CE686BDFB635FAAE /* GalaxyAssetStore.swift in Sources */,
 				887D84D1E3F00F0A5A8AD090 /* PrivateLANHTTP.swift in Sources */,

@@ -39,13 +39,15 @@ final class AppModel: ObservableObject {
     let diagnostics = CompanionDiagnostics()
     let galaxyPage = GalaxyPageDiagnostics()
     let connectionLog = ConnectionEventLog()
+    let discovery = LANDiscovery()
+    @Published var selectingDiscoveredComma = false
     private var lastRoute = "Reconnecting…"
     @Published var showDiagnostics = false
     @Published var tab: CompanionTab = .connections
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
-    func setPhoneActive(_ active: Bool) { phoneActive = active; diagnostics.phoneActive = active; updateMonitoring() }
+    func setPhoneActive(_ active: Bool) { phoneActive = active; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
     func setCarPlayActive(_ active: Bool) { carPlayActive = active; diagnostics.carPlayActive = active; updateMonitoring() }
     private func updateMonitoring() {
         if phoneActive || carPlayActive {
@@ -63,7 +65,7 @@ final class AppModel: ObservableObject {
             transport.mode = mode
             UserDefaults.standard.set(mode.rawValue, forKey: "galaxy.connection.mode")
             if mode == .lan { bluetooth.disconnect() }
-            if mode == .bluetooth { lan.invalidate(reason: "Bluetooth-only mode selected") }
+            if mode == .bluetooth { discovery.stop(); lan.invalidate(reason: "Bluetooth-only mode selected") }
             logConnection("Connection mode selected: \(mode.title)")
         }
     }
@@ -118,6 +120,7 @@ final class AppModel: ObservableObject {
         }
         diagnostics.transport = transport; diagnostics.lan = lan
         server.start()
+        discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
         bluetooth.onEvent = { [weak self] reason in self?.logConnection(reason) }
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -163,9 +166,38 @@ final class AppModel: ObservableObject {
         if tab == .connections { tab = .galaxy }
     }
     func disconnect() {
+        discovery.stop()
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
         connectionMessage = "Disconnected."
+    }
+    func selectDiscoveredComma(_ device: DiscoveredComma) async {
+        guard !selectingDiscoveredComma, mode != .bluetooth else { return }
+        discovery.stop()
+        selectingDiscoveredComma = true
+        defer { selectingDiscoveredComma = false }
+        // Advertised names and addresses are discovery hints, not pairing credentials.
+        let candidate = LANTransport()
+        candidate.bind(to: lan.expectedDeviceID)
+        let originalGeneration = lan.generation
+        let originalMode = mode
+        do {
+            try candidate.configure(address: device.address)
+            guard await candidate.probe() else {
+                connectionMessage = "Found a device, but Galaxy is unavailable or it doesn’t match your paired comma."
+                connectionLog.record("Discovered comma rejected by LAN verification")
+                return
+            }
+            guard lan.generation == originalGeneration, mode == originalMode, phoneActive else {
+                connectionMessage = "Connection changed. Select the comma again."
+                return
+            }
+            address = device.address
+            connect()
+            connectionLog.record("User selected a discovered comma; LAN verification passed")
+        } catch {
+            connectionMessage = "Couldn’t connect to the discovered comma. Try again or enter its IP."
+        }
     }
     func fetchLegacyURL() async -> URL? {
         guard !loadingLegacyURL else { return nil }
@@ -264,10 +296,11 @@ struct GalaxyRootView: View {
     @ObservedObject var lan: LANTransport
     @ObservedObject var assets: GalaxyAssetStore
     @ObservedObject var server: LoopbackServer
+    @ObservedObject var discovery: LANDiscovery
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
-        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server
+        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -336,6 +369,7 @@ struct GalaxyRootView: View {
         }
     }
     private func select(_ tab: CompanionTab) {
+        if tab != .connections { discovery.stop() }
         model.tab = tab
         model.diagnostics.live = tab == .live
     }
@@ -360,6 +394,24 @@ struct GalaxyRootView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text(model.networkDetails).font(.caption).foregroundStyle(.secondary)
                 if model.mode != .bluetooth {
+                    HStack {
+                        Button(discovery.searching ? "Searching Wi-Fi…" : "Find comma on Wi-Fi") { discovery.start() }
+                            .buttonStyle(.bordered).disabled(discovery.searching || model.selectingDiscoveredComma)
+                        if discovery.searching { Button("Stop") { discovery.stop() }.font(.caption) }
+                    }
+                    Text(discovery.status).font(.caption).foregroundStyle(.secondary)
+                    ForEach(discovery.devices) { device in
+                        Button { Task { await model.selectDiscoveredComma(device) } } label: {
+                            HStack {
+                                Image(systemName: "wifi")
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(device.name).font(.headline)
+                                    Text(device.address).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(); Image(systemName: "chevron.right")
+                            }.padding(14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                        }.buttonStyle(.plain).disabled(model.selectingDiscoveredComma)
+                    }
                     Toggle("Find comma’s address over Bluetooth", isOn: $model.findAddressAutomatically)
                     Text("Comma IP address").font(.headline)
                     TextField("192.168.10.85", text: $model.address)

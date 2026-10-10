@@ -13,7 +13,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.4</string>
+	<string>0.1.5</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -35,6 +35,10 @@
 	<string>Connect directly to your comma's Galaxy Bluetooth bridge.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan the pairing code displayed on your comma to connect the Galaxy app over Bluetooth.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_starpilot-galaxy._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to Galaxy on your comma over your local Wi-Fi network.</string>
 	<key>UIApplicationSceneManifest</key>
