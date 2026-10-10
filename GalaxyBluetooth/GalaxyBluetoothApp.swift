@@ -373,6 +373,13 @@ struct GalaxyRootView: View {
                     Button("Back to Galaxy") { select(.galaxy) }
                     Button("Disconnect") { model.disconnect(); select(.connections) }
                 }
+                Divider()
+                Text("Legacy connection").font(.headline)
+                Link(destination: URL(string: "https://galaxy.firestar.link")!) {
+                    Label("Open legacy Galaxy", systemImage: "safari")
+                }.buttonStyle(.bordered)
+                Text("Opens Galaxy in your default browser.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }.background(Color.black).tint(brandPurple)
