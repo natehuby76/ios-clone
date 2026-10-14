@@ -17,3 +17,6 @@ swiftc -swift-version 5 -parse-as-library "$test_dir/NavigationProbe.swift" -o "
 python3 tests/extract_bluetooth_reads.py "$test_dir/BluetoothReadProbe.swift"
 swiftc -swift-version 5 -parse-as-library "$test_dir/BluetoothReadProbe.swift" -o "$test_dir/bluetooth-read-tests"
 "$test_dir/bluetooth-read-tests"
+
+swiftc -swift-version 5 -parse-as-library GalaxyBluetooth/GalaxyRequestTransport.swift tests/GalaxyReadCacheRegression.swift -o "$test_dir/read-cache-tests"
+"$test_dir/read-cache-tests"

@@ -76,6 +76,9 @@ final class GalaxyReadCache: GalaxyRequestTransport {
         let readSession = session
         defer { if pending[cacheKey]?.0 == token { pending.removeValue(forKey: cacheKey) } }
         let response = try await task.value
+        guard readGeneration == generation, readSession == sessionID(), connected else {
+            throw BridgeError.message("Connection or saved settings changed during this read. Load the page again.")
+        }
         if metadata, response.status == 200, response.bodyData.count <= Wire.maxBody,
            readGeneration == generation, readSession == sessionID(), connected {
             if entries.count >= 16 { entries.removeAll() }

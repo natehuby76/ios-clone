@@ -13,6 +13,7 @@ def method(path, name):
     return source[start:end]
 
 methods = method("GalaxyBluetooth/BluetoothTransport.swift", "useNotifications") + "\n" + method("GalaxyBluetooth/LoopbackServer.swift", "adaptNativeAsset")
+methods += "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "backgroundRead") + "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "nextRequestIndex")
 tests = r'''
 @main struct BluetoothReadRegression {
     static func main() {
@@ -22,6 +23,11 @@ tests = r'''
         precondition(Probe.useNotifications(method: "PUT", path: "/api/params", supported: true))
         precondition(!Probe.useNotifications(method: "PUT", path: "/api/params", supported: false))
         precondition(!Probe.useNotifications(method: "GET", path: "/_bridge/health", supported: true))
+        precondition(Probe.nextRequestIndex(methods: ["GET", "GET"], paths: ["/api/stats", "/api/params/all"], priorityStreak: 0) == 1)
+        precondition(Probe.nextRequestIndex(methods: ["GET", "PUT", "GET"], paths: ["/api/stats", "/api/params", "/api/params/all"], priorityStreak: 0) == 0)
+        precondition(Probe.nextRequestIndex(methods: ["GET", "GET"], paths: ["/api/stats", "/api/params/all"], priorityStreak: 3) == 0)
+        precondition(Probe.nextRequestIndex(methods: ["PUT", "GET"], paths: ["/api/params", "/api/params/all"], priorityStreak: 0) == 0)
+        precondition(Probe.backgroundRead("/api/device/status?refresh=1"))
         let source = "api.getParams(); if (this.busy || !this.ready || this.contextPending) return; api.updateParam({key: 'IsMetric', value: true})"
         let bytes = Data(source.utf8)
         let adapted = String(data: Probe.adaptNativeAsset(bytes, path: "assets/mobile/js/components/PersonalityProfiles.js"), encoding: .utf8)!
