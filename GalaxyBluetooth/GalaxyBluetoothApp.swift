@@ -319,7 +319,7 @@ struct GalaxyRootView: View {
                         Circle().fill(model.transport.connected ? Color.green : Color.orange).frame(width: 6, height: 6)
                         Text(model.transport.label).font(.caption.weight(.medium))
                     }.padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(.white.opacity(0.07), in: Capsule())
+                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
                 }
                 HStack(spacing: 4) {
                     ForEach(CompanionTab.allCases.filter { $0 != .connections }) { tab in
@@ -329,19 +329,19 @@ struct GalaxyRootView: View {
                                 Text(tab.rawValue).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
                             }.frame(maxWidth: .infinity).padding(.vertical, 10)
                                 .foregroundStyle(model.tab == tab ? Color.white : Color.secondary)
-                                .background(model.tab == tab ? brandPurple.opacity(0.3) : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+                                .background(model.tab == tab ? brandPurple : Color.clear, in: RoundedRectangle(cornerRadius: 12))
                         }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
                     }
                     Button { select(.connections) } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "gearshape.fill").font(.system(size: 17, weight: .semibold))
                                 .frame(width: 36, height: 36)
-                                .background(model.tab == .connections ? brandPurple.opacity(0.4) : Color.white.opacity(0.08), in: Circle())
+                                .background(model.tab == .connections ? brandPurple : Color(uiColor: .tertiarySystemBackground), in: Circle())
                             Text("Settings").font(.system(size: 10, weight: .semibold))
                         }.frame(width: 60).padding(.vertical, 4)
                             .foregroundStyle(model.tab == .connections ? Color.white : Color.secondary)
                     }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
-                }.padding(4).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+                }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
             ZStack {
                 if model.opened, let url = server.url {
@@ -362,8 +362,7 @@ struct GalaxyRootView: View {
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color.black)
-        .preferredColorScheme(.dark)
+        .background(Color(uiColor: .systemBackground))
         .onChange(of: model.showConnections) { _, show in
             if show { select(.connections); model.showConnections = false }
         }
@@ -417,14 +416,14 @@ struct GalaxyRootView: View {
                                     Text(device.address).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(); Image(systemName: "chevron.right")
-                            }.padding(14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                            }.padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                         }.buttonStyle(.plain).disabled(model.selectingDiscoveredComma)
                     }
                     Toggle("Find comma’s address over Bluetooth", isOn: $model.findAddressAutomatically)
                     Text("Comma IP address").font(.headline)
                     TextField("192.168.10.85", text: $model.address)
                         .keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .padding(14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                     Text(lan.status).font(.caption).foregroundStyle(.secondary)
                 }
                 Button { model.connect(); if model.opened { select(.galaxy) } } label: {
@@ -444,7 +443,7 @@ struct GalaxyRootView: View {
                     SecureField("64-character pairing key", text: $model.pairingKey)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(.body, design: .monospaced))
-                        .padding(14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                     Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
                         .buttonStyle(.bordered).disabled(bluetooth.isScanning || bluetooth.connecting)
                     Text(bluetooth.status).font(.subheadline).foregroundStyle(.secondary)
@@ -462,7 +461,7 @@ struct GalaxyRootView: View {
                             HStack {
                                 Image(systemName: "car.side.fill"); Text(device.name).font(.headline)
                                 Spacer(); Image(systemName: "chevron.right")
-                            }.padding(16).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                            }.padding(16).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                         }.buttonStyle(.plain).disabled(bluetooth.connecting)
                     }
                     if bluetooth.connecting { Button("Cancel Bluetooth connection") { bluetooth.disconnect() } }
@@ -501,7 +500,7 @@ struct GalaxyRootView: View {
                 }
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
-        }.background(Color.black).tint(brandPurple)
+        }.background(Color(uiColor: .systemBackground)).tint(brandPurple)
     }
 }
 
@@ -568,11 +567,11 @@ private struct DeveloperLogsView: View {
                 Text(log.section == "Connections" ? log.report(model: model) : log.detail)
                     .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                 Button("Clear connection history") { log.clear(); log.detail = selectedReport() }
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(20)
-        }.background(Color.black)
+        }.background(Color(uiColor: .systemBackground))
             .onAppear { log.detail = selectedReport() }
             .onChange(of: log.section) { _, _ in log.detail = selectedReport(); log.copied = false }
     }

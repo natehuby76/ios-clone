@@ -146,6 +146,14 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          const phoneAppearance = window.matchMedia('(prefers-color-scheme: dark)');
+          const syncTheme = () => {
+            import('/assets/mobile/js/store.js')
+              .then(module => module.setTheme(phoneAppearance.matches ? 'dark' : 'light'))
+              .catch(() => {});
+          };
+          phoneAppearance.addEventListener('change', syncTheme);
+          window.addEventListener('DOMContentLoaded', syncTheme, {once: true});
           let nativeVisible = \(isActive ? "true" : "false");
           Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => nativeVisible ? 'visible' : 'hidden'});
           Object.defineProperty(document, 'hidden', {configurable: true, get: () => !nativeVisible});

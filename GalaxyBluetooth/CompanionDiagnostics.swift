@@ -241,7 +241,7 @@ struct CompanionView: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             if diagnostics.live { liveView } else { diagnosticView }
         }
-        .background(Color.black)
+        .background(Color(uiColor: .systemBackground))
         .onAppear { diagnostics.phoneVisible = true; UIApplication.shared.isIdleTimerDisabled = diagnostics.live }
         .onChange(of: diagnostics.live) { _, live in UIApplication.shared.isIdleTimerDisabled = live }
         .onDisappear { diagnostics.phoneVisible = false; UIApplication.shared.isIdleTimerDisabled = false }
@@ -257,7 +257,7 @@ struct CompanionView: View {
                     ContentUnavailableView("Waiting for live video", systemImage: "play.rectangle", description: Text(diagnostics.screenStatus))
                         .frame(width: space.size.width, height: space.size.height)
                 }
-            }.background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 20))
+            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
             Label(diagnostics.screenStatus, systemImage: diagnostics.frameFresh ? "wifi" : "clock")
                 .font(.caption).foregroundStyle(.secondary)
             if diagnostics.canCopyLog {
@@ -289,7 +289,7 @@ struct CompanionView: View {
                     }
                     Spacer()
                     Circle().fill(diagnostics.fresh ? Color.green : Color.orange).frame(width: 8, height: 8)
-                }.padding(18).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
+                }.padding(18).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
                 metricSection("Temperatures", icon: "thermometer.medium", values: temperatures.filter { !isExternalGPU($0) }, thermal: true)
                 metricSection("Frame rates", icon: "speedometer", values: rates.filter { $0.unit == "FPS" && !isExternalGPU($0) }, thermal: false)
                 metricSection("Message rates", icon: "waveform.path", values: rates.filter { $0.unit != "FPS" && !isExternalGPU($0) }, thermal: false)
@@ -377,7 +377,7 @@ struct CompanionView: View {
                                 Text("\(readings.count)").font(.caption).foregroundStyle(.secondary)
                             }
                         }.tint(purple).padding(16)
-                            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                     } else {
                         metricCards(group, icon: icon, values: readings)
                     }
@@ -401,7 +401,7 @@ struct CompanionView: View {
             if values.isEmpty {
                 Text("No readings available").font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(18)
-                    .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
                     ForEach(Array(values.enumerated()), id: \.offset) { _, metric in
@@ -414,7 +414,7 @@ struct CompanionView: View {
                                 Text(metric.unit).font(.caption).foregroundStyle(purple).lineLimit(1).minimumScaleFactor(0.6)
                             }.minimumScaleFactor(0.7).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
             }

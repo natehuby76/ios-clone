@@ -3,7 +3,7 @@ import UIKit
 import CoreFoundation
 
 @MainActor
-final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate {
+final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate, CPSessionConfigurationDelegate {
     private final class GridAction: NSObject {
         var perform: @MainActor () -> Void
         var signature: String
@@ -16,6 +16,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         weak var page: CPGridTemplate?
         init(_ page: CPGridTemplate) { self.page = page }
     }
+    private var sessionConfiguration: CPSessionConfiguration?
     private var controller: CPInterfaceController?
     private var timer: Timer?
     private var work: Task<Void, Never>?
@@ -38,6 +39,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
         controller = interfaceController
+        sessionConfiguration = CPSessionConfiguration(delegate: self)
         overview = nil; temperatures = nil; rates = nil; toggles = nil
         let model = AppModel.shared
         model.setCarPlayActive(true)
@@ -59,6 +61,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         timer?.invalidate(); timer = nil
         work?.cancel(); work = nil
         controller = nil
+        sessionConfiguration?.delegate = nil; sessionConfiguration = nil
         overview = nil; temperatures = nil; rates = nil; toggles = nil
         catalogue = []; values = [:]; busy = false; categoryPage = 0; valuesSession = ""; valuesAt = .distantPast
         gridActions.removeAllObjects()
@@ -67,6 +70,28 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     func tabBarTemplate(_ tabBarTemplate: CPTabBarTemplate, didSelect selectedTemplate: CPTemplate) {
         if selectedTemplate === toggles { loadGalaxy() }
+    }
+
+    private var carAppearance: UIUserInterfaceStyle {
+        if let style = sessionConfiguration?.contentStyle {
+            if style.contains(.dark) && !style.contains(.light) { return .dark }
+            if style.contains(.light) && !style.contains(.dark) { return .light }
+        }
+        return controller?.carTraitCollection.userInterfaceStyle == .dark ? .dark : .light
+    }
+
+    func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, contentStyleChanged contentStyle: CPContentStyle) {
+        let appearance: UIUserInterfaceStyle = contentStyle.contains(.dark) && !contentStyle.contains(.light) ? .dark :
+            contentStyle.contains(.light) && !contentStyle.contains(.dark) ? .light : carAppearance
+        let traits = UITraitCollection(userInterfaceStyle: appearance)
+        let templates = controller?.templates ?? []
+        var visited = Set<ObjectIdentifier>()
+        for template in templates.flatMap({ ($0 as? CPTabBarTemplate)?.templates ?? [$0] }) {
+            guard let grid = template as? CPGridTemplate, visited.insert(ObjectIdentifier(grid)).inserted else { continue }
+            for button in grid.gridButtons {
+                if #available(iOS 26.0, *), let asset = button.image.imageAsset { button.updateImage(asset.image(with: traits)) }
+            }
+        }
     }
 
     private func pushTemplate(_ template: CPTemplate, animated: Bool, completion: ((Bool, Error?) -> Void)?) {
@@ -78,9 +103,26 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         controller.pushTemplate(template, animated: animated, completion: finished)
     }
 
+    private func paddedButtons(_ buttons: [CPGridButton]) -> [CPGridButton] {
+        var result = Array(buttons.prefix(8))
+        while result.count < 8 {
+            let empty = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in }
+            let action = GridAction(signature: "empty", perform: {})
+            let spacer = CPGridButton(titleVariants: [" "], image: empty) { _ in action.perform() }
+            gridActions.setObject(action, forKey: spacer)
+            spacer.isEnabled = false
+            result.append(spacer)
+        }
+        return result
+    }
+
+    private func makeGrid(title: String?, gridButtons: [CPGridButton]) -> CPGridTemplate {
+        CPGridTemplate(title: title, gridButtons: paddedButtons(gridButtons))
+    }
+
     private func grid(_ title: String, icon: String, buttons: [CPGridButton]) -> CPGridTemplate {
         precondition(!buttons.isEmpty)
-        let template = CPGridTemplate(title: title, gridButtons: buttons)
+        let template = makeGrid(title: title, gridButtons: buttons)
         template.tabTitle = title
         template.tabImage = UIImage(systemName: icon)
         return template
@@ -94,15 +136,24 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let format = UIGraphicsImageRendererFormat()
             format.scale = controller?.carTraitCollection.displayScale ?? 2
             let text = value.replacingOccurrences(of: " °C", with: "°").replacingOccurrences(of: " FPS", with: "")
-            image = UIGraphicsImageRenderer(size: CGSize(width: 72, height: 72), format: format).image { _ in
-                symbol.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 22, y: 0, width: 28, height: 28))
-                let style = NSMutableParagraphStyle(); style.alignment = .center
-                let size: CGFloat = text.count <= 6 ? 24 : text.count <= 10 ? 18 : 14
-                (text as NSString).draw(in: CGRect(x: 0, y: 36, width: 72, height: 32), withAttributes: [
-                    .font: UIFont.monospacedDigitSystemFont(ofSize: size, weight: .semibold),
-                    .foregroundColor: UIColor.white, .paragraphStyle: style
-                ])
-            }.withRenderingMode(.alwaysOriginal)
+            let asset = UIImageAsset()
+            for (style, color) in [(UIUserInterfaceStyle.light, UIColor.black), (.dark, UIColor.white)] {
+                let rendered = UIGraphicsImageRenderer(size: CGSize(width: 72, height: 72), format: format).image { _ in
+                    symbol.withTintColor(color, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 22, y: 0, width: 28, height: 28))
+                    let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center
+                    let size: CGFloat = text.count <= 6 ? 24 : text.count <= 10 ? 18 : 14
+                    (text as NSString).draw(in: CGRect(x: 0, y: 36, width: 72, height: 32), withAttributes: [
+                        .font: UIFont.monospacedDigitSystemFont(ofSize: size, weight: .semibold),
+                        .foregroundColor: color, .paragraphStyle: paragraph
+                    ])
+                }.withRenderingMode(.alwaysOriginal)
+                asset.register(rendered, with: UITraitCollection(traitsFrom: [
+                    UITraitCollection(userInterfaceStyle: style), UITraitCollection(displayScale: format.scale)
+                ]))
+            }
+            image = asset.image(with: UITraitCollection(traitsFrom: [
+                UITraitCollection(userInterfaceStyle: carAppearance), UITraitCollection(displayScale: format.scale)
+            ]))
         } else { image = symbol.withRenderingMode(.alwaysTemplate) }
         let label = title
         let state = GridAction(signature: "\(title)|\(icon)|\(value ?? "")", perform: action)
@@ -111,13 +162,18 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return result
     }
 
-    private func updateGrid(_ page: CPGridTemplate, buttons: [CPGridButton]) {
-        precondition(!buttons.isEmpty)
+    private func updateGrid(_ page: CPGridTemplate, buttons rawButtons: [CPGridButton]) {
+        precondition(!rawButtons.isEmpty)
+        let buttons = paddedButtons(rawButtons)
         if #available(iOS 26.0, *), page.gridButtons.count == buttons.count {
             for (existing, replacement) in zip(page.gridButtons, buttons) {
                 guard let current = gridActions.object(forKey: existing),
-                      let next = gridActions.object(forKey: replacement) else { continue }
+                      let next = gridActions.object(forKey: replacement) else {
+                    page.updateGridButtons(buttons)
+                    return
+                }
                 current.perform = next.perform
+                existing.isEnabled = replacement.isEnabled
                 if current.signature != next.signature {
                     existing.updateTitleVariants(replacement.titleVariants)
                     existing.updateImage(replacement.image)
@@ -229,7 +285,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func showMetrics(_ title: String, kind: String) {
         guard controller != nil else { return }
-        let page = CPGridTemplate(title: title, gridButtons: [button("Loading readings…", icon: "hourglass")])
+        let page = makeGrid(title: title, gridButtons: [button("Loading readings…", icon: "hourglass")])
         page.userInfo = MetricPageState(title: title, kind: kind)
         updateMetrics(page)
         pushTemplate(page, animated: true, completion: nil)
@@ -380,21 +436,42 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard !catalogue.isEmpty else {
             return [button("Load menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]
         }
-        let count = max(1, (catalogue.count + 7) / 8)
-        categoryPage = min(categoryPage, count - 1)
-        let buttons = catalogue.dropFirst(categoryPage * 8).prefix(8).map { section in
+        var buttons = catalogue.prefix(catalogue.count > 8 ? 7 : 8).map { section in
             let name = section["name"] as? String ?? "Settings"
             return button(categoryLabel(name), icon: categoryIcon(name)) { [weak self] in self?.openSettings(section) }
         }
+        if catalogue.count > 8 {
+            buttons.append(button("All menus", icon: "square.grid.2x2") { [weak self] in self?.allCategories() })
+        }
         return buttons
+    }
+
+    private func allCategories() {
+        let page = makeGrid(title: "Toggle menus", gridButtons: categoryButtons())
+        let reference = WeakGrid(page)
+        @MainActor func render(_ index: Int) {
+            guard let page = reference.page else { return }
+            let count = max(1, (catalogue.count + 7) / 8), current = min(index, count - 1)
+            categoryPage = current
+            let buttons = catalogue.dropFirst(current * 8).prefix(8).map { section in
+                let name = section["name"] as? String ?? "Settings"
+                return button(categoryLabel(name), icon: categoryIcon(name)) { [weak self] in
+                    self?.controller?.popTemplate(animated: false, completion: { [weak self] success, _ in
+                        if success { self?.openSettings(section) }
+                    })
+                }
+            }
+            updateGrid(page, buttons: buttons)
+            page.updateTitle("Toggle menus · \(current + 1)/\(count)")
+            paging(page, index: current, count: count, change: render)
+        }
+        render(categoryPage); pushTemplate(page, animated: true, completion: nil)
     }
 
     private func showCategories() {
         guard let toggles else { return }
         updateGrid(toggles, buttons: categoryButtons())
-        paging(toggles, index: categoryPage, count: max(1, (catalogue.count + 7) / 8)) { [weak self] index in
-            self?.categoryPage = index; self?.showCategories()
-        }
+        toggles.trailingNavigationBarButtons = []
     }
 
     private func openSettings(_ section: [String: Any]) {
@@ -403,7 +480,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             showSettings(section); return
         }
         let name = categoryLabel(section["name"] as? String ?? "Settings")
-        let loading = CPGridTemplate(title: name, gridButtons: [
+        let loading = makeGrid(title: name, gridButtons: [
             button("Reading settings…", icon: "arrow.triangle.2.circlepath")
         ])
         pushTemplate(loading, animated: true, completion: nil)
@@ -502,7 +579,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func showSettings(_ section: [String: Any]) {
         let name = categoryLabel(section["name"] as? String ?? "Galaxy")
         let params = (section["params"] as? [[String: Any]] ?? []).filter(visible)
-        let page = CPGridTemplate(title: name, gridButtons: [button("Settings", icon: "gearshape")])
+        let page = makeGrid(title: name, gridButtons: [button("Settings", icon: "gearshape")])
         settingsPage(page, title: name, params: params, index: 0)
         pushTemplate(page, animated: true, completion: nil)
     }
@@ -558,6 +635,18 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return String(describing: values[key] ?? "Not reported")
     }
 
+    private func settingCaption(_ p: [String: Any]) -> String {
+        let names = [
+            "LongitudinalControlMode": "Driving mode", "CurveSpeedController": "Curve speed",
+            "CustomPersonalities": "Personalities", "LongitudinalTune": "Speed tuning",
+            "QOLLongitudinal": "Driving comfort", "SpeedLimitController": "Speed limits",
+            "AdvancedLongitudinalTune": "Advanced speed", "AdvancedLateralTune": "Advanced steering",
+            "AlwaysOnLateral": "Always-on steering"
+        ]
+        let key = p["key"] as? String ?? ""
+        return names[key] ?? (p["label"] as? String ?? key)
+    }
+
     private func settingsPage(_ page: CPGridTemplate, title: String, params: [[String: Any]], index: Int, parent: String? = nil) {
         let displayed = params.filter { (($0["parent_key"] as? String) == parent || (parent == nil && $0["_display_root"] as? Bool == true)) && visible($0) }
         let count = max(1, (displayed.count + 7) / 8), current = min(index, count - 1)
@@ -568,7 +657,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let icon = children || kind == "group" ? "folder" : kind == "numeric" ? "slider.horizontal.3" :
                 kind == "dropdown" ? "list.bullet" : kind == "color" ? "paintpalette" :
                 kind == "favorites" ? "star" : kind == "toggle" ? (bool(values[key]) == true ? "checkmark.circle.fill" : "circle") : "gearshape"
-            return button(label, icon: icon, value: ["toggle", "numeric", "brightness", "dropdown", "color", "readout"].contains(kind) ? valueLabel(p) : nil) { [weak self] in
+            return button(settingCaption(p), icon: icon, value: ["toggle", "numeric", "brightness", "dropdown", "color", "readout"].contains(kind) ? valueLabel(p) : nil) { [weak self] in
                 guard let self else { return }
                 if key == "LongitudinalControlMode", p["_enable_parent"] as? Bool != true { self.modeGroup(p, params: params) }
                 else if key == "CustomPersonalities" { self.personalities() }
@@ -593,7 +682,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             enabled["_enable_parent"] = true
             children.insert(enabled, at: 0)
         }
-        let page = CPGridTemplate(title: title, gridButtons: [button("Settings", icon: "folder")])
+        let page = makeGrid(title: title, gridButtons: [button("Settings", icon: "folder")])
         settingsPage(page, title: title, params: children + params.filter { $0["parent_key"] as? String != key }, index: 0, parent: key)
         pushTemplate(page, animated: true, completion: nil)
     }
@@ -604,7 +693,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         switch kind {
         case "toggle":
             guard let old = bool(values[key]) else { notice("Read this setting again before editing."); return }
-            let page = CPGridTemplate(title: label, gridButtons: [
+            let page = makeGrid(title: label, gridButtons: [
                 button("On", icon: "checkmark.circle.fill") { [weak self] in self?.apply(p, value: true, expected: old) },
                 button("Off", icon: "circle") { [weak self] in self?.apply(p, value: false, expected: old) },
                 button(old ? "Currently on" : "Currently off", icon: "info.circle") { [weak self] in self?.notice(p["description"] as? String ?? label) }
@@ -627,7 +716,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func numericEditor(_ p: [String: Any], original: Double) {
         let label = p["label"] as? String ?? "Value", limits = bounds(p)
         var draft = original
-        let page = CPGridTemplate(title: label, gridButtons: [button("Value", icon: "slider.horizontal.3")])
+        let page = makeGrid(title: label, gridButtons: [button("Value", icon: "slider.horizontal.3")])
         let reference = WeakGrid(page)
         @MainActor func redraw() {
             guard let page = reference.page else { return }
@@ -644,7 +733,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func choices(_ p: [String: Any], options: [[String: Any]], selected: (@MainActor (Any) -> Void)? = nil) {
         let title = p["label"] as? String ?? "Choose"
-        let page = CPGridTemplate(title: title, gridButtons: [button("Choose", icon: "list.bullet")])
+        let page = makeGrid(title: title, gridButtons: [button("Choose", icon: "list.bullet")])
         let reference = WeakGrid(page)
         @MainActor func render(_ index: Int) {
             guard let page = reference.page else { return }
@@ -700,7 +789,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let hex = String(describing: original).replacingOccurrences(of: "#", with: "")
         let encoded = UInt32(hex, radix: 16) ?? 0xffffff
         var channels = [Double((encoded >> 16) & 255), Double((encoded >> 8) & 255), Double(encoded & 255)]
-        let page = CPGridTemplate(title: "Custom color", gridButtons: [button("Color", icon: "paintpalette")])
+        let page = makeGrid(title: "Custom color", gridButtons: [button("Color", icon: "paintpalette")])
         let reference = WeakGrid(page)
         @MainActor func redraw() {
             guard let page = reference.page else { return }
@@ -721,7 +810,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func modeGroup(_ p: [String: Any], params: [[String: Any]]) {
-        let page = CPGridTemplate(title: "Longitudinal mode", gridButtons: [button("Mode", icon: "speedometer")])
+        let page = makeGrid(title: "Longitudinal mode", gridButtons: [button("Mode", icon: "speedometer")])
         var mode = p; mode["parent_key"] = "LongitudinalControlMode"; mode["_enable_parent"] = true
         settingsPage(page, title: "Longitudinal mode", params: [mode] + params, index: 0, parent: "LongitudinalControlMode")
         pushTemplate(page, animated: true, completion: nil)
@@ -758,7 +847,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func brightness(_ p: [String: Any]) {
         let key = p["key"] as? String ?? "", current = number(values[key]) ?? 101
         let manual = number(values[key + "Manual"]) ?? 100
-        let page = CPGridTemplate(title: p["label"] as? String, gridButtons: [
+        let page = makeGrid(title: p["label"] as? String, gridButtons: [
             button(current == 101 ? "Auto · selected" : "Auto", icon: "sun.max") { [weak self] in self?.apply(p, value: 101, expected: current) },
             button(current <= 100 ? "Manual · selected" : "Manual", icon: "slider.horizontal.3") { [weak self] in
                 guard let self else { return }
@@ -899,7 +988,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard !busy else { return }
         busy = true
         let generation = session
-        let loading = CPGridTemplate(title: title, gridButtons: [button("Reading…", icon: "arrow.triangle.2.circlepath")])
+        let loading = makeGrid(title: title, gridButtons: [button("Reading…", icon: "arrow.triangle.2.circlepath")])
         pushTemplate(loading, animated: true, completion: nil)
         work = Task { [weak self, weak loading] in
             guard let self else { return }; defer { self.busy = false }
@@ -922,14 +1011,14 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                     self?.favoriteSlot(index, slots: slots, options: options)
                 }
             }
-            self.pushTemplate(CPGridTemplate(title: "Favorites", gridButtons: buttons), animated: true, completion: nil)
+            self.pushTemplate(makeGrid(title: "Favorites", gridButtons: buttons), animated: true, completion: nil)
         }
     }
 
     private func favoriteSlot(_ index: Int, slots original: [[String: Any]], options: [[String: Any]]) {
         var slots = original
         while slots.count < 3 { slots.append(["enabled": false, "show_onroad": false, "key": NSNull(), "label": ""]) }
-        let page = CPGridTemplate(title: "Favorite \(index + 1)", gridButtons: [button("Favorite", icon: "star")])
+        let page = makeGrid(title: "Favorite \(index + 1)", gridButtons: [button("Favorite", icon: "star")])
         let reference = WeakGrid(page)
         @MainActor func redraw() {
             guard let page = reference.page else { return }
@@ -963,7 +1052,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             }
             let profiles = data["profiles"] as? [String: [String: Any]] ?? [:]
             guard !profiles.isEmpty else { self.notice("Profiles were not returned by comma."); return }
-            let page = CPGridTemplate(title: "Personalities", gridButtons: [self.button("Personalities", icon: "car.side")])
+            let page = makeGrid(title: "Personalities", gridButtons: [self.button("Personalities", icon: "car.side")])
             let reference = WeakGrid(page)
             let entries = ["traffic", "aggressive", "standard", "relaxed"].flatMap { id in
                 (["acceleration", "braking", "following"] + (self.bool(self.values["GalaxyDeveloperMode"]) == true ? ["advanced"] : [])).map { (id, $0) }
@@ -994,7 +1083,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func profileSwitches() {
         let keys = ["CustomPersonalities", "TrafficPersonalityProfile", "AggressivePersonalityProfile", "StandardPersonalityProfile", "RelaxedPersonalityProfile"]
         let params = catalogue.flatMap { $0["params"] as? [[String: Any]] ?? [] }.filter { keys.contains($0["key"] as? String ?? "") }
-        let page = CPGridTemplate(title: "Enabled profiles", gridButtons: params.map { p in
+        let page = makeGrid(title: "Enabled profiles", gridButtons: params.map { p in
             button(p["label"] as? String ?? "Profile", icon: bool(values[p["key"] as? String ?? ""]) == true ? "checkmark.circle.fill" : "circle") { [weak self] in self?.edit(p) }
         })
         pushTemplate(page, animated: true, completion: nil)
@@ -1012,7 +1101,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func curveEditor(_ id: String, category: String, original: [String: Any], curve saved: [Double], speeds: [Double], bounds: [Double], presets: [Any], reference presetReference: [Double]) {
         var curve = saved
-        let page = CPGridTemplate(title: category.capitalized, gridButtons: [button("Curve", icon: "chart.xyaxis.line")])
+        let page = makeGrid(title: category.capitalized, gridButtons: [button("Curve", icon: "chart.xyaxis.line")])
         let reference = WeakGrid(page)
         @MainActor func render(_ index: Int) {
             guard let page = reference.page else { return }
@@ -1046,7 +1135,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func stagedNumber(_ title: String, value: Double, min lo: Double, max hi: Double, step: Double,
                               done: @escaping @MainActor (Double) -> Void) {
         var draft = value
-        let page = CPGridTemplate(title: title, gridButtons: [button("Value", icon: "slider.horizontal.3")])
+        let page = makeGrid(title: title, gridButtons: [button("Value", icon: "slider.horizontal.3")])
         let reference = WeakGrid(page)
         @MainActor func redraw() {
             guard let page = reference.page else { return }
