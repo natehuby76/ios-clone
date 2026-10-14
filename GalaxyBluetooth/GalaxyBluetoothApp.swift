@@ -44,7 +44,7 @@ final class AppModel: ObservableObject {
     @Published var selectingDiscoveredComma = false
     private var lastRoute = "Reconnecting…"
     @Published var showDiagnostics = false
-    @Published var tab: CompanionTab = .connections
+    @Published var tab: CompanionTab = .galaxy
     @Published var developerMode = UserDefaults.standard.bool(forKey: "galaxy.app.developerMode") {
         didSet {
             UserDefaults.standard.set(developerMode, forKey: "galaxy.app.developerMode")
@@ -325,20 +325,32 @@ struct GalaxyRootView: View {
         VStack(spacing: 0) {
             VStack(spacing: 14) {
                 HStack {
-                    Text("StarPilot").font(.title3.bold())
+                    if !model.developerMode && model.tab == .connections {
+                        if model.opened {
+                            Button { select(.galaxy) } label: {
+                                Image(systemName: "chevron.left").font(.body.weight(.semibold))
+                                    .frame(width: 36, height: 36)
+                            }.buttonStyle(.plain).accessibilityLabel("Back to Galaxy")
+                        }
+                        Text("Settings").font(.title3.bold())
+                    } else {
+                        Text("StarPilot").font(.title3.bold())
+                    }
                     Spacer()
                     HStack(spacing: 5) {
                         Circle().fill(model.transport.connected ? Color.green : Color.orange).frame(width: 6, height: 6)
                         Text(model.transport.label).font(.caption.weight(.medium))
                     }.padding(.horizontal, 10).padding(.vertical, 6)
                         .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                    if !model.developerMode && model.tab != .connections {
+                        Button { select(.connections) } label: {
+                            Image(systemName: "gearshape.fill").font(.body.weight(.semibold))
+                                .frame(width: 36, height: 36)
+                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                        }.buttonStyle(.plain).accessibilityLabel("Settings")
+                    }
                 }
-                if !model.developerMode {
-                    HStack(spacing: 4) {
-                        standardTab(.galaxy)
-                        standardTab(.connections)
-                    }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                } else {
+                if model.developerMode {
                     HStack(spacing: 4) {
                         ForEach(CompanionTab.allCases.filter { $0 != .connections }) { tab in
                             Button { select(tab) } label: {
@@ -401,17 +413,6 @@ struct GalaxyRootView: View {
         model.tab = tab
         model.diagnostics.live = tab == .live
     }
-    private func standardTab(_ tab: CompanionTab) -> some View {
-        Button { select(tab) } label: {
-            Label(tab.rawValue, systemImage: tab.icon)
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .foregroundStyle(model.tab == tab ? Color.white : Color.primary)
-                .background(model.tab == tab ? brandPurple : Color.clear, in: Capsule())
-        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
-    }
-
     private let brandPurple = Color(red: 0.55, green: 0.36, blue: 0.96)
 
     private var connectionView: some View {
