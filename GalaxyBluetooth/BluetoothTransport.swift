@@ -196,6 +196,10 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
     }
 
+    static func useNotifications(method: String, path: String, supported: Bool) -> Bool {
+        supported && method != "GET" && path != "/_bridge/health"
+    }
+
     private func pump() {
         guard active == nil, !queue.isEmpty, let peripheral, let key, !session.isEmpty else { return }
         active = queue.removeFirst()
@@ -206,10 +210,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         activeCancelled = false
         awaitingAck = false
         writeIndex = 0
-        activeNotifications = supportsNotifications && active.path != "/_bridge/health"
+        activeNotifications = Self.useNotifications(method: active.method, path: active.path, supported: supportsNotifications)
         notificationCount = 0
         notificationBuffer = []
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"
+        onEvent?("Bluetooth request started: \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), response=\(activeNotifications ? "notifications" : activeReadStream ? "read stream" : "encrypted reads")")
         do {
             notificationTag = try Wire.streamTag(session: session, counter: counter)
             let request = BridgeRequest(id: active.id, session: session, counter: counter, path: active.path,

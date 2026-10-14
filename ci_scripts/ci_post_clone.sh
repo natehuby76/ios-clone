@@ -13,3 +13,7 @@ swiftc -swift-version 5 -parse-as-library "$test_dir/SettingsProbe.swift" tests/
 python3 tests/extract_carplay_navigation.py "$test_dir/NavigationProbe.swift"
 swiftc -swift-version 5 -parse-as-library "$test_dir/NavigationProbe.swift" -o "$test_dir/carplay-navigation-tests"
 "$test_dir/carplay-navigation-tests"
+
+python3 tests/extract_bluetooth_reads.py "$test_dir/BluetoothReadProbe.swift"
+swiftc -swift-version 5 -parse-as-library "$test_dir/BluetoothReadProbe.swift" -o "$test_dir/bluetooth-read-tests"
+"$test_dir/bluetooth-read-tests"

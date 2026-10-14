@@ -67,6 +67,15 @@ final class LoopbackServer: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
 
+    static func adaptNativeAsset(_ data: Data, path: String) -> Data {
+        guard path == "assets/mobile/js/components/PersonalityProfiles.js",
+              let source = String(data: data, encoding: .utf8) else { return data }
+        let adapted = source.replacingOccurrences(of: "api.getParams()", with: "api.getSettingsParams()")
+            .replacingOccurrences(of: "if (this.busy || !this.ready || this.contextPending) return",
+                                  with: "if (document.hidden || this.busy || !this.ready || this.contextPending) return")
+        return Data(adapted.utf8)
+    }
+
     func stop() {
         listener?.cancel()
         listener = nil
@@ -132,9 +141,10 @@ final class LoopbackServer: ObservableObject {
         else if path == "/manifest.json" { assetPath = "assets/manifest.json" }
         else { assetPath = "classic.html" }
         let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
-        guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), let data = try? Data(contentsOf: file) else {
+        guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), var data = try? Data(contentsOf: file) else {
             return .error(404, "Bundled Galaxy asset was not found.")
         }
+        data = Self.adaptNativeAsset(data, path: assetPath)
         let mime: String
         switch file.pathExtension {
         case "js", "mjs": mime = "text/javascript"
