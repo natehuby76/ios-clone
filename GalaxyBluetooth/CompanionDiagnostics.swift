@@ -55,6 +55,7 @@ final class CompanionDiagnostics: ObservableObject {
     private var fpsStarted = Date()
     @Published private(set) var displayFPS = 0.0
     private var lastDiagnostics = Date.distantPast
+    private var lastDiagnosticsHTTP: Int?
     private var waitingSince = Date()
     private var events: [String] = []
     private var lastEvent = ""
@@ -77,7 +78,7 @@ final class CompanionDiagnostics: ObservableObject {
                      "iOS: \(UIDevice.current.systemVersion)",
                      "Connection: \(transport?.label ?? "Disconnected")",
                      "LAN connected: \(lan?.connected == true)",
-                     "Telemetry: \(status)", "Stream: \(screenStatus)",
+                     "Telemetry: \(status)", "Telemetry HTTP: \(lastDiagnosticsHTTP.map(String.init) ?? "No response yet")", "Stream: \(screenStatus)",
                      "No frame for: \(Int(Date().timeIntervalSince(waitingSince))) seconds"]
         if let captureSample, let captureSampleAt,
            let data = try? JSONEncoder().encode(captureSample), let text = String(data: data, encoding: .utf8) {
@@ -131,7 +132,24 @@ final class CompanionDiagnostics: ObservableObject {
                 let path = "/api/companion/diagnostics"
                 let response = try await transport.request(path: path, method: "GET", headers: headers(path), body: Data())
                 try Task.checkCancellation()
-                guard response.status == 200 else { throw BridgeError.message(response.status == 403 ? "Enable diagnostics on comma and pair this phone." : "Waiting for comma telemetry.") }
+                lastDiagnosticsHTTP = response.status
+                guard response.status == 200 else {
+                    let error = (try? JSONSerialization.jsonObject(with: response.bodyData)) as? [String: Any]
+                    let message: String
+                    switch (response.status, error?["error"] as? String) {
+                    case (503, "Diagnostics are disabled on comma."):
+                        message = "On comma, open Settings → Bluetooth and turn on Allow phone diagnostics."
+                    case (503, "Waiting for comma UI telemetry."):
+                        message = "Diagnostics enabled. Waiting for comma UI telemetry."
+                    case (403, _):
+                        message = "Phone pairing was rejected. Scan comma’s pairing code again."
+                    case (404, _):
+                        message = "Update your comma build to support phone diagnostics."
+                    default:
+                        message = "Diagnostics request failed (HTTP \(response.status))."
+                    }
+                    throw BridgeError.message(message)
+                }
                 let sample = try JSONDecoder().decode(DiagnosticSnapshot.self, from: response.bodyData)
                 guard sample.ageSeconds.isFinite, sample.ageSeconds >= 0 else { throw BridgeError.message("Invalid telemetry age.") }
                 snapshot = sample; receivedAt = Date(); status = sample.ageSeconds < 5 ? "Connected · read only" : "Telemetry is outdated"
