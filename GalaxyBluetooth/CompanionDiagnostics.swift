@@ -35,7 +35,7 @@ final class CompanionDiagnostics: ObservableObject {
     @Published var snapshot: DiagnosticSnapshot?
     @Published var screen: UIImage?
     @Published var status = "Connect and pair with comma to read diagnostics." { didSet { record(status) } }
-    @Published var screenStatus = "Live View uses local Wi-Fi." { didSet { record(screenStatus) } }
+    @Published var screenStatus = "Live View uses local Wi-Fi." { didSet { if !screenStatus.hasPrefix("Full comma display") { record(screenStatus) } } }
     @Published var live = true { didSet { if live { waitingSince = Date() } } }
     @Published var phoneVisible = false { didSet { if phoneVisible && !oldValue { waitingSince = Date(); copiedLog = false }; updateActivity() } }
     @Published var carPlayActive = false { didSet { updateActivity() } }
@@ -46,6 +46,10 @@ final class CompanionDiagnostics: ObservableObject {
     var lan: LANTransport?
     var phoneActive = true { didSet { updateActivity() } }
     private var task: Task<Void, Never>?
+    private var telemetryTask: Task<Void, Never>?
+    private var reconnectCount = 0
+    private var retryDelay = 1.0
+    private var streamHasFrame = false
     private var stream: LiveStream?
     private var streamHost = ""
     private var streamStarted = Date.distantPast
@@ -78,6 +82,8 @@ final class CompanionDiagnostics: ObservableObject {
                      "iOS: \(UIDevice.current.systemVersion)",
                      "Connection: \(transport?.label ?? "Disconnected")",
                      "LAN connected: \(lan?.connected == true)",
+                     "Live mode: \(live); phone visible: \(phoneVisible); phone active: \(phoneActive); CarPlay active: \(carPlayActive)",
+                     "Stream reconnect attempts: \(reconnectCount)",
                      "Telemetry: \(status)", "Telemetry HTTP: \(lastDiagnosticsHTTP.map(String.init) ?? "No response yet")", "Stream: \(screenStatus)",
                      "No frame for: \(Int(Date().timeIntervalSince(waitingSince))) seconds"]
         if let captureSample, let captureSampleAt,
@@ -114,17 +120,27 @@ final class CompanionDiagnostics: ObservableObject {
     }
     private func updateActivity() {
         let active = carPlayActive || (phoneVisible && phoneActive)
-        if !active { task?.cancel(); task = nil; stopStream(); return }
+        if !active {
+            task?.cancel(); task = nil; telemetryTask?.cancel(); telemetryTask = nil
+            stopStream(); return
+        }
         guard task == nil else { return }
         task = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                await self.poll()
+                self.maintainStream()
                 do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
             }
         }
+        telemetryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.pollDiagnostics()
+                do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+            }
+        }
     }
-    private func poll() async {
+    private func pollDiagnostics() async {
         if Date().timeIntervalSince(lastDiagnostics) >= 2 {
             lastDiagnostics = Date()
             do {
@@ -156,25 +172,38 @@ final class CompanionDiagnostics: ObservableObject {
                 if let capture = sample.capture { captureSample = capture; captureSampleAt = Date() }
             } catch { if !Task.isCancelled { status = error.localizedDescription; snapshot = nil; receivedAt = nil } }
         }
+    }
+    private func maintainStream() {
         guard live, phoneVisible, phoneActive else { stopStream(); return }
         guard let lan, lan.connected, let host = lan.endpoint?.host else {
             stopStream(); screenStatus = "Live View needs local Wi-Fi. Diagnostics also work over Bluetooth."; return
         }
-        if stream != nil && streamHost != host { stopStream() }
-        if let frameAt, Date().timeIntervalSince(frameAt) > 3 { stopStream() }
-        if stream != nil, frameAt == nil, Date().timeIntervalSince(streamStarted) > 5 { stopStream() }
-        guard stream == nil, Date().timeIntervalSince(lastStreamAttempt) >= 1 else { return }
+        if stream != nil && streamHost != host { record("Comma Wi-Fi address changed; reconnecting video"); stopStream() }
+        if stream != nil, streamHasFrame, let frameAt, Date().timeIntervalSince(frameAt) > 3 {
+            record("No video frame for 3 seconds; reconnecting")
+            stopStream(preserveFrame: true)
+        }
+        if stream != nil, !streamHasFrame, Date().timeIntervalSince(streamStarted) > 5 {
+            record("Video connection produced no frame within 5 seconds; retrying")
+            stopStream(preserveFrame: true)
+            retryDelay = min(8, retryDelay * 2)
+        }
+        guard stream == nil, Date().timeIntervalSince(lastStreamAttempt) >= retryDelay else { return }
         lastStreamAttempt = Date()
         do {
             let headers = try headers("/api/companion/stream")
             let generation = UUID(); streamGeneration = generation; streamHost = host
-            fpsStarted = Date(); frameCount = 0
+            fpsStarted = Date(); frameCount = 0; streamHasFrame = false
+            reconnectCount += 1
+            record("Starting Wi-Fi video connection (attempt \(reconnectCount))")
             let stream = LiveStream(host: host, headers: headers, frame: { [weak self] data in
                 guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                       let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return }
                 let picture = UIImage(cgImage: image)
                 Task { @MainActor in
                     guard let self, self.streamGeneration == generation else { return }
+                    if !self.streamHasFrame { self.record("Wi-Fi video receiving frames"); self.streamHasFrame = true }
+                    self.retryDelay = 1
                     self.screen = picture; self.frameAt = Date(); self.frameCount += 1
                     self.waitingSince = Date()
                     let elapsed = Date().timeIntervalSince(self.fpsStarted)
@@ -187,7 +216,11 @@ final class CompanionDiagnostics: ObservableObject {
             }, failure: { [weak self] message in
                 Task { @MainActor in
                     guard let self, self.streamGeneration == generation else { return }
-                    self.stopStream(); self.screenStatus = message
+                    self.record("Video connection ended: \(message)")
+                    self.stopStream(preserveFrame: true)
+                    self.retryDelay = message.hasPrefix("Stream ") ? 1 : min(8, self.retryDelay * 2)
+                    self.screenStatus = "Reconnecting live video…"
+
                 }
             })
             streamStarted = Date(); self.stream = stream; stream.start()
@@ -195,9 +228,9 @@ final class CompanionDiagnostics: ObservableObject {
         } catch { screenStatus = error.localizedDescription }
 
     }
-    private func stopStream() {
-        streamGeneration = UUID(); stream?.stop(); stream = nil
-        screen = nil; frameAt = nil; displayFPS = 0
+    private func stopStream(preserveFrame: Bool = false) {
+        streamGeneration = UUID(); stream?.stop(); stream = nil; streamHasFrame = false
+        if !preserveFrame { screen = nil; frameAt = nil; displayFPS = 0 }
     }
 }
 

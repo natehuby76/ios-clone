@@ -82,6 +82,7 @@ final class AppModel: ObservableObject {
     let assets: GalaxyAssetStore
     let server: LoopbackServer
     private let pathMonitor = NWPathMonitor()
+    private var lastNetworkPath = ""
     private var lastReconnect = Date.distantPast
     private var lastAddressCheck = Date.distantPast
     private var identitySession = ""
@@ -128,6 +129,12 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 let route = path.usesInterfaceType(.wifi) ? "Wi-Fi" : path.usesInterfaceType(.cellular) ? "cellular" : "other"
                 let reason = "iOS network path updated: \(path.status == .satisfied ? "available" : "unavailable"), \(route), expensive=\(path.isExpensive), constrained=\(path.isConstrained)"
+                let interfaces = path.availableInterfaces
+                    .filter { path.usesInterfaceType($0.type) }
+                    .map { "\($0.name):\($0.index)" }.sorted().joined(separator: ",")
+                let fingerprint = "\(path.status)|\(route)|\(interfaces)|ipv4=\(path.supportsIPv4)"
+                guard fingerprint != self.lastNetworkPath else { return }
+                self.lastNetworkPath = fingerprint
                 self.connectionLog.record(reason)
                 self.lan.invalidate(reason: reason)
                 self.lastAddressCheck = .distantPast
@@ -338,7 +345,8 @@ struct GalaxyRootView: View {
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
             ZStack {
                 if model.opened, let url = server.url {
-                    GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage) {
+                    GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
+                                  isActive: model.tab == .galaxy && scenePhase == .active) {
                         model.galaxyPage.report(server: server, connection: model.transport.label)
                     }
                         .opacity(model.tab == .galaxy ? 1 : 0)

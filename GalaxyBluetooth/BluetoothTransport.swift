@@ -146,7 +146,17 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     private func failConnection(_ message: String) {
         let lower = message.lowercased()
-        let reason = lower.contains("timed out") ? "Bluetooth connection timed out" : lower.contains("pairing") ? "Bluetooth pairing or authentication failed" : lower.contains("encrypt") ? "Bluetooth encrypted response failed" : "Bluetooth connection failed"
+        let reason: String
+        if lower.contains("request timed out") { reason = "Bluetooth request timed out" }
+        else if lower.contains("push stalled") { reason = "Bluetooth notification transfer stalled" }
+        else if lower.contains("cancelled") { reason = "Bluetooth request cancelled during transfer" }
+        else if lower.contains("timed out") { reason = "Bluetooth connection timed out" }
+        else if lower.contains("pairing") { reason = "Bluetooth pairing or authentication failed" }
+        else if lower.contains("encrypt") || lower.contains("verify bluetooth") { reason = "Bluetooth encrypted response failed" }
+        else { reason = "Bluetooth connection failed" }
+        if let active {
+            onEvent?("\(reason): \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), sent=\(writeIndex)/\(outgoing.count), received packets=\(notificationCount), awaiting ack=\(awaitingAck)")
+        }
         disconnect(reason: reason)
         onEvent?(reason)
         status = message

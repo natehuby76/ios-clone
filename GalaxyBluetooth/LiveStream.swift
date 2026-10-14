@@ -2,6 +2,7 @@ import Foundation
 import Network
 
 struct MJPEGParser {
+    private(set) var ended = false
     private var wire = Data()
     private var body = Data()
     private var headersRead = false
@@ -11,6 +12,7 @@ struct MJPEGParser {
     private var frameLength: Int?
     private let delimiter = Data("\r\n\r\n".utf8)
     mutating func append(_ data: Data) throws -> [Data] {
+        guard !ended else { return [] }
         wire.append(data)
         guard wire.count <= 750_000 else { throw URLError(.dataLengthExceedsMaximum) }
         if !headersRead {
@@ -50,7 +52,7 @@ struct MJPEGParser {
                     }
                     let text = String(decoding: wire[..<line.lowerBound], as: UTF8.self).split(separator: ";").first ?? ""
                     guard let size = Int(text, radix: 16), (0...750_000).contains(size) else { throw URLError(.cannotParseResponse) }
-                    if size == 0 { throw URLError(.networkConnectionLost) }
+                    if size == 0 { ended = true; wire.removeAll(keepingCapacity: true); break }
                     chunkRemaining = size; wire.removeSubrange(..<line.upperBound)
                 }
                 guard let remaining = chunkRemaining else { break }
@@ -129,8 +131,9 @@ final class LiveStream: @unchecked Sendable {
                     if let latest = try self.parser.append(data).last { self.frame(latest) }
                 } catch { self.fail(error.localizedDescription); return }
             }
-            if let error { self.fail(error.localizedDescription) }
-            else if complete { self.fail("Reconnecting live stream…") }
+            if self.parser.ended { self.fail("Stream session ended; reconnecting live video.") }
+            else if let error { self.fail(error.localizedDescription) }
+            else if complete { self.fail("Stream connection closed; reconnecting live video.") }
             else { self.receive() }
         }
     }

@@ -79,10 +79,11 @@ struct GalaxyWebView: View {
     let url: URL
     let requestKey: String
     @ObservedObject var diagnostics: GalaxyPageDiagnostics
+    var isActive = true
     let report: () -> String
     var body: some View {
         ZStack {
-            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics)
+            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive)
                 .id(diagnostics.reloadID)
             if diagnostics.stalled {
                 VStack(spacing: 16) {
@@ -128,7 +129,12 @@ private struct GalaxyPage: UIViewRepresentable {
     let requestKey: String
 
     let diagnostics: GalaxyPageDiagnostics
-    func makeCoordinator() -> Coordinator { Coordinator(origin: url, diagnostics: diagnostics) }
+    let isActive: Bool
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(origin: url, diagnostics: diagnostics)
+        coordinator.isVisible = isActive
+        return coordinator
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -140,6 +146,14 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          let nativeVisible = \(isActive ? "true" : "false");
+          Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => nativeVisible ? 'visible' : 'hidden'});
+          Object.defineProperty(document, 'hidden', {configurable: true, get: () => !nativeVisible});
+          window.__galaxySetVisible = visible => {
+            if (nativeVisible === !!visible) return;
+            nativeVisible = !!visible;
+            document.dispatchEvent(new Event('visibilitychange'));
+          };
           const emit = (kind, path = '', code = 0) => {
             try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind, path, code}); } catch (_) {}
           };
@@ -195,7 +209,10 @@ private struct GalaxyPage: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        context.coordinator.isVisible = isActive
+        context.coordinator.syncVisibility(uiView)
+    }
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "galaxyDiagnostics")
         uiView.navigationDelegate = nil; uiView.uiDelegate = nil
@@ -205,6 +222,10 @@ private struct GalaxyPage: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
         private var downloads: [ObjectIdentifier: (WKDownload, URL?)] = [:]
+        var isVisible = true
+        func syncVisibility(_ webView: WKWebView) {
+            webView.evaluateJavaScript("window.__galaxySetVisible?.(\(isVisible ? "true" : "false"))", completionHandler: nil)
+        }
         let origin: URL
         let diagnostics: GalaxyPageDiagnostics
         init(origin: URL, diagnostics: GalaxyPageDiagnostics) { self.origin = origin; self.diagnostics = diagnostics }
@@ -224,6 +245,7 @@ private struct GalaxyPage: UIViewRepresentable {
             }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            syncVisibility(webView)
             diagnostics.record("HTML navigation finished; waiting for Galaxy content")
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
