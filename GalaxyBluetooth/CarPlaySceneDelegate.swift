@@ -5,9 +5,9 @@ import CoreFoundation
 @MainActor
 final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate {
     private final class GridAction: NSObject {
-        var perform: () -> Void
+        var perform: @MainActor () -> Void
         var signature: String
-        init(signature: String, perform: @escaping () -> Void) {
+        init(signature: String, perform: @escaping @MainActor () -> Void) {
             self.signature = signature; self.perform = perform
         }
     }
@@ -86,7 +86,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return template
     }
 
-    private func button(_ title: String, icon: String, value: String? = nil, action: @escaping () -> Void = {}) -> CPGridButton {
+    private func button(_ title: String, icon: String, value: String? = nil, action: @escaping @MainActor () -> Void = {}) -> CPGridButton {
         let configuration = UIImage.SymbolConfiguration(pointSize: 32, weight: .regular)
         let symbol = UIImage(systemName: icon, withConfiguration: configuration) ?? UIImage(systemName: "circle")!
         let image: UIImage
@@ -228,7 +228,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func showMetrics(_ title: String, kind: String) {
-        guard let controller else { return }
+        guard controller != nil else { return }
         let page = CPGridTemplate(title: title, gridButtons: [button("Loading readings…", icon: "hourglass")])
         page.userInfo = MetricPageState(title: title, kind: kind)
         updateMetrics(page)
@@ -382,7 +382,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         }
         let count = max(1, (catalogue.count + 7) / 8)
         categoryPage = min(categoryPage, count - 1)
-        var buttons = catalogue.dropFirst(categoryPage * 8).prefix(8).map { section in
+        let buttons = catalogue.dropFirst(categoryPage * 8).prefix(8).map { section in
             let name = section["name"] as? String ?? "Settings"
             return button(categoryLabel(name), icon: categoryIcon(name)) { [weak self] in self?.openSettings(section) }
         }
@@ -491,7 +491,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return true
     }
 
-    private func paging(_ page: CPGridTemplate, index: Int, count: Int, change: @escaping (Int) -> Void) {
+    private func paging(_ page: CPGridTemplate, index: Int, count: Int, change: @escaping @MainActor (Int) -> Void) {
         guard count > 1 else { page.trailingNavigationBarButtons = []; return }
         let previous = CPBarButton(image: UIImage(systemName: "chevron.left")!) { _ in change(index - 1) }
         let next = CPBarButton(image: UIImage(systemName: "chevron.right")!) { _ in change(index + 1) }
@@ -629,7 +629,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         var draft = original
         let page = CPGridTemplate(title: label, gridButtons: [button("Value", icon: "slider.horizontal.3")])
         let reference = WeakGrid(page)
-        func redraw() {
+        @MainActor func redraw() {
             guard let page = reference.page else { return }
             let formatted = String(format: "%.*f", limits.3, draft) + (parameter(p)["unit"] as? String ?? "")
             updateGrid(page, buttons: [
@@ -642,17 +642,17 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         redraw(); pushTemplate(page, animated: true, completion: nil)
     }
 
-    private func choices(_ p: [String: Any], options: [[String: Any]], selected: ((Any) -> Void)? = nil) {
+    private func choices(_ p: [String: Any], options: [[String: Any]], selected: (@MainActor (Any) -> Void)? = nil) {
         let title = p["label"] as? String ?? "Choose"
         let page = CPGridTemplate(title: title, gridButtons: [button("Choose", icon: "list.bullet")])
         let reference = WeakGrid(page)
-        func render(_ index: Int) {
+        @MainActor func render(_ index: Int) {
             guard let page = reference.page else { return }
             let count = max(1, (options.count + 7) / 8), current = min(index, count - 1)
             var buttons = options.dropFirst(current * 8).prefix(8).map { choice in
                 let v = choice["value"] ?? ""
-                let selected = String(describing: values[p["key"] as? String ?? ""] ?? "") == String(describing: v)
-                return button(choice["label"] as? String ?? String(describing: v), icon: selected ? "checkmark.circle.fill" : "circle") { [weak self] in
+                let isSelected = String(describing: values[p["key"] as? String ?? ""] ?? "") == String(describing: v)
+                return button(choice["label"] as? String ?? String(describing: v), icon: isSelected ? "checkmark.circle.fill" : "circle") { [weak self] in
                     if let selected { selected(v) }
                     else { self?.apply(p, value: v, expected: self?.values[p["key"] as? String ?? ""] ?? NSNull()) }
                 }
@@ -702,7 +702,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         var channels = [Double((encoded >> 16) & 255), Double((encoded >> 8) & 255), Double(encoded & 255)]
         let page = CPGridTemplate(title: "Custom color", gridButtons: [button("Color", icon: "paintpalette")])
         let reference = WeakGrid(page)
-        func redraw() {
+        @MainActor func redraw() {
             guard let page = reference.page else { return }
             var buttons = ["Red", "Green", "Blue"].enumerated().map { index, label in
                 button(label, icon: "slider.horizontal.3", value: String(Int(channels[index]))) { [weak self] in
@@ -792,7 +792,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return String(describing: left ?? NSNull()) == String(describing: right ?? NSNull())
     }
 
-    private func confirmation(_ message: String, perform: @escaping () -> Void) {
+    private func confirmation(_ message: String, perform: @escaping @MainActor () -> Void) {
         let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
         let save = CPAlertAction(title: "Save", style: .default) { [weak self] _ in
             self?.controller?.dismissTemplate(animated: true, completion: nil); perform()
@@ -866,7 +866,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func specialSave(_ label: String, endpoint: String, payload: [String: Any],
                              checkPath: String? = nil, checkKey: String? = nil, expected: Any? = nil,
-                             completion: (() -> Void)? = nil) {
+                             completion: (@MainActor () -> Void)? = nil) {
         guard !busy else { return }
         let original = session
         confirmation("Save \(label) while parked?") { [weak self] in
@@ -895,7 +895,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return a == b
     }
 
-    private func loadEditor(_ path: String, title: String, show: @escaping ([String: Any]) -> Void) {
+    private func loadEditor(_ path: String, title: String, show: @escaping @MainActor ([String: Any]) -> Void) {
         guard !busy else { return }
         busy = true
         let generation = session
@@ -931,7 +931,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         while slots.count < 3 { slots.append(["enabled": false, "show_onroad": false, "key": NSNull(), "label": ""]) }
         let page = CPGridTemplate(title: "Favorite \(index + 1)", gridButtons: [button("Favorite", icon: "star")])
         let reference = WeakGrid(page)
-        func redraw() {
+        @MainActor func redraw() {
             guard let page = reference.page else { return }
             let enabled = bool(slots[index]["enabled"]) == true, onroad = bool(slots[index]["show_onroad"]) == true
             updateGrid(page, buttons: [
@@ -968,7 +968,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let entries = ["traffic", "aggressive", "standard", "relaxed"].flatMap { id in
                 (["acceleration", "braking", "following"] + (self.bool(self.values["GalaxyDeveloperMode"]) == true ? ["advanced"] : [])).map { (id, $0) }
             }
-            func render(_ index: Int) {
+            @MainActor func render(_ index: Int) {
                 guard let page = reference.page else { return }
                 let count = max(1, (entries.count + 7) / 8), current = min(index, count - 1)
                 let buttons = entries.dropFirst(current * 8).prefix(8).map { id, category in
@@ -1014,7 +1014,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         var curve = saved
         let page = CPGridTemplate(title: category.capitalized, gridButtons: [button("Curve", icon: "chart.xyaxis.line")])
         let reference = WeakGrid(page)
-        func render(_ index: Int) {
+        @MainActor func render(_ index: Int) {
             guard let page = reference.page else { return }
             let count = max(1, (curve.count + 7) / 8), current = min(index, count - 1)
             let buttons = Array(curve.indices.dropFirst(current * 8).prefix(8)).map { point in
@@ -1044,11 +1044,11 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func stagedNumber(_ title: String, value: Double, min lo: Double, max hi: Double, step: Double,
-                              done: @escaping (Double) -> Void) {
+                              done: @escaping @MainActor (Double) -> Void) {
         var draft = value
         let page = CPGridTemplate(title: title, gridButtons: [button("Value", icon: "slider.horizontal.3")])
         let reference = WeakGrid(page)
-        func redraw() {
+        @MainActor func redraw() {
             guard let page = reference.page else { return }
             updateGrid(page, buttons: [
                 button("Decrease", icon: "minus.circle") { draft = max(lo, draft - step); redraw() },
