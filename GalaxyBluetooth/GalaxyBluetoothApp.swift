@@ -50,7 +50,6 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(developerMode, forKey: "galaxy.app.developerMode")
             if !developerMode {
                 if tab.isDeveloperPage { tab = opened ? .galaxy : .connections }
-                bluetooth.fastReads = false
                 diagnostics.live = false
                 diagnostics.phoneVisible = false
                 showDiagnostics = false

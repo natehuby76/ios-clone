@@ -208,13 +208,17 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         if let index = queue.firstIndex(where: { $0.id == id }) {
             queue.remove(at: index).completion.resume(throwing: CancellationError())
         } else if active?.id == id {
-            if writeIndex >= outgoing.count {
-                // Drain cancelled reads without disconnecting Bluetooth.
+            if Self.canDrainCancellation(method: active?.method, requestSent: writeIndex >= outgoing.count) {
+                // Finish read-only requests even if their outgoing frame is still being sent.
                 activeCancelled = true
             } else {
                 failConnection("Request cancelled. Reconnect before sending another request.")
             }
         }
+    }
+
+    static func canDrainCancellation(method: String?, requestSent: Bool) -> Bool {
+        method == "GET" || requestSent
     }
 
     static func useNotifications(method: String, path: String, supported: Bool, fastReads: Bool = false) -> Bool {
