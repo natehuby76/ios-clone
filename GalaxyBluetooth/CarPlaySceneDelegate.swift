@@ -12,6 +12,10 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         }
     }
     private let gridActions = NSMapTable<CPGridButton, GridAction>.weakToStrongObjects()
+    private final class WeakGrid {
+        weak var page: CPGridTemplate?
+        init(_ page: CPGridTemplate) { self.page = page }
+    }
     private var controller: CPInterfaceController?
     private var timer: Timer?
     private var work: Task<Void, Never>?
@@ -44,6 +48,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
         tabs.delegate = self
         interfaceController.setRootTemplate(tabs, animated: false, completion: nil)
+        showCategories()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshTelemetry() }
@@ -64,6 +69,15 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         if selectedTemplate === toggles { loadGalaxy() }
     }
 
+    private func pushTemplate(_ template: CPTemplate, animated: Bool, completion: ((Bool, Error?) -> Void)?) {
+        guard let controller else { return }
+        let finished: (Bool, Error?) -> Void = { [weak self] success, error in
+            completion?(success, error)
+            if !success { self?.notice(error?.localizedDescription ?? "This page could not be opened.") }
+        }
+        controller.pushTemplate(template, animated: animated, completion: finished)
+    }
+
     private func grid(_ title: String, icon: String, buttons: [CPGridButton]) -> CPGridTemplate {
         precondition(!buttons.isEmpty)
         let template = CPGridTemplate(title: title, gridButtons: buttons)
@@ -73,10 +87,24 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func button(_ title: String, icon: String, value: String? = nil, action: @escaping () -> Void = {}) -> CPGridButton {
-        let configuration = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
-        let image = (UIImage(systemName: icon, withConfiguration: configuration)
-                     ?? UIImage(systemName: "circle", withConfiguration: configuration)!).withRenderingMode(.alwaysTemplate)
-        let label = value.map { "\(title)\n\($0)" } ?? title
+        let configuration = UIImage.SymbolConfiguration(pointSize: 32, weight: .regular)
+        let symbol = UIImage(systemName: icon, withConfiguration: configuration) ?? UIImage(systemName: "circle")!
+        let image: UIImage
+        if let value {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = controller?.carTraitCollection.displayScale ?? 2
+            let text = value.replacingOccurrences(of: " °C", with: "°").replacingOccurrences(of: " FPS", with: "")
+            image = UIGraphicsImageRenderer(size: CGSize(width: 72, height: 72), format: format).image { _ in
+                symbol.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 22, y: 0, width: 28, height: 28))
+                let style = NSMutableParagraphStyle(); style.alignment = .center
+                let size: CGFloat = text.count <= 6 ? 24 : text.count <= 10 ? 18 : 14
+                (text as NSString).draw(in: CGRect(x: 0, y: 36, width: 72, height: 32), withAttributes: [
+                    .font: UIFont.monospacedDigitSystemFont(ofSize: size, weight: .semibold),
+                    .foregroundColor: UIColor.white, .paragraphStyle: style
+                ])
+            }.withRenderingMode(.alwaysOriginal)
+        } else { image = symbol.withRenderingMode(.alwaysTemplate) }
+        let label = title
         let state = GridAction(signature: "\(title)|\(icon)|\(value ?? "")", perform: action)
         let result = CPGridButton(titleVariants: [label], image: image) { _ in state.perform() }
         gridActions.setObject(state, forKey: result)
@@ -161,7 +189,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             updates.first { $0.name.lowercased() == name.lowercased() }?.display ?? "—"
         }
         overview = telemetryGrid(overview, title: "Overview", icon: "car.side", buttons: [
-            button("Connection", icon: "antenna.radiowaves.left.and.right", value: model.transport.connected ? model.transport.label : "Offline") { [weak self] in
+            button(model.transport.connected ? model.transport.label : "Offline", icon: "antenna.radiowaves.left.and.right") { [weak self] in
                 self?.notice(diagnostics.fresh ? "Telemetry connected." : diagnostics.status)
             },
             button("Status", icon: "car.side", value: sample?.engaged.map { $0 ? "Engaged" : "Inactive" } ?? "—"),
@@ -204,7 +232,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let page = CPGridTemplate(title: title, gridButtons: [button("Loading readings…", icon: "hourglass")])
         page.userInfo = MetricPageState(title: title, kind: kind)
         updateMetrics(page)
-        controller.pushTemplate(page, animated: true, completion: nil)
+        pushTemplate(page, animated: true, completion: nil)
     }
 
     private func updateMetrics(_ page: CPGridTemplate) {
@@ -215,16 +243,13 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             return
         }
         let readings = sample.temperatures.filter { thermalGroup($0) == state.kind } + sample.rates.filter { rateGroup($0) == state.kind }
-        let count = max(1, (readings.count + 5) / 6)
+        let count = max(1, (readings.count + 7) / 8)
         state.index = min(state.index, count - 1)
-        var buttons = readings.dropFirst(state.index * 6).prefix(6).map { button($0.name, icon: "gauge", value: $0.display) }
+        var buttons = readings.dropFirst(state.index * 8).prefix(8).map { button($0.name, icon: "gauge", value: $0.display) }
         if buttons.isEmpty { buttons = [button("No readings available", icon: "questionmark.circle")] }
-        if state.index > 0 { buttons.append(button("Previous", icon: "arrow.left") { [weak self, weak page] in
-            guard let self, let page else { return }; state.index -= 1; self.updateMetrics(page)
-        }) }
-        if state.index + 1 < count { buttons.append(button("More", icon: "arrow.right") { [weak self, weak page] in
-            guard let self, let page else { return }; state.index += 1; self.updateMetrics(page)
-        }) }
+        paging(page, index: state.index, count: count) { [weak self, weak page] index in
+            guard let self, let page else { return }; state.index = index; self.updateMetrics(page)
+        }
         page.updateTitle(count > 1 ? "\(state.title) · \(state.index + 1)/\(count)" : state.title)
         updateGrid(page, buttons: buttons)
     }
@@ -239,7 +264,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let original = session
         let started = Date()
         defer {
-            if path == "/api/params/all" || path.hasPrefix("/assets/") {
+            if path == "/api/params/all?galaxy_ble_settings=1" || path.hasPrefix("/assets/") {
                 AppModel.shared.connectionLog.record("CarPlay read \(path): \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
             }
         }
@@ -258,7 +283,56 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard let data = try? Data(contentsOf: path),
               data.count <= 1_048_576,
               let sections = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        return sections
+        return prepareCatalogue(sections)
+    }
+
+    private func prepareCatalogue(_ sections: [[String: Any]]) -> [[String: Any]] {
+        var result = sections.map { section in
+            var section = section
+            let original = section["params"] as? [[String: Any]] ?? []
+            let byKey = Dictionary(original.compactMap { p -> (String, [String: Any])? in
+                guard let key = p["key"] as? String else { return nil }; return (key, p)
+            }, uniquingKeysWith: { first, _ in first })
+            section["params"] = original.compactMap { p -> [String: Any]? in
+                let key = p["key"] as? String ?? ""
+                if ["ExperimentalMode", "ConditionalChill"].contains(key) { return nil }
+                if key == "ConditionalExperimental" {
+                    return ["key": "LongitudinalControlMode", "label": "Longitudinal control mode",
+                            "ui_type": "dropdown", "data_type": "string", "settings_tier": "simple",
+                            "description": "Chill uses conventional speed control. Experimental uses model-controlled gas and brakes. Conditional modes switch under your configured conditions.",
+                            "options": [
+                                ["value": "chill", "label": "Chill"], ["value": "experimental", "label": "Experimental"],
+                                ["value": "conditional_experimental", "label": "Conditional Experimental"],
+                                ["value": "conditional_chill", "label": "Conditional Chill"]
+                            ]]
+                }
+                var updated = p, parent = p["parent_key"] as? String
+                if let kind = p["galaxy_ui_type"] { updated["ui_type"] = kind }
+                var seen = Set<String>()
+                while let ancestor = parent, seen.insert(ancestor).inserted {
+                    if ["ConditionalExperimental", "ConditionalChill"].contains(ancestor) {
+                        updated["longitudinal_mode"] = ancestor == "ConditionalExperimental" ? "conditional_experimental" : "conditional_chill"
+                        updated["settings_tier"] = "simple"
+                        if p["parent_key"] as? String == ancestor { updated["parent_key"] = "LongitudinalControlMode" }
+                        break
+                    }
+                    parent = byKey[ancestor]?["parent_key"] as? String
+                }
+                return updated
+            }
+            return section
+        }
+        if !result.contains(where: { $0["name"] as? String == "Language" }) {
+            result.append(["name": "Language", "params": [["key": "LanguageSetting", "label": "Language", "ui_type": "language", "settings_tier": "simple"]]])
+        }
+        return result
+    }
+
+    private func mergeValues(_ fresh: [String: Any]) {
+        values = fresh
+        values["LongitudinalControlMode"] = bool(fresh["ConditionalExperimental"]) == true ? "conditional_experimental" :
+            bool(fresh["ConditionalChill"]) == true ? "conditional_chill" :
+            bool(fresh["ExperimentalMode"]) == true ? "experimental" : "chill"
     }
 
     private func loadGalaxy() {
@@ -271,7 +345,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             do {
                 let layout = try await self.request("/assets/components/tools/device_settings_layout.json") as? [[String: Any]] ?? []
                 guard !layout.isEmpty else { throw BridgeError.message("Galaxy menus are unavailable. Try again when connected.") }
-                self.catalogue = layout
+                self.catalogue = self.prepareCatalogue(layout)
                 self.showCategories()
             } catch {
                 guard !Task.isCancelled else { return }
@@ -298,6 +372,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         if name.hasPrefix("Vehicle") { return "car.side" }
         if name.hasPrefix("Device") { return "internaldrive" }
         if name.hasPrefix("Developer") { return "hammer" }
+        if name == "Language" { return "globe" }
         return "switch.2"
     }
 
@@ -305,20 +380,21 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard !catalogue.isEmpty else {
             return [button("Load menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]
         }
-        let count = max(1, (catalogue.count + 5) / 6)
+        let count = max(1, (catalogue.count + 7) / 8)
         categoryPage = min(categoryPage, count - 1)
-        var buttons = catalogue.dropFirst(categoryPage * 6).prefix(6).map { section in
+        var buttons = catalogue.dropFirst(categoryPage * 8).prefix(8).map { section in
             let name = section["name"] as? String ?? "Settings"
             return button(categoryLabel(name), icon: categoryIcon(name)) { [weak self] in self?.openSettings(section) }
         }
-        if categoryPage > 0 { buttons.append(button("Previous", icon: "arrow.left") { [weak self] in self?.categoryPage -= 1; self?.showCategories() }) }
-        if categoryPage + 1 < count { buttons.append(button("More", icon: "arrow.right") { [weak self] in self?.categoryPage += 1; self?.showCategories() }) }
         return buttons
     }
 
     private func showCategories() {
         guard let toggles else { return }
         updateGrid(toggles, buttons: categoryButtons())
+        paging(toggles, index: categoryPage, count: max(1, (catalogue.count + 7) / 8)) { [weak self] index in
+            self?.categoryPage = index; self?.showCategories()
+        }
     }
 
     private func openSettings(_ section: [String: Any]) {
@@ -330,16 +406,16 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let loading = CPGridTemplate(title: name, gridButtons: [
             button("Reading settings…", icon: "arrow.triangle.2.circlepath")
         ])
-        controller?.pushTemplate(loading, animated: true, completion: nil)
+        pushTemplate(loading, animated: true, completion: nil)
         busy = true
         work = Task { [weak self, weak loading] in
             guard let self else { return }
             defer { self.busy = false }
             do {
                 let original = self.session
-                let fresh = try await self.request("/api/params/all") as? [String: Any] ?? [:]
+                let fresh = try await self.request("/api/params/all?galaxy_ble_settings=1") as? [String: Any] ?? [:]
                 guard original == self.session else { throw BridgeError.message("Connection changed. Try again.") }
-                self.values = fresh; self.valuesSession = original; self.valuesAt = Date()
+                self.mergeValues(fresh); self.valuesSession = original; self.valuesAt = Date()
                 guard let loading, self.controller?.topTemplate === loading else { return }
                 let params = (section["params"] as? [[String: Any]] ?? []).filter(self.visible)
                 self.settingsPage(loading, title: name, params: params, index: 0)
@@ -357,98 +433,633 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func bool(_ value: Any?) -> Bool? {
-        guard let value = value as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
-        return value.boolValue
+        guard let value else { return nil }
+        if let n = value as? NSNumber { return n.boolValue }
+        switch String(describing: value).lowercased() {
+        case "true", "1", "yes", "on": return true
+        case "false", "0", "", "no", "off": return false
+        default: return nil
+        }
     }
 
     private func visible(_ param: [String: Any]) -> Bool {
-        if param["settings_tier"] as? String != "simple", bool(values["GalaxyDeveloperMode"]) != true { return false }
+        let key = param["key"] as? String ?? ""
+        let makesByKey: [String: [String]] = [
+            "RivianAngleControl": ["Rivian"],
+            "TeslaCoopSteering": ["Tesla"],
+            "NAPRadarEnabled": ["Tesla"],
+            "NAPRadarBehindNosecone": ["Tesla"],
+            "NAPRadarOffset": ["Tesla"],
+            "NAPPedalEnabled": ["Tesla"],
+            "NAPPedalCanBus": ["Tesla"],
+            "NAPAdaptiveAccel": ["Tesla"],
+            "NAPPedalCalibDone": ["Tesla"],
+            "NAPPedalCalibFactor": ["Tesla"],
+            "NAPPedalCalibZero": ["Tesla"],
+            "GMPedalLongitudinal": ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"],
+            "GMDashSpoofOffsets": ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"],
+            "IgnoreIgnitionLine": ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"],
+            "LongPitch": ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"],
+            "RemoteStartBootsComma": ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"],
+            "HKGRemoteStartBootsComma": ["Genesis", "Hyundai", "Kia"],
+            "VoltSNG": ["Chevrolet", "Holden"],
+            "GMAutoHold": ["Buick", "Chevrolet", "Holden"],
+            "VoltOnePedalMode": ["Chevrolet", "Holden"],
+            "RemapCancelToDistance": ["Chevrolet", "Holden"],
+            "JeepBrakeHold": ["Jeep"],
+            "SubaruSNG": ["Subaru"],
+            "SubaruSNGManualParkingBrake": ["Subaru"],
+            "SubaruStopStartOff": ["Subaru"],
+            "SubaruAvhStartup": ["Subaru"],
+            "SubaruRedneckCruise": ["Subaru"],
+            "SNGHack": ["Lexus", "Toyota"],
+            "ToyotaAutoHold": ["Lexus", "Toyota"]
+        ]
+        let hidden: Set<String> = ["AccelerationProfile", "AggressiveFollow", "AggressiveFollowHigh", "CustomAccelProfile", "CustomAccelProfile0MPH", "CustomAccelProfile11MPH", "CustomAccelProfile22MPH", "CustomAccelProfile34MPH", "CustomAccelProfile45MPH", "CustomAccelProfile56MPH", "CustomAccelProfile89MPH", "DecelerationProfile", "EVTuning", "HumanAcceleration", "RelaxedFollow", "RelaxedFollowHigh", "StandardFollow", "StandardFollowHigh", "TrafficFollow", "TruckTuning"]
+        if let mode = param["longitudinal_mode"] as? String, mode != values["LongitudinalControlMode"] as? String { return false }
+        if hidden.contains(key) || key == "Model" { return false }
+        if key != "StarPilotFavoriteSlots", param["settings_tier"] as? String != "simple", bool(values["GalaxyDeveloperMode"]) != true { return false }
+        let make = String(describing: values["CarMake"] ?? "").lowercased()
+        if let makes = (param["vehicle_makes"] as? [String]) ?? makesByKey[key], !makes.contains(where: { $0.lowercased() == make }) { return false }
+        if let makes = param["excluded_vehicle_makes"] as? [String], makes.contains(where: { $0.lowercased() == make }) { return false }
         if let required = param["requires_capability"] as? String, bool(values[required]) != true { return false }
         if let required = param["visible_when_all_true"] as? [String], required.contains(where: { bool(values[$0]) != true }) { return false }
-        if let makes = param["vehicle_makes"] as? [String], !makes.contains(values["CarMake"] as? String ?? "") { return false }
+        if let dep = param["visible_when_key"] as? String, let allowed = param["visible_when_values"] as? [Any],
+           !allowed.contains(where: { String(describing: $0) == String(describing: values[dep] ?? "") }) { return false }
+        if ["HumanLaneChanges", "RadarTakeoffs"].contains(key), bool(values["HasRadar"]) != true { return false }
+        if key == "AlphaLongitudinalEnabled", bool(values["AlphaLongitudinalAvailable"]) != true { return false }
         return true
+    }
+
+    private func paging(_ page: CPGridTemplate, index: Int, count: Int, change: @escaping (Int) -> Void) {
+        guard count > 1 else { page.trailingNavigationBarButtons = []; return }
+        let previous = CPBarButton(image: UIImage(systemName: "chevron.left")!) { _ in change(index - 1) }
+        let next = CPBarButton(image: UIImage(systemName: "chevron.right")!) { _ in change(index + 1) }
+        previous.isEnabled = index > 0; next.isEnabled = index + 1 < count
+        page.trailingNavigationBarButtons = [previous, next]
     }
 
     private func showSettings(_ section: [String: Any]) {
         let name = categoryLabel(section["name"] as? String ?? "Galaxy")
         let params = (section["params"] as? [[String: Any]] ?? []).filter(visible)
-        let page = CPGridTemplate(title: name, gridButtons: [button("Loading settings…", icon: "hourglass")])
+        let page = CPGridTemplate(title: name, gridButtons: [button("Settings", icon: "gearshape")])
         settingsPage(page, title: name, params: params, index: 0)
-        controller?.pushTemplate(page, animated: true, completion: nil)
+        pushTemplate(page, animated: true, completion: nil)
     }
 
-    private func settingsPage(_ page: CPGridTemplate, title: String, params: [[String: Any]], index: Int) {
-        let count = max(1, (params.count + 5) / 6)
-        let current = min(index, count - 1)
-        var buttons = params.dropFirst(current * 6).prefix(6).map { param in
-            let key = param["key"] as? String ?? ""
-            let label = param["label"] as? String ?? key
-            let value = bool(values[key]).map { $0 ? "On" : "Off" } ?? "iPhone"
-            return button(label, icon: value == "On" ? "checkmark.circle.fill" : value == "Off" ? "circle" : "iphone", value: value) { [weak self, weak page] in
-                self?.confirmToggle(param, page: page, title: title, params: params, index: current)
+    private func number(_ value: Any?) -> Double? {
+        guard let value else { return nil }
+        let n = (value as? NSNumber)?.doubleValue ?? Double(String(describing: value))
+        return n?.isFinite == true ? n : nil
+    }
+
+    private func parameter(_ original: [String: Any]) -> [String: Any] {
+        var p = original
+        if p["unit_type"] as? String == "vehicle_speed" {
+            let prefix = bool(values["IsMetric"]) == true ? "metric_" : "imperial_"
+            p["unit"] = prefix == "metric_" ? " km/h" : " mph"
+            for field in ["min", "max", "step", "precision"] {
+                if let override = p[prefix + field] { p[field] = override }
             }
         }
-        if buttons.isEmpty { buttons = [button("Use Galaxy on iPhone", icon: "iphone")] }
-        if current > 0 { buttons.append(button("Previous", icon: "arrow.left") { [weak self, weak page] in
-            if let page { self?.settingsPage(page, title: title, params: params, index: current - 1) }
-        }) }
-        if current + 1 < count { buttons.append(button("More", icon: "arrow.right") { [weak self, weak page] in
-            if let page { self?.settingsPage(page, title: title, params: params, index: current + 1) }
-        }) }
+        return p
+    }
+
+    private func bounds(_ original: [String: Any]) -> (Double, Double, Double, Int) {
+        let p = parameter(original), key = p["key"] as? String ?? ""
+        var lo = number(p["min"]) ?? 0, hi = number(p["max"]) ?? 100
+        var step = number(p["step"]) ?? (p["data_type"] as? String == "float" ? 0.01 : 1)
+        if key == "LaneCenterOffset" { lo = -0.3; hi = 0.3; step = 0.01 }
+        if key == "SteerKP" || key == "SteerLatAccel" || key == "SteerRatio" {
+            let fallback = key == "SteerKP" ? 0.6 : key == "SteerLatAccel" ? 2.0 : 15.0
+            let stock = number(values[key + "Stock"]) ?? 0, current = number(values[key]) ?? 0
+            let base = stock != 0 ? stock : current != 0 ? current : fallback
+            lo = base * (key == "SteerRatio" ? 0.25 : 0.5)
+            hi = base * (key == "SteerLatAccel" ? 1.25 : 1.5)
+            lo = (lo * 100).rounded() / 100; hi = (hi * 100).rounded() / 100; step = 0.01
+        }
+        if key.contains("Jerk") { lo = 25; hi = 200; step = 1 }
+        let decimals = String(step).split(separator: ".").last?.count ?? 0
+        return (lo, hi, max(0.0001, step), min(6, max(0, (p["precision"] as? Int) ?? (step == floor(step) ? 0 : decimals))))
+    }
+
+    private func valueLabel(_ p: [String: Any]) -> String {
+        let key = p["key"] as? String ?? "", kind = p["ui_type"] as? String ?? ""
+        if kind == "toggle" { return bool(values[key]).map { $0 ? "On" : "Off" } ?? "Unknown" }
+        if let options = p["options"] as? [[String: Any]],
+           let selected = options.first(where: { String(describing: $0["value"] ?? "") == String(describing: values[key] ?? "") }) {
+            return selected["label"] as? String ?? ""
+        }
+        if kind == "numeric" || kind == "brightness" || kind == "readout", let n = number(values[key]) {
+            if key.contains("Brightness"), n == 101 { return "Auto" }
+            let resolved = parameter(p)
+            return String(format: "%.*f", bounds(p).3, n) + (resolved["unit"] as? String ?? "")
+        }
+        return String(describing: values[key] ?? "Not reported")
+    }
+
+    private func settingsPage(_ page: CPGridTemplate, title: String, params: [[String: Any]], index: Int, parent: String? = nil) {
+        let displayed = params.filter { (($0["parent_key"] as? String) == parent || (parent == nil && $0["_display_root"] as? Bool == true)) && visible($0) }
+        let count = max(1, (displayed.count + 7) / 8), current = min(index, count - 1)
+        var buttons = displayed.dropFirst(current * 8).prefix(8).map { p in
+            let key = p["key"] as? String ?? "", label = p["label"] as? String ?? key
+            let children = p["_enable_parent"] as? Bool != true && params.contains { $0["parent_key"] as? String == key && visible($0) }
+            let kind = p["ui_type"] as? String ?? ""
+            let icon = children || kind == "group" ? "folder" : kind == "numeric" ? "slider.horizontal.3" :
+                kind == "dropdown" ? "list.bullet" : kind == "color" ? "paintpalette" :
+                kind == "favorites" ? "star" : kind == "toggle" ? (bool(values[key]) == true ? "checkmark.circle.fill" : "circle") : "gearshape"
+            return button(label, icon: icon, value: ["toggle", "numeric", "brightness", "dropdown", "color", "readout"].contains(kind) ? valueLabel(p) : nil) { [weak self] in
+                guard let self else { return }
+                if key == "LongitudinalControlMode", p["_enable_parent"] as? Bool != true { self.modeGroup(p, params: params) }
+                else if key == "CustomPersonalities" { self.personalities() }
+                else if children || kind == "group" {
+                    self.showGroup(p, title: label, params: params)
+                } else { self.edit(p) }
+            }
+        }
+        if buttons.isEmpty { buttons = [button("No available settings", icon: "info.circle")] }
+        paging(page, index: current, count: count) { [weak self, weak page] next in
+            if let page { self?.settingsPage(page, title: title, params: params, index: next, parent: parent) }
+        }
         page.updateTitle(count > 1 ? "\(title) · \(current + 1)/\(count)" : title)
         updateGrid(page, buttons: buttons)
     }
 
-    private func confirmToggle(_ param: [String: Any], page: CPGridTemplate?, title: String, params: [[String: Any]], index: Int) {
-        guard !busy, let key = param["key"] as? String, param["ui_type"] as? String == "toggle",
-              param["data_type"] as? String == "bool", let current = bool(values[key]),
-              param["confirm_message"] == nil, param["requires_capability"] == nil,
-              !["ExperimentalMode", "ConditionalExperimental", "ConditionalChill", "ForceOffroad"].contains(key) else {
-            notice("This control needs its full editor. Open Galaxy on your iPhone."); return
+    private func showGroup(_ p: [String: Any], title: String, params: [[String: Any]]) {
+        let key = p["key"] as? String ?? ""
+        var children = params.filter { $0["parent_key"] as? String == key && visible($0) }
+        if p["ui_type"] as? String == "toggle" {
+            var enabled = p; enabled["label"] = "Enable"; enabled["parent_key"] = key; enabled.removeValue(forKey: "is_parent_toggle")
+            enabled["_enable_parent"] = true
+            children.insert(enabled, at: 0)
         }
-        let original = session
-        let label = param["label"] as? String ?? key
-        let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
-        let apply = CPAlertAction(title: current ? "Turn off" : "Turn on", style: .default) { [weak self, weak page] _ in
-            guard let self else { return }
-            self.controller?.dismissTemplate(animated: true, completion: nil)
-            self.busy = true
-            self.work = Task { [weak self, weak page] in
-                guard let self else { return }
-                defer { self.busy = false }
-                do {
-                    guard original == self.session else { throw BridgeError.message("Connection changed. Please try again.") }
-                    let fresh = try await self.request("/api/params/all") as? [String: Any] ?? [:]
-                    let device = try await self.request("/api/device/status") as? [String: Any] ?? [:]
-                    guard original == self.session, self.bool(fresh["IsOnroad"]) == false,
-                          device["status"] as? String == "Parked",
-                          self.bool(fresh["VehicleParked"]) == true,
-                          self.bool(fresh[key]) == current else {
-                        throw BridgeError.message("Park first, then refresh Galaxy toggles before changing a setting.")
-                    }
-                    self.values = fresh
-                    guard self.visible(param) else { throw BridgeError.message("This setting is no longer available. Refresh Galaxy.") }
-                    if param["requires_parked"] as? Bool == true, self.bool(fresh["VehicleParked"]) != true {
-                        throw BridgeError.message("Put the vehicle in Park first.")
-                    }
-                    if let parent = param["parent_key"] as? String, self.bool(fresh[parent]) != true {
-                        throw BridgeError.message("Enable the parent setting in Galaxy first.")
-                    }
-                    if let required = param["requires_nonempty_key"] as? String, String(describing: fresh[required] ?? "").isEmpty {
-                        throw BridgeError.message("Finish configuring this setting in Galaxy on iPhone.")
-                    }
-                    let payload = try JSONSerialization.data(withJSONObject: ["key": key, "value": !current, "label": label])
-                    guard original == self.session else { throw BridgeError.message("Connection changed. Please try again.") }
-                    _ = try await self.request("/api/params", method: "PUT", body: payload)
-                    self.values = try await self.request("/api/params/all") as? [String: Any] ?? [:]
-                    self.valuesSession = self.session; self.valuesAt = Date()
-                    if let page { self.settingsPage(page, title: title, params: params, index: index) }
-                } catch {
-                    if !Task.isCancelled { self.notice(error.localizedDescription) }
+        let page = CPGridTemplate(title: title, gridButtons: [button("Settings", icon: "folder")])
+        settingsPage(page, title: title, params: children + params.filter { $0["parent_key"] as? String != key }, index: 0, parent: key)
+        pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func edit(_ p: [String: Any]) {
+        let key = p["key"] as? String ?? "", label = p["label"] as? String ?? key
+        let kind = p["ui_type"] as? String ?? ""
+        switch kind {
+        case "toggle":
+            guard let old = bool(values[key]) else { notice("Read this setting again before editing."); return }
+            let page = CPGridTemplate(title: label, gridButtons: [
+                button("On", icon: "checkmark.circle.fill") { [weak self] in self?.apply(p, value: true, expected: old) },
+                button("Off", icon: "circle") { [weak self] in self?.apply(p, value: false, expected: old) },
+                button(old ? "Currently on" : "Currently off", icon: "info.circle") { [weak self] in self?.notice(p["description"] as? String ?? label) }
+            ])
+            pushTemplate(page, animated: true, completion: nil)
+        case "brightness": brightness(p)
+        case "numeric":
+            guard let old = number(values[key]) else { notice("No value reported for this setting."); return }
+            numericEditor(p, original: old)
+        case "dropdown":
+            if key == "LongitudinalControlMode" { longitudinalMode(p) } else { dropdown(p) }
+        case "language": language()
+        case "color": colors(p)
+        case "action": apply(p, value: NSNull(), expected: values[key] ?? NSNull())
+        case "favorites": favorites()
+        default: notice("\(label): \(valueLabel(p))\n\(p["description"] as? String ?? "")")
+        }
+    }
+
+    private func numericEditor(_ p: [String: Any], original: Double) {
+        let label = p["label"] as? String ?? "Value", limits = bounds(p)
+        var draft = original
+        let page = CPGridTemplate(title: label, gridButtons: [button("Value", icon: "slider.horizontal.3")])
+        let reference = WeakGrid(page)
+        func redraw() {
+            guard let page = reference.page else { return }
+            let formatted = String(format: "%.*f", limits.3, draft) + (parameter(p)["unit"] as? String ?? "")
+            updateGrid(page, buttons: [
+                button("Decrease", icon: "minus.circle") { draft = max(limits.0, (round((draft - limits.0) / limits.2) - 1) * limits.2 + limits.0); redraw() },
+                button(formatted, icon: "slider.horizontal.3") { [weak self] in self?.notice(p["description"] as? String ?? label) },
+                button("Increase", icon: "plus.circle") { draft = min(limits.1, (round((draft - limits.0) / limits.2) + 1) * limits.2 + limits.0); redraw() },
+                button("Save", icon: "checkmark") { [weak self] in self?.apply(p, value: p["data_type"] as? String == "int" ? Int(draft.rounded()) as Any : draft as Any, expected: original) }
+            ])
+        }
+        redraw(); pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func choices(_ p: [String: Any], options: [[String: Any]], selected: ((Any) -> Void)? = nil) {
+        let title = p["label"] as? String ?? "Choose"
+        let page = CPGridTemplate(title: title, gridButtons: [button("Choose", icon: "list.bullet")])
+        let reference = WeakGrid(page)
+        func render(_ index: Int) {
+            guard let page = reference.page else { return }
+            let count = max(1, (options.count + 7) / 8), current = min(index, count - 1)
+            var buttons = options.dropFirst(current * 8).prefix(8).map { choice in
+                let v = choice["value"] ?? ""
+                let selected = String(describing: values[p["key"] as? String ?? ""] ?? "") == String(describing: v)
+                return button(choice["label"] as? String ?? String(describing: v), icon: selected ? "checkmark.circle.fill" : "circle") { [weak self] in
+                    if let selected { selected(v) }
+                    else { self?.apply(p, value: v, expected: self?.values[p["key"] as? String ?? ""] ?? NSNull()) }
                 }
             }
+            if buttons.isEmpty { buttons = [button("No choices reported", icon: "info.circle")] }
+            paging(page, index: current, count: count, change: render)
+            updateGrid(page, buttons: buttons)
         }
-        controller?.presentTemplate(CPAlertTemplate(titleVariants: ["\(label): \(current ? "On" : "Off") → \(current ? "Off" : "On")\nChanges are available while parked."], actions: [cancel, apply]), animated: true, completion: nil)
+        render(0); pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func dropdown(_ p: [String: Any]) {
+        if let options = p["options"] as? [[String: Any]] { choices(p, options: options); return }
+        guard var endpoint = p["options_endpoint"] as? String, !busy else { notice("Choices unavailable."); return }
+        for (key, value) in values {
+            endpoint = endpoint.replacingOccurrences(of: "{\(key)}", with: String(describing: value).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=#?"))) ?? "")
+        }
+        guard endpoint.hasPrefix("/api/fingerprints/"), !endpoint.contains("{") else { notice("Select the car make first."); return }
+        busy = true
+        work = Task { [weak self] in
+            guard let self else { return }; defer { self.busy = false }
+            do {
+                let data = try await self.request(endpoint)
+                let options = (data as? [[String: Any]]) ?? (data as? [String] ?? []).map { ["label": $0, "value": $0] }
+                self.choices(p, options: options)
+            } catch { if !Task.isCancelled { self.notice(error.localizedDescription) } }
+        }
+    }
+
+    private func colors(_ p: [String: Any]) {
+        choices(p, options: [
+            ["label": "Stock", "value": "stock"], ["label": "White", "value": "#ffffff"],
+            ["label": "Blue", "value": "#007aff"], ["label": "Green", "value": "#00ff00"],
+            ["label": "Red", "value": "#ff3b30"], ["label": "Orange", "value": "#ff9500"],
+            ["label": "Purple", "value": "#af52de"], ["label": "Custom RGB", "value": "_custom"]
+        ]) { [weak self] value in
+            guard let self else { return }
+            if value as? String == "_custom" { self.customColor(p) }
+            else { self.apply(p, value: value, expected: self.values[p["key"] as? String ?? ""] ?? "stock") }
+        }
+    }
+
+    private func customColor(_ p: [String: Any]) {
+        let original = values[p["key"] as? String ?? ""] ?? "stock"
+        let hex = String(describing: original).replacingOccurrences(of: "#", with: "")
+        let encoded = UInt32(hex, radix: 16) ?? 0xffffff
+        var channels = [Double((encoded >> 16) & 255), Double((encoded >> 8) & 255), Double(encoded & 255)]
+        let page = CPGridTemplate(title: "Custom color", gridButtons: [button("Color", icon: "paintpalette")])
+        let reference = WeakGrid(page)
+        func redraw() {
+            guard let page = reference.page else { return }
+            var buttons = ["Red", "Green", "Blue"].enumerated().map { index, label in
+                button(label, icon: "slider.horizontal.3", value: String(Int(channels[index]))) { [weak self] in
+                    self?.stagedNumber(label, value: channels[index], min: 0, max: 255, step: 1) { value in
+                        channels[index] = value; redraw()
+                    }
+                }
+            }
+            buttons.append(button("Save color", icon: "checkmark") { [weak self] in
+                let color = String(format: "#%02x%02x%02x", Int(channels[0]), Int(channels[1]), Int(channels[2]))
+                self?.apply(p, value: color, expected: original)
+            })
+            updateGrid(page, buttons: buttons)
+        }
+        redraw(); pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func modeGroup(_ p: [String: Any], params: [[String: Any]]) {
+        let page = CPGridTemplate(title: "Longitudinal mode", gridButtons: [button("Mode", icon: "speedometer")])
+        var mode = p; mode["parent_key"] = "LongitudinalControlMode"; mode["_enable_parent"] = true
+        settingsPage(page, title: "Longitudinal mode", params: [mode] + params, index: 0, parent: "LongitudinalControlMode")
+        pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func longitudinalMode(_ p: [String: Any]) {
+        loadEditor("/api/longitudinal_mode", title: "Longitudinal mode") { [weak self] data in
+            guard let self, let expected = data["values"] as? [String: Any], let current = data["mode"] as? String else { return }
+            if data["locked"] as? Bool == true { self.notice(data["reason"] as? String ?? "This mode is locked."); return }
+            self.values["LongitudinalControlMode"] = current
+            self.choices(p, options: p["options"] as? [[String: Any]] ?? []) { [weak self] target in
+                guard let self else { return }
+                let experimental = String(describing: target) == "experimental"
+                let label = experimental ? "Experimental mode: model-controlled gas and brakes" : "longitudinal mode"
+                self.specialSave(label, endpoint: "/api/longitudinal_mode",
+                    payload: ["mode": target, "expected": expected, "acknowledged": experimental],
+                    checkPath: "/api/longitudinal_mode", checkKey: "values", expected: expected) { [weak self] in
+                        self?.values["LongitudinalControlMode"] = target
+                    }
+            }
+        }
+    }
+
+    private func language() {
+        let options: [[String: Any]] = [
+            ["value": "main_en", "label": "English"], ["value": "main_es", "label": "Spanish"],
+            ["value": "main_fr", "label": "French"], ["value": "main_ko", "label": "Korean"],
+            ["value": "main_zh-CHS", "label": "Chinese"]
+        ]
+        choices(["key": "LanguageSetting", "label": "Language", "ui_type": "dropdown",
+                 "settings_tier": "simple", "data_type": "string"], options: options)
+    }
+
+    private func brightness(_ p: [String: Any]) {
+        let key = p["key"] as? String ?? "", current = number(values[key]) ?? 101
+        let manual = number(values[key + "Manual"]) ?? 100
+        let page = CPGridTemplate(title: p["label"] as? String, gridButtons: [
+            button(current == 101 ? "Auto · selected" : "Auto", icon: "sun.max") { [weak self] in self?.apply(p, value: 101, expected: current) },
+            button(current <= 100 ? "Manual · selected" : "Manual", icon: "slider.horizontal.3") { [weak self] in
+                guard let self else { return }
+                var control = p; control["ui_type"] = "numeric"; control["min"] = 0; control["max"] = 100; control["precision"] = 0; control["unit"] = "%"
+                self.stagedNumber("Manual brightness", value: current <= 100 ? current : manual, min: 0, max: 100, step: 1) { [weak self] value in
+                    self?.apply(control, value: Int(value.rounded()), expected: current)
+                }
+            },
+            button("Auto offset", icon: "plusminus") { [weak self] in
+                guard let self else { return }
+                var control = p; control["key"] = key + "Offset"; control["label"] = "Auto brightness offset"
+                control["ui_type"] = "numeric"; control["min"] = -30; control["max"] = 30; control["step"] = 1; control["precision"] = 0; control["unit"] = "%"
+                self.numericEditor(control, original: self.number(self.values[key + "Offset"]) ?? 0)
+            }
+        ])
+        pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func parked(_ original: String) async throws -> [String: Any] {
+        let fresh = try await request("/api/params/all?galaxy_ble_settings=1") as? [String: Any] ?? [:]
+        let device = try await request("/api/device/status") as? [String: Any] ?? [:]
+        guard original == session, bool(fresh["IsOnroad"]) == false,
+              bool(fresh["VehicleParked"]) == true, device["status"] as? String == "Parked" else {
+            throw BridgeError.message("Put the vehicle in Park and reconnect before changing settings.")
+        }
+        return fresh
+    }
+
+    private func same(_ left: Any?, _ right: Any?) -> Bool {
+        if let left = number(left), let right = number(right) { return abs(left - right) < 0.000001 }
+        return String(describing: left ?? NSNull()) == String(describing: right ?? NSNull())
+    }
+
+    private func confirmation(_ message: String, perform: @escaping () -> Void) {
+        let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
+        let save = CPAlertAction(title: "Save", style: .default) { [weak self] _ in
+            self?.controller?.dismissTemplate(animated: true, completion: nil); perform()
+        }
+        controller?.presentTemplate(CPAlertTemplate(titleVariants: [message], actions: [cancel, save]), animated: true, completion: nil)
+    }
+
+    private func apply(_ p: [String: Any], value: Any, expected: Any) {
+        guard !busy, let key = p["key"] as? String else { return }
+        let original = session, label = p["label"] as? String ?? key
+        let firmware = ["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "TeslaWakeOnCAN"].contains(key)
+        let message = firmware ? "\(label) requires a Panda firmware update and device reboot. Change this setting and flash the Panda now?" :
+            (p["confirm_message"] as? String ?? "\(label): \(String(describing: value))") + "\nSave while parked?"
+        confirmation(message) { [weak self] in
+            guard let self else { return }; self.busy = true
+            self.work = Task { [weak self] in
+                guard let self else { return }; defer { self.busy = false }
+                do {
+                    let fresh = try await self.parked(original)
+                    self.mergeValues(fresh)
+                    if key == "CustomPersonalities" || key.contains("PersonalityProfile") || key.contains("Jerk") {
+                        let profiles = try await self.request("/api/personality_profiles") as? [String: Any] ?? [:]
+                        guard profiles["migration_required"] as? Bool == false else {
+                            throw BridgeError.message("Profile data needs verified migration before editing.")
+                        }
+                    }
+                    guard self.visible(p), p["ui_type"] as? String == "action" || self.same(fresh[key], expected) else {
+                        throw BridgeError.message("This setting changed. Reopen it before saving.")
+                    }
+                    if let disabled = p["disabled_when_key_true"] as? String, self.bool(fresh[disabled]) == true {
+                        throw BridgeError.message(p["disabled_reason"] as? String ?? "Disabled by another setting.")
+                    }
+                    if let parent = p["parent_key"] as? String, p["_enable_parent"] as? Bool != true,
+                       (parent == "LongitudinalControlMode" ? !(self.bool(fresh["ConditionalExperimental"]) == true || self.bool(fresh["ConditionalChill"]) == true) : self.bool(fresh[parent]) != true),
+                       self.catalogue.flatMap({ $0["params"] as? [[String: Any]] ?? [] }).first(where: { $0["key"] as? String == parent })?["ui_type"] as? String != "group" {
+                        throw BridgeError.message("Enable the parent setting first.")
+                    }
+                    if let required = p["requires_nonempty_key"] as? String,
+                       ["", "{}"].contains(String(describing: fresh[required] ?? "")) {
+                        throw BridgeError.message("Required configuration is missing.")
+                    }
+                    let endpoint: String, method: String, payload: [String: Any]
+                    if p["ui_type"] as? String == "action" {
+                        guard p["action_endpoint"] as? String == "/api/curve_speed_controller/reset" else {
+                            throw BridgeError.message("This action requires its full confirmation on iPhone.")
+                        }
+                        endpoint = "/api/curve_speed_controller/reset"; method = "POST"; payload = [:]
+                    } else {
+                        if p["ui_type"] as? String == "numeric" {
+                            let limits = self.bounds(p)
+                            guard let n = self.number(value), n >= limits.0, n <= limits.1 else {
+                                throw BridgeError.message("Value is outside Galaxy's current range.")
+                            }
+                        }
+                        endpoint = "/api/params"; method = "PUT"
+                        var body: [String: Any] = ["key": key, "value": value, "label": label]
+                        if firmware { body["confirmedPandaFirmwareFlash"] = true }
+                        payload = body
+                    }
+                    guard original == self.session else { throw BridgeError.message("Connection changed before saving.") }
+                    let response = try await self.request(endpoint, method: method, body: JSONSerialization.data(withJSONObject: payload)) as? [String: Any] ?? [:]
+                    self.mergeValues(fresh)
+                    if p["ui_type"] as? String != "action" { self.values[key] = value }
+                    if let updated = response["updated"] as? [String: Any] { self.values.merge(updated) { _, new in new } }
+                    self.valuesSession = self.session; self.valuesAt = Date()
+                    self.notice("Saved \(label).")
+                } catch { if !Task.isCancelled { self.notice(error.localizedDescription) } }
+            }
+        }
+    }
+
+    private func specialSave(_ label: String, endpoint: String, payload: [String: Any],
+                             checkPath: String? = nil, checkKey: String? = nil, expected: Any? = nil,
+                             completion: (() -> Void)? = nil) {
+        guard !busy else { return }
+        let original = session
+        confirmation("Save \(label) while parked?") { [weak self] in
+            guard let self else { return }; self.busy = true
+            self.work = Task { [weak self] in
+                guard let self else { return }; defer { self.busy = false }
+                do {
+                    self.mergeValues(try await self.parked(original))
+                    if let checkPath, let expected {
+                        let latest = try await self.request(checkPath) as? [String: Any] ?? [:]
+                        let actual = checkKey.map { latest[$0] ?? NSNull() } ?? latest
+                        guard self.jsonEqual(actual, expected) else { throw BridgeError.message("Saved settings changed. Reopen this editor.") }
+                    }
+                    guard original == self.session else { throw BridgeError.message("Connection changed before saving.") }
+                    _ = try await self.request(endpoint, method: "PUT", body: JSONSerialization.data(withJSONObject: payload))
+                    completion?()
+                    self.notice("Saved \(label).")
+                } catch { if !Task.isCancelled { self.notice(error.localizedDescription) } }
+            }
+        }
+    }
+
+    private func jsonEqual(_ a: Any, _ b: Any) -> Bool {
+        guard let a = try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys, .fragmentsAllowed]),
+              let b = try? JSONSerialization.data(withJSONObject: b, options: [.sortedKeys, .fragmentsAllowed]) else { return false }
+        return a == b
+    }
+
+    private func loadEditor(_ path: String, title: String, show: @escaping ([String: Any]) -> Void) {
+        guard !busy else { return }
+        busy = true
+        let generation = session
+        let loading = CPGridTemplate(title: title, gridButtons: [button("Reading…", icon: "arrow.triangle.2.circlepath")])
+        pushTemplate(loading, animated: true, completion: nil)
+        work = Task { [weak self, weak loading] in
+            guard let self else { return }; defer { self.busy = false }
+            do {
+                let data = try await self.request(path) as? [String: Any] ?? [:]
+                guard generation == self.session, let loading, self.controller?.topTemplate === loading else { return }
+                self.controller?.popTemplate(animated: false, completion: { _, _ in show(data) })
+            } catch { if !Task.isCancelled { self.notice(error.localizedDescription) } }
+        }
+    }
+
+    private func favorites() {
+        loadEditor("/api/favorites/slots", title: "Favorites") { [weak self] data in
+            guard let self else { return }
+            let slots = data["slots"] as? [[String: Any]] ?? []
+            let options = data["options"] as? [[String: Any]] ?? []
+            let buttons = (0..<3).map { index in
+                let slot = index < slots.count ? slots[index] : [:]
+                return self.button(slot["label"] as? String ?? "Slot \(index + 1)", icon: "star") { [weak self] in
+                    self?.favoriteSlot(index, slots: slots, options: options)
+                }
+            }
+            self.pushTemplate(CPGridTemplate(title: "Favorites", gridButtons: buttons), animated: true, completion: nil)
+        }
+    }
+
+    private func favoriteSlot(_ index: Int, slots original: [[String: Any]], options: [[String: Any]]) {
+        var slots = original
+        while slots.count < 3 { slots.append(["enabled": false, "show_onroad": false, "key": NSNull(), "label": ""]) }
+        let page = CPGridTemplate(title: "Favorite \(index + 1)", gridButtons: [button("Favorite", icon: "star")])
+        let reference = WeakGrid(page)
+        func redraw() {
+            guard let page = reference.page else { return }
+            let enabled = bool(slots[index]["enabled"]) == true, onroad = bool(slots[index]["show_onroad"]) == true
+            updateGrid(page, buttons: [
+                button(enabled ? "Enabled" : "Disabled", icon: enabled ? "checkmark.circle.fill" : "circle") { slots[index]["enabled"] = !enabled; redraw() },
+                button(onroad ? "Shown while driving" : "Hidden while driving", icon: "car.side") { slots[index]["show_onroad"] = !onroad; redraw() },
+                button(slots[index]["label"] as? String ?? "Choose control", icon: "switch.2") { [weak self] in
+                    self?.choices(["label": "Choose favorite"], options: options.map {
+                        ["label": $0["label"] ?? $0["key"] ?? "", "value": $0["key"] ?? ""]
+                    }) { [weak self] key in
+                        slots[index]["key"] = key
+                        slots[index]["label"] = options.first { String(describing: $0["key"] ?? "") == String(describing: key) }?["label"] ?? key
+                        self?.controller?.popTemplate(animated: true, completion: nil); redraw()
+                    }
+                },
+                button("Save", icon: "checkmark") { [weak self] in
+                    self?.specialSave("favorite slots", endpoint: "/api/favorites/slots", payload: ["slots": slots],
+                                      checkPath: "/api/favorites/slots", checkKey: "slots", expected: original)
+                }
+            ])
+        }
+        redraw(); pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func personalities() {
+        loadEditor("/api/personality_profiles", title: "Driving personalities") { [weak self] data in
+            guard let self else { return }
+            if data["migration_required"] as? Bool == true {
+                self.notice("These profiles need Galaxy's verified migration on iPhone before editing."); return
+            }
+            let profiles = data["profiles"] as? [String: [String: Any]] ?? [:]
+            guard !profiles.isEmpty else { self.notice("Profiles were not returned by comma."); return }
+            let page = CPGridTemplate(title: "Personalities", gridButtons: [self.button("Personalities", icon: "car.side")])
+            let reference = WeakGrid(page)
+            let entries = ["traffic", "aggressive", "standard", "relaxed"].flatMap { id in
+                (["acceleration", "braking", "following"] + (self.bool(self.values["GalaxyDeveloperMode"]) == true ? ["advanced"] : [])).map { (id, $0) }
+            }
+            func render(_ index: Int) {
+                guard let page = reference.page else { return }
+                let count = max(1, (entries.count + 7) / 8), current = min(index, count - 1)
+                let buttons = entries.dropFirst(current * 8).prefix(8).map { id, category in
+                    self.button("\(id.capitalized) \(category)", icon: category == "following" ? "car.side" : "speedometer") { [weak self] in
+                        guard let self else { return }
+                        if category == "advanced" {
+                            let prefix = id == "traffic" ? "TrafficJerk" : id.capitalized + "Jerk"
+                            let params = self.catalogue.flatMap { $0["params"] as? [[String: Any]] ?? [] }.filter { ($0["key"] as? String ?? "").hasPrefix(prefix) }
+                            self.showSettings(["name": id.capitalized + " advanced", "params": params.map { p in var p = p; p["_display_root"] = true; return p }])
+                        } else {
+                            self.personalityCategory(id, category: category, config: profiles[id]?[category] as? [String: Any] ?? [:], data: data)
+                        }
+                    }
+                }
+                self.updateGrid(page, buttons: buttons)
+                self.paging(page, index: current, count: count, change: render)
+                page.leadingNavigationBarButtons = [CPBarButton(title: "Enable") { [weak self] _ in self?.profileSwitches() }]
+            }
+            render(0); self.pushTemplate(page, animated: true, completion: nil)
+        }
+    }
+
+    private func profileSwitches() {
+        let keys = ["CustomPersonalities", "TrafficPersonalityProfile", "AggressivePersonalityProfile", "StandardPersonalityProfile", "RelaxedPersonalityProfile"]
+        let params = catalogue.flatMap { $0["params"] as? [[String: Any]] ?? [] }.filter { keys.contains($0["key"] as? String ?? "") }
+        let page = CPGridTemplate(title: "Enabled profiles", gridButtons: params.map { p in
+            button(p["label"] as? String ?? "Profile", icon: bool(values[p["key"] as? String ?? ""]) == true ? "checkmark.circle.fill" : "circle") { [weak self] in self?.edit(p) }
+        })
+        pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func personalityCategory(_ id: String, category: String, config: [String: Any], data: [String: Any]) {
+        let options = (data["options"] as? [String: Any])?[category] as? [Any] ?? []
+        let bounds = (data["bounds"] as? [String: Any])?[category] as? [Double] ?? []
+        let speeds = (data["speed_breakpoints_mph"] as? [String: Any])?[category] as? [Double] ?? []
+        let reference = ((data["reference_curves"] as? [String: [String: Any]])?[id])?[category] as? [Double] ?? []
+        let curve = config["preset"] as? String == "custom" ? (config["curve"] as? [Double] ?? []) : reference
+        guard bounds.count == 2, speeds.count == curve.count, !curve.isEmpty else { notice("Curve data or limits are unavailable."); return }
+        curveEditor(id, category: category, original: config, curve: curve, speeds: speeds, bounds: bounds, presets: options, reference: reference)
+    }
+
+    private func curveEditor(_ id: String, category: String, original: [String: Any], curve saved: [Double], speeds: [Double], bounds: [Double], presets: [Any], reference presetReference: [Double]) {
+        var curve = saved
+        let page = CPGridTemplate(title: category.capitalized, gridButtons: [button("Curve", icon: "chart.xyaxis.line")])
+        let reference = WeakGrid(page)
+        func render(_ index: Int) {
+            guard let page = reference.page else { return }
+            let count = max(1, (curve.count + 7) / 8), current = min(index, count - 1)
+            let buttons = Array(curve.indices.dropFirst(current * 8).prefix(8)).map { point in
+                let metric = bool(values["IsMetric"]) == true
+                let speed = speeds[point] * (metric ? 1.609344 : 1)
+                return button(String(format: "%.0f %@", speed, metric ? "km/h" : "mph"), icon: "slider.horizontal.3") { [weak self] in
+                    self?.stagedNumber(category.capitalized, value: curve[point], min: bounds[0], max: bounds[1], step: 0.05) { value in
+                        curve[point] = value; render(current)
+                    }
+                }
+            }
+            updateGrid(page, buttons: buttons)
+            paging(page, index: current, count: count, change: render)
+            page.leadingNavigationBarButtons = [CPBarButton(title: "Preset") { [weak self] _ in
+                self?.choices(["label": category.capitalized], options: presets.map { option in
+                    if let option = option as? [String: Any] { return option }
+                    return ["label": String(describing: option).replacingOccurrences(of: "_", with: " ").capitalized, "value": option]
+                }) { [weak self] preset in
+                    self?.specialSave("\(id) \(category)", endpoint: "/api/personality_profiles", payload: ["profile": id, "category": category, "preset": preset, "curve": String(describing: preset) == "custom" ? presetReference : [], "expected": original])
+                }
+            }, CPBarButton(title: "Save") { [weak self] _ in
+                self?.specialSave("\(id) \(category)", endpoint: "/api/personality_profiles",
+                    payload: ["profile": id, "category": category, "preset": "custom", "curve": curve, "expected": original])
+            }]
+        }
+        render(0); pushTemplate(page, animated: true, completion: nil)
+    }
+
+    private func stagedNumber(_ title: String, value: Double, min lo: Double, max hi: Double, step: Double,
+                              done: @escaping (Double) -> Void) {
+        var draft = value
+        let page = CPGridTemplate(title: title, gridButtons: [button("Value", icon: "slider.horizontal.3")])
+        let reference = WeakGrid(page)
+        func redraw() {
+            guard let page = reference.page else { return }
+            updateGrid(page, buttons: [
+                button("Decrease", icon: "minus.circle") { draft = max(lo, draft - step); redraw() },
+                button(String(format: "%.2f", draft), icon: "slider.horizontal.3"),
+                button("Increase", icon: "plus.circle") { draft = min(hi, draft + step); redraw() },
+                button("Done", icon: "checkmark") { [weak self] in
+                    done(draft); self?.controller?.popTemplate(animated: true, completion: nil)
+                }
+            ])
+        }
+        redraw(); pushTemplate(page, animated: true, completion: nil)
     }
 
     private func notice(_ message: String) {
