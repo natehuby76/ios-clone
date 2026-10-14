@@ -10,6 +10,7 @@ struct GalaxyBluetoothApp: App {
 enum CompanionTab: String, CaseIterable, Identifiable {
     case galaxy = "Galaxy", live = "Live View", diagnostics = "Diagnostics", logs = "Dev / Logs", connections = "Settings"
     var id: String { rawValue }
+    var isDeveloperPage: Bool { self == .live || self == .diagnostics || self == .logs }
     var icon: String {
         switch self {
         case .galaxy: "sparkles"
@@ -44,6 +45,17 @@ final class AppModel: ObservableObject {
     private var lastRoute = "Reconnecting…"
     @Published var showDiagnostics = false
     @Published var tab: CompanionTab = .connections
+    @Published var developerMode = UserDefaults.standard.bool(forKey: "galaxy.app.developerMode") {
+        didSet {
+            UserDefaults.standard.set(developerMode, forKey: "galaxy.app.developerMode")
+            if !developerMode {
+                if tab.isDeveloperPage { tab = opened ? .galaxy : .connections }
+                diagnostics.live = false
+                diagnostics.phoneVisible = false
+                showDiagnostics = false
+            }
+        }
+    }
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
@@ -321,27 +333,35 @@ struct GalaxyRootView: View {
                     }.padding(.horizontal, 10).padding(.vertical, 6)
                         .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
                 }
-                HStack(spacing: 4) {
-                    ForEach(CompanionTab.allCases.filter { $0 != .connections }) { tab in
-                        Button { select(tab) } label: {
-                            VStack(spacing: 5) {
-                                Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
-                                Text(tab.rawValue).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 10)
-                                .foregroundStyle(model.tab == tab ? Color.white : Color.secondary)
-                                .background(model.tab == tab ? brandPurple : Color.clear, in: RoundedRectangle(cornerRadius: 12))
-                        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
-                    }
-                    Button { select(.connections) } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: "gearshape.fill").font(.system(size: 17, weight: .semibold))
-                                .frame(width: 36, height: 36)
-                                .background(model.tab == .connections ? brandPurple : Color(uiColor: .tertiarySystemBackground), in: Circle())
-                            Text("Settings").font(.system(size: 10, weight: .semibold))
-                        }.frame(width: 60).padding(.vertical, 4)
-                            .foregroundStyle(model.tab == .connections ? Color.white : Color.secondary)
-                    }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
-                }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                if !model.developerMode {
+                    HStack(spacing: 4) {
+                        standardTab(.galaxy)
+                        standardTab(.connections)
+                    }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                } else {
+                    HStack(spacing: 4) {
+                        ForEach(CompanionTab.allCases.filter { $0 != .connections }) { tab in
+                            Button { select(tab) } label: {
+                                VStack(spacing: 5) {
+                                    Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
+                                    Text(tab.rawValue).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                                }.frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    .foregroundStyle(model.tab == tab ? Color.white : Color.secondary)
+                                    .background(model.tab == tab ? brandPurple : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+                            }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+                        }
+                        Button { select(.connections) } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "gearshape.fill").font(.system(size: 17, weight: .semibold))
+                                    .frame(width: 36, height: 36)
+                                    .background(model.tab == .connections ? brandPurple : Color(uiColor: .tertiarySystemBackground), in: Circle())
+                                    .foregroundStyle(model.tab == .connections ? Color.white : Color.secondary)
+                                Text("Settings").font(.system(size: 10, weight: .semibold))
+                            }.frame(width: 60).padding(.vertical, 4)
+                                .foregroundStyle(model.tab == .connections ? Color.primary : Color.secondary)
+                        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
+                    }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                }
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
             ZStack {
                 if model.opened, let url = server.url {
@@ -353,9 +373,9 @@ struct GalaxyRootView: View {
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
                 }
-                if model.tab == .logs {
+                if model.developerMode && model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
-                } else if model.tab == .live || model.tab == .diagnostics {
+                } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
                     CompanionView(diagnostics: model.diagnostics)
                 } else if model.tab == .connections || !model.opened {
                     connectionView
@@ -367,7 +387,7 @@ struct GalaxyRootView: View {
             if show { select(.connections); model.showConnections = false }
         }
         .onChange(of: model.showDiagnostics) { _, show in
-            if show { select(.live); model.showDiagnostics = false }
+            if show { if model.developerMode { select(.live) }; model.showDiagnostics = false }
         }
         .onChange(of: bluetooth.connected) { _, connected in if connected { model.openIfReady() } }
         .task(id: scenePhase) {
@@ -375,11 +395,23 @@ struct GalaxyRootView: View {
             if scenePhase == .active { await model.assets.check() }
         }
     }
-    private func select(_ tab: CompanionTab) {
+    private func select(_ requestedTab: CompanionTab) {
+        let tab = requestedTab.isDeveloperPage && !model.developerMode ? (model.opened ? CompanionTab.galaxy : .connections) : requestedTab
         if tab != .connections { discovery.stop() }
         model.tab = tab
         model.diagnostics.live = tab == .live
     }
+    private func standardTab(_ tab: CompanionTab) -> some View {
+        Button { select(tab) } label: {
+            Label(tab.rawValue, systemImage: tab.icon)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .foregroundStyle(model.tab == tab ? Color.white : Color.primary)
+                .background(model.tab == tab ? brandPurple : Color.clear, in: Capsule())
+        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+    }
+
     private let brandPurple = Color(red: 0.55, green: 0.36, blue: 0.96)
 
     private var connectionView: some View {
@@ -472,7 +504,12 @@ struct GalaxyRootView: View {
                 }
                 Divider()
                 Text(assets.status).font(.caption).foregroundStyle(.secondary)
-                Button("Open Dev / Logs") { select(.logs) }
+                Toggle("Developer Mode", isOn: $model.developerMode)
+                Text("Show Live View, Diagnostics, and Dev / Logs on this iPhone.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if model.developerMode {
+                    Button("Open Dev / Logs") { select(.logs) }
+                }
                 Button("Check Galaxy updates") { Task { await assets.check() } }.disabled(assets.checking)
                 Text("Screens are saved on your iPhone. GitHub updates apply next time you open Galaxy, without interrupting your current screen.")
                     .font(.caption).foregroundStyle(.secondary)
