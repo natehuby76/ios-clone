@@ -1,8 +1,32 @@
 import SwiftUI
 import WebKit
 
+private struct GalaxyDownloadedFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 @MainActor
 final class GalaxyPageDiagnostics: ObservableObject {
+    @Published fileprivate var downloadedFile: GalaxyDownloadedFile?
+    @Published var downloadError: String?
+    private var exportDirectory: URL?
+
+    fileprivate func offerDownload(_ url: URL) {
+        exportDirectory = url.deletingLastPathComponent()
+        downloadedFile = GalaxyDownloadedFile(url: url)
+        record("Download ready to save or share")
+    }
+    func cleanUpDownload() {
+        if let directory = exportDirectory { try? FileManager.default.removeItem(at: directory) }
+        exportDirectory = nil
+    }
+    func downloadFailed(_ error: Error) {
+        let value = error as NSError
+        record("Download failed: \(value.domain) \(value.code)")
+        downloadError = "The file couldn’t be downloaded. Please try again."
+    }
+
     @Published var copied = false
     @Published var stalled = false
     @Published var mounted = false
@@ -74,7 +98,29 @@ struct GalaxyWebView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(20)
             }
         }
+        .sheet(item: $diagnostics.downloadedFile, onDismiss: diagnostics.cleanUpDownload) { file in
+            GalaxyFileShareSheet(url: file.url) { diagnostics.downloadedFile = nil }
+        }
+        .alert("Couldn’t download file", isPresented: Binding(
+            get: { diagnostics.downloadError != nil },
+            set: { if !$0 { diagnostics.downloadError = nil } }
+        )) {
+            Button("OK", role: .cancel) { diagnostics.downloadError = nil }
+        } message: { Text(diagnostics.downloadError ?? "") }
     }
+}
+
+private struct GalaxyFileShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    let finished: () -> Void
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            Task { @MainActor in finished() }
+        }
+        return controller
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private struct GalaxyPage: UIViewRepresentable {
@@ -153,10 +199,12 @@ private struct GalaxyPage: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "galaxyDiagnostics")
         uiView.navigationDelegate = nil; uiView.uiDelegate = nil
+        coordinator.cancelDownloads()
         uiView.stopLoading()
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
+        private var downloads: [ObjectIdentifier: (WKDownload, URL?)] = [:]
         let origin: URL
         let diagnostics: GalaxyPageDiagnostics
         init(origin: URL, diagnostics: GalaxyPageDiagnostics) { self.origin = origin; self.diagnostics = diagnostics }
@@ -184,6 +232,7 @@ private struct GalaxyPage: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { navigationFailed(error) }
         private func navigationFailed(_ error: Error) {
             let value = error as NSError
+            if !downloads.isEmpty, value.code == NSURLErrorCancelled || (value.domain == "WKErrorDomain" && value.code == 102) { return }
             diagnostics.fail("Navigation failed: \(value.domain) \(value.code)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { diagnostics.fail("Galaxy web content process terminated") }
@@ -193,14 +242,74 @@ private struct GalaxyPage: UIViewRepresentable {
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { decisionHandler(.cancel); return }
             if url.scheme == origin.scheme, url.host == origin.host, url.port == origin.port {
-                decisionHandler(.allow)
-            } else if url.scheme == "about" || url.scheme == "blob" {
+                decisionHandler(action.shouldPerformDownload ? .download : .allow)
+            } else if url.scheme == "blob" {
+                let frame = action.sourceFrame.securityOrigin
+                guard frame.protocol == origin.scheme, frame.host == origin.host,
+                      frame.port == origin.port else { decisionHandler(.cancel); return }
+                decisionHandler(action.shouldPerformDownload ? .download : .allow)
+            } else if url.scheme == "about" {
                 decisionHandler(.allow)
             } else {
                 if action.navigationType == .linkActivated, ["https", "http"].contains(url.scheme ?? "") {
                     UIApplication.shared.open(url)
                 }
                 decisionHandler(.cancel)
+            }
+        }
+
+        func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+            track(download)
+        }
+        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+            track(download)
+        }
+        private func track(_ download: WKDownload) {
+            guard downloads.isEmpty, diagnostics.downloadedFile == nil else {
+                download.cancel { _ in }
+                return
+            }
+            downloads[ObjectIdentifier(download)] = (download, nil)
+            download.delegate = self
+            diagnostics.record("File download started")
+        }
+        func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                      suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+            let id = ObjectIdentifier(download)
+            guard downloads[id] != nil else { completionHandler(nil); return }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let name = (suggestedFilename as NSString).lastPathComponent
+                let safeName = name.isEmpty || name == "." || name == ".." ? "toggle-backup.json" : name
+                let destination = directory.appendingPathComponent(safeName)
+                downloads[id] = (download, destination)
+                completionHandler(destination)
+            } catch {
+                try? FileManager.default.removeItem(at: directory)
+                completionHandler(nil)
+                diagnostics.downloadFailed(error)
+            }
+        }
+        func downloadDidFinish(_ download: WKDownload) {
+            guard let (_, destination) = downloads.removeValue(forKey: ObjectIdentifier(download)),
+                  let destination else { return }
+            diagnostics.offerDownload(destination)
+        }
+        func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            if let (_, destination) = downloads.removeValue(forKey: ObjectIdentifier(download)),
+               let destination {
+                try? FileManager.default.removeItem(at: destination.deletingLastPathComponent())
+            }
+            diagnostics.downloadFailed(error)
+        }
+        func cancelDownloads() {
+            let active = downloads.values
+            downloads.removeAll()
+            for (download, destination) in active {
+                download.delegate = nil
+                download.cancel { _ in }
+                if let destination { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
             }
         }
 
