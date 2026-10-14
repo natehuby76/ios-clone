@@ -17,6 +17,14 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     var onEvent: ((String) -> Void)?
     @Published var connected = false
     @Published var connecting = false
+    @Published var fastReads = UserDefaults.standard.bool(forKey: "galaxy.bluetooth.fastReads") {
+        didSet {
+            UserDefaults.standard.set(fastReads, forKey: "galaxy.bluetooth.fastReads")
+            if fastReads != oldValue {
+                onEvent?("Bluetooth read mode: \(fastReads ? "experimental notifications" : "read stream"); applies to the next request")
+            }
+        }
+    }
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
@@ -43,6 +51,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     private var priorityStreak = 0
     private var requestStarted = 0.0
     private var receivedPackets = 0
+    private var receivedWireBytes = 0
     private var active: Pending?
     private var outgoing: [Data] = []
     private var writeIndex = 0
@@ -201,8 +210,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
     }
 
-    static func useNotifications(method: String, path: String, supported: Bool) -> Bool {
-        supported && method != "GET" && path != "/_bridge/health"
+    static func useNotifications(method: String, path: String, supported: Bool, fastReads: Bool = false) -> Bool {
+        supported && (method != "GET" || fastReads) && path != "/_bridge/health"
     }
 
     static func backgroundRead(_ path: String) -> Bool {
@@ -228,13 +237,14 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         priorityStreak = active.method == "GET" && !Self.backgroundRead(active.path) ? min(3, priorityStreak + 1) : 0
         requestStarted = ProcessInfo.processInfo.systemUptime
         receivedPackets = 0
+        receivedWireBytes = 0
         counter += 1
         assembler = FrameAssembler()
         completedResponse = nil
         activeCancelled = false
         awaitingAck = false
         writeIndex = 0
-        activeNotifications = Self.useNotifications(method: active.method, path: active.path, supported: supportsNotifications)
+        activeNotifications = Self.useNotifications(method: active.method, path: active.path, supported: supportsNotifications, fastReads: fastReads)
         notificationCount = 0
         notificationBuffer = []
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"
@@ -280,7 +290,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             case .success(let response): outcome = "HTTP \(response.status), \(response.bodyData.count) bytes"
             case .failure: outcome = "failed"
             }
-            onEvent?("Bluetooth request finished: \(LoopbackServer.reportPath(previous.path)), \(outcome), packets=\(receivedPackets), transfer=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - requestStarted))s")
+            let elapsed = max(0.001, ProcessInfo.processInfo.systemUptime - requestStarted)
+            onEvent?("Bluetooth request finished: \(LoopbackServer.reportPath(previous.path)), \(outcome), packets=\(receivedPackets), wire=\(receivedWireBytes) bytes, rate=\(String(format: "%.1f", Double(receivedWireBytes) / elapsed / 1024)) KiB/s, transfer=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - requestStarted))s")
         }
         active = nil
         outgoing = []
@@ -363,6 +374,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         guard peripheral == self.peripheral, characteristic.uuid == CBUUID(string: Wire.rx), active != nil else { return }
         if let error { failConnection(error.localizedDescription); return }
         if awaitingAck {
+            if activeNotifications { onEvent?("Bluetooth notification window acknowledged: packets=\(notificationCount), complete=\(completedResponse != nil)") }
             awaitingAck = false
             if let response = completedResponse {
                 completedResponse = nil
@@ -430,6 +442,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
         do {
             receivedPackets += 1
+            receivedWireBytes += data.count
             if let message = try assembler.append(data), let key {
                 let response = try Wire.open(message, as: BridgeResponse.self, key: key, direction: "response")
                 guard response.id == active?.id, response.session == session, response.counter == counter,
@@ -522,6 +535,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
         notificationCount += 1
         receivedPackets += 1
+        receivedWireBytes += data.count
         if completedResponse != nil || notificationCount % Wire.notificationWindow == 0 {
             awaitingAck = true
             let sequence = Wire.number(packet.subdata(in: 1..<5))

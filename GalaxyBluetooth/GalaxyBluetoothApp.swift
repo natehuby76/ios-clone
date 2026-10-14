@@ -50,6 +50,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(developerMode, forKey: "galaxy.app.developerMode")
             if !developerMode {
                 if tab.isDeveloperPage { tab = opened ? .galaxy : .connections }
+                bluetooth.fastReads = false
                 diagnostics.live = false
                 diagnostics.phoneVisible = false
                 showDiagnostics = false
@@ -509,6 +510,9 @@ struct GalaxyRootView: View {
                 Text("Show Live View, Diagnostics, and Dev / Logs on this iPhone.")
                     .font(.caption).foregroundStyle(.secondary)
                 if model.developerMode {
+                    Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads)
+                    Text("Experimental notification streaming for maximum transfer speed. Turn off to return to reliable reads. Changes apply to the next request.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button("Open Dev / Logs") { select(.logs) }
                 }
                 Button("Check Galaxy updates") { Task { await assets.check() } }.disabled(assets.checking)

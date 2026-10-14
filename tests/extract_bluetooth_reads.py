@@ -28,6 +28,10 @@ tests = r'''
         precondition(Probe.nextRequestIndex(methods: ["GET", "GET"], paths: ["/api/stats", "/api/params/all"], priorityStreak: 3) == 0)
         precondition(Probe.nextRequestIndex(methods: ["PUT", "GET"], paths: ["/api/params", "/api/params/all"], priorityStreak: 0) == 0)
         precondition(Probe.backgroundRead("/api/device/status?refresh=1"))
+        precondition(Probe.useNotifications(method: "GET", path: "/api/params/all", supported: true, fastReads: true))
+        precondition(!Probe.useNotifications(method: "GET", path: "/api/params/all", supported: false, fastReads: true))
+        precondition(!Probe.useNotifications(method: "GET", path: "/_bridge/health", supported: true, fastReads: true))
+        precondition(!Probe.useNotifications(method: "GET", path: "/api/params/all", supported: true, fastReads: false))
         let source = "api.getParams(); if (this.busy || !this.ready || this.contextPending) return; api.updateParam({key: 'IsMetric', value: true})"
         let bytes = Data(source.utf8)
         let adapted = String(data: Probe.adaptNativeAsset(bytes, path: "assets/mobile/js/components/PersonalityProfiles.js"), encoding: .utf8)!
