@@ -17,10 +17,12 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     var onEvent: ((String) -> Void)?
     @Published var connected = false
     @Published var connecting = false
+    @Published private(set) var fastReadFallback = false
     @Published var fastReads = UserDefaults.standard.bool(forKey: "galaxy.bluetooth.fastReads") {
         didSet {
             UserDefaults.standard.set(fastReads, forKey: "galaxy.bluetooth.fastReads")
             if fastReads != oldValue {
+                fastReadFallback = false
                 onEvent?("Bluetooth read mode: \(fastReads ? "experimental notifications" : "read stream"); applies to the next request")
             }
         }
@@ -159,6 +161,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     private func failConnection(_ message: String) {
+        if Self.shouldPauseFastReads(method: active?.method, notifications: activeNotifications,
+                                     cancelled: message.lowercased().contains("cancelled")) {
+            fastReadFallback = true
+            onEvent?("Fast Bluetooth reads paused after a transfer failure. Reliable reads will be used after reconnecting; toggle fast reads off and on to retry.")
+        }
         let lower = message.lowercased()
         let reason: String
         if lower.contains("request timed out") { reason = "Bluetooth request timed out" }
@@ -214,6 +221,10 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         supported && (method != "GET" || fastReads) && path != "/_bridge/health"
     }
 
+    static func shouldPauseFastReads(method: String?, notifications: Bool, cancelled: Bool) -> Bool {
+        method == "GET" && notifications && !cancelled
+    }
+
     static func backgroundRead(_ path: String) -> Bool {
         let endpoint = path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? path
         return ["/api/device/status", "/api/stats", "/api/companion/diagnostics"].contains(endpoint)
@@ -244,7 +255,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         activeCancelled = false
         awaitingAck = false
         writeIndex = 0
-        activeNotifications = Self.useNotifications(method: active.method, path: active.path, supported: supportsNotifications, fastReads: fastReads)
+        activeNotifications = Self.useNotifications(method: active.method, path: active.path, supported: supportsNotifications, fastReads: fastReads && !fastReadFallback)
         notificationCount = 0
         notificationBuffer = []
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"

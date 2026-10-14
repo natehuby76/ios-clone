@@ -511,6 +511,10 @@ struct GalaxyRootView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if model.developerMode {
                     Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads)
+                    if bluetooth.fastReadFallback {
+                        Label("Fast reads paused after an error. Reliable reads are active after reconnecting. Switch fast reads off and on to try again.", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("Experimental notification streaming for maximum transfer speed. Turn off to return to reliable reads. Changes apply to the next request.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Open Dev / Logs") { select(.logs) }

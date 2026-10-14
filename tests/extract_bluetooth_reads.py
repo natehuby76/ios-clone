@@ -14,6 +14,7 @@ def method(path, name):
 
 methods = method("GalaxyBluetooth/BluetoothTransport.swift", "useNotifications") + "\n" + method("GalaxyBluetooth/LoopbackServer.swift", "adaptNativeAsset")
 methods += "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "backgroundRead") + "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "nextRequestIndex")
+methods += "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "shouldPauseFastReads")
 tests = r'''
 @main struct BluetoothReadRegression {
     static func main() {
@@ -32,6 +33,11 @@ tests = r'''
         precondition(!Probe.useNotifications(method: "GET", path: "/api/params/all", supported: false, fastReads: true))
         precondition(!Probe.useNotifications(method: "GET", path: "/_bridge/health", supported: true, fastReads: true))
         precondition(!Probe.useNotifications(method: "GET", path: "/api/params/all", supported: true, fastReads: false))
+        precondition(Probe.shouldPauseFastReads(method: "GET", notifications: true, cancelled: false))
+        precondition(!Probe.shouldPauseFastReads(method: "GET", notifications: false, cancelled: false))
+        precondition(!Probe.shouldPauseFastReads(method: "GET", notifications: true, cancelled: true))
+        precondition(!Probe.shouldPauseFastReads(method: "PUT", notifications: true, cancelled: false))
+        precondition(!Probe.shouldPauseFastReads(method: nil, notifications: true, cancelled: false))
         let source = "api.getParams(); if (this.busy || !this.ready || this.contextPending) return; api.updateParam({key: 'IsMetric', value: true})"
         let bytes = Data(source.utf8)
         let adapted = String(data: Probe.adaptNativeAsset(bytes, path: "assets/mobile/js/components/PersonalityProfiles.js"), encoding: .utf8)!
