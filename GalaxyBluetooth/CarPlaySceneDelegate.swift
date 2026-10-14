@@ -4,6 +4,14 @@ import CoreFoundation
 
 @MainActor
 final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate {
+    private final class GridAction: NSObject {
+        var perform: () -> Void
+        var signature: String
+        init(signature: String, perform: @escaping () -> Void) {
+            self.signature = signature; self.perform = perform
+        }
+    }
+    private let gridActions = NSMapTable<CPGridButton, GridAction>.weakToStrongObjects()
     private var controller: CPInterfaceController?
     private var timer: Timer?
     private var work: Task<Void, Never>?
@@ -24,18 +32,17 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
         controller = interfaceController
-        overview = grid("StarPilot", icon: "car.side")
-        temperatures = grid("Temperatures", icon: "thermometer.medium")
-        rates = grid("Rates", icon: "speedometer")
-        toggles = grid("Galaxy toggles", icon: "switch.2")
+        overview = nil; temperatures = nil; rates = nil; toggles = nil
+        let model = AppModel.shared
+        model.setCarPlayActive(true)
+        refreshTelemetry()
+        toggles = grid("Galaxy toggles", icon: "switch.2", buttons: [
+            button("Load Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }
+        ])
         guard let overview, let temperatures, let rates, let toggles else { return }
         let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
         tabs.delegate = self
         interfaceController.setRootTemplate(tabs, animated: false, completion: nil)
-        let model = AppModel.shared
-        model.setCarPlayActive(true)
-        refreshTelemetry()
-        toggles.updateGridButtons([button("Load Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }])
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshTelemetry() }
@@ -47,7 +54,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         work?.cancel(); work = nil
         controller = nil
         overview = nil; temperatures = nil; rates = nil; toggles = nil
-        catalogue = []; values = [:]; busy = false
+        catalogue = []; values = [:]; busy = false; categoryPage = 0
+        gridActions.removeAllObjects()
         AppModel.shared.setCarPlayActive(false)
     }
 
@@ -55,8 +63,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         if selectedTemplate === toggles { loadGalaxy() }
     }
 
-    private func grid(_ title: String, icon: String) -> CPGridTemplate {
-        let template = CPGridTemplate(title: title, gridButtons: [])
+    private func grid(_ title: String, icon: String, buttons: [CPGridButton]) -> CPGridTemplate {
+        precondition(!buttons.isEmpty)
+        let template = CPGridTemplate(title: title, gridButtons: buttons)
         template.tabTitle = title == "Galaxy toggles" ? "Toggles" : title
         template.tabImage = UIImage(systemName: icon)
         return template
@@ -79,7 +88,34 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         } else {
             image = UIImage(systemName: icon) ?? UIImage(systemName: "circle")!
         }
-        return CPGridButton(titleVariants: [title], image: image) { _ in action() }
+        let state = GridAction(signature: "\(title)|\(icon)|\(value ?? "")", perform: action)
+        let result = CPGridButton(titleVariants: [title], image: image) { _ in state.perform() }
+        gridActions.setObject(state, forKey: result)
+        return result
+    }
+
+    private func updateGrid(_ page: CPGridTemplate, buttons: [CPGridButton]) {
+        precondition(!buttons.isEmpty)
+        if #available(iOS 26.0, *), page.gridButtons.count == buttons.count {
+            for (existing, replacement) in zip(page.gridButtons, buttons) {
+                guard let current = gridActions.object(forKey: existing),
+                      let next = gridActions.object(forKey: replacement) else { continue }
+                current.perform = next.perform
+                if current.signature != next.signature {
+                    existing.updateTitleVariants(replacement.titleVariants)
+                    existing.updateImage(replacement.image)
+                    current.signature = next.signature
+                }
+            }
+        } else {
+            page.updateGridButtons(buttons)
+        }
+    }
+
+    private func telemetryGrid(_ existing: CPGridTemplate?, title: String, icon: String,
+                               buttons: [CPGridButton]) -> CPGridTemplate {
+        if let existing { updateGrid(existing, buttons: buttons); return existing }
+        return grid(title, icon: icon, buttons: buttons)
     }
 
     private func external(_ metric: DiagnosticMetric) -> Bool {
@@ -114,7 +150,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         func rate(_ name: String) -> String {
             updates.first { $0.name.lowercased() == name.lowercased() }?.display ?? "—"
         }
-        overview?.updateGridButtons([
+        overview = telemetryGrid(overview, title: "StarPilot", icon: "car.side", buttons: [
             button("Connection", icon: "antenna.radiowaves.left.and.right", value: model.transport.connected ? model.transport.label : "Offline") { [weak self] in
                 self?.notice(diagnostics.fresh ? "Telemetry connected." : diagnostics.status)
             },
@@ -127,12 +163,12 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             button("External GPU", icon: "cpu", value: maximum(temps.filter(external)))
         ])
         let groups = ["Processors", "Onboard GPU", "Memory", "Cooling", "Power", "Connectivity", "External GPU", "Other sensors"]
-        temperatures?.updateGridButtons(groups.map { group in
+        temperatures = telemetryGrid(temperatures, title: "Temperatures", icon: "thermometer.medium", buttons: groups.map { group in
             button(group, icon: "thermometer.medium", value: maximum(temps.filter { thermalGroup($0) == group })) { [weak self] in
                 self?.showMetrics(group, kind: group)
             }
         })
-        rates?.updateGridButtons([
+        rates = telemetryGrid(rates, title: "Rates", icon: "speedometer", buttons: [
             button("Camera FPS", icon: "camera", value: "\(updates.filter { $0.name.lowercased().contains("camera") }.count) readings") { [weak self] in self?.showMetrics("Cameras", kind: "cameras") },
             button("Models & planning", icon: "cpu") { [weak self] in self?.showMetrics("Models & planning", kind: "models") },
             button("Driving", icon: "car.side") { [weak self] in self?.showMetrics("Driving", kind: "driving") },
@@ -155,7 +191,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func showMetrics(_ title: String, kind: String) {
         guard let controller else { return }
-        let page = CPGridTemplate(title: title, gridButtons: [])
+        let page = CPGridTemplate(title: title, gridButtons: [button("Loading readings…", icon: "hourglass")])
         page.userInfo = MetricPageState(title: title, kind: kind)
         updateMetrics(page)
         controller.pushTemplate(page, animated: true, completion: nil)
@@ -165,7 +201,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard let state = page.userInfo as? MetricPageState else { return }
         let diagnostics = AppModel.shared.diagnostics
         guard diagnostics.fresh, let sample = diagnostics.snapshot else {
-            page.updateGridButtons([button("Telemetry unavailable", icon: "exclamationmark.triangle") { [weak self] in self?.notice(diagnostics.status) }])
+            updateGrid(page, buttons: [button("Telemetry unavailable", icon: "exclamationmark.triangle") { [weak self] in self?.notice(diagnostics.status) }])
             return
         }
         let readings = sample.temperatures.filter { thermalGroup($0) == state.kind } + sample.rates.filter { rateGroup($0) == state.kind }
@@ -180,7 +216,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             guard let self, let page else { return }; state.index += 1; self.updateMetrics(page)
         }) }
         page.updateTitle(count > 1 ? "\(state.title) · \(state.index + 1)/\(count)" : state.title)
-        page.updateGridButtons(buttons)
+        updateGrid(page, buttons: buttons)
     }
 
     private var session: String {
@@ -202,7 +238,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func loadGalaxy() {
         guard !busy else { return }
         busy = true
-        toggles?.updateGridButtons([button("Loading Galaxy…", icon: "hourglass")])
+        if let toggles { updateGrid(toggles, buttons: [button("Loading Galaxy…", icon: "hourglass")]) }
         work = Task { [weak self] in
             guard let self else { return }
             defer { self.busy = false }
@@ -215,7 +251,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 self.showCategories()
             } catch {
                 guard !Task.isCancelled else { return }
-                self.toggles?.updateGridButtons([self.button("Retry Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }])
+                if let toggles = self.toggles { self.updateGrid(toggles, buttons: [self.button("Retry Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]) }
                 self.notice(error.localizedDescription)
             }
         }
@@ -231,8 +267,11 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         }
         if categoryPage > 0 { buttons.append(button("Previous menus", icon: "arrow.left") { [weak self] in self?.categoryPage -= 1; self?.showCategories() }) }
         if categoryPage + 1 < count { buttons.append(button("More menus", icon: "arrow.right") { [weak self] in self?.categoryPage += 1; self?.showCategories() }) }
+        if buttons.isEmpty {
+            buttons = [button("Retry Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]
+        }
         toggles.updateTitle(count > 1 ? "Galaxy toggles · \(categoryPage + 1)/\(count)" : "Galaxy toggles")
-        toggles.updateGridButtons(buttons)
+        updateGrid(toggles, buttons: buttons)
     }
 
     private func bool(_ value: Any?) -> Bool? {
@@ -251,7 +290,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func showSettings(_ section: [String: Any]) {
         let name = section["name"] as? String ?? "Galaxy"
         let params = (section["params"] as? [[String: Any]] ?? []).filter(visible)
-        let page = CPGridTemplate(title: name, gridButtons: [])
+        let page = CPGridTemplate(title: name, gridButtons: [button("Loading settings…", icon: "hourglass")])
         settingsPage(page, title: name, params: params, index: 0)
         controller?.pushTemplate(page, animated: true, completion: nil)
     }
@@ -275,7 +314,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             if let page { self?.settingsPage(page, title: title, params: params, index: current + 1) }
         }) }
         page.updateTitle(count > 1 ? "\(title) · \(current + 1)/\(count)" : title)
-        page.updateGridButtons(buttons)
+        updateGrid(page, buttons: buttons)
     }
 
     private func confirmToggle(_ param: [String: Any], page: CPGridTemplate?, title: String, params: [[String: Any]], index: Int) {
