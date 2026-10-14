@@ -21,6 +21,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private var toggles: CPGridTemplate?
     private var catalogue: [[String: Any]] = []
     private var values: [String: Any] = [:]
+    private var valuesSession = ""
+    private var valuesAt = Date.distantPast
     private var categoryPage = 0
     private var busy = false
     private final class MetricPageState {
@@ -36,9 +38,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let model = AppModel.shared
         model.setCarPlayActive(true)
         refreshTelemetry()
-        toggles = grid("Galaxy toggles", icon: "switch.2", buttons: [
-            button("Load Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }
-        ])
+        catalogue = localCatalogue()
+        toggles = grid("Toggles", icon: "switch.2", buttons: categoryButtons())
         guard let overview, let temperatures, let rates, let toggles else { return }
         let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
         tabs.delegate = self
@@ -54,7 +55,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         work?.cancel(); work = nil
         controller = nil
         overview = nil; temperatures = nil; rates = nil; toggles = nil
-        catalogue = []; values = [:]; busy = false; categoryPage = 0
+        catalogue = []; values = [:]; busy = false; categoryPage = 0; valuesSession = ""; valuesAt = .distantPast
         gridActions.removeAllObjects()
         AppModel.shared.setCarPlayActive(false)
     }
@@ -66,30 +67,18 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func grid(_ title: String, icon: String, buttons: [CPGridButton]) -> CPGridTemplate {
         precondition(!buttons.isEmpty)
         let template = CPGridTemplate(title: title, gridButtons: buttons)
-        template.tabTitle = title == "Galaxy toggles" ? "Toggles" : title
+        template.tabTitle = title
         template.tabImage = UIImage(systemName: icon)
         return template
     }
 
     private func button(_ title: String, icon: String, value: String? = nil, action: @escaping () -> Void = {}) -> CPGridButton {
-        let image: UIImage
-        if let value {
-            image = UIGraphicsImageRenderer(size: CGSize(width: 110, height: 70)).image { _ in
-                let text = String(value.prefix(18)) as NSString
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.monospacedDigitSystemFont(ofSize: 23, weight: .semibold),
-                    .foregroundColor: UIColor.systemPurple,
-                    .paragraphStyle: {
-                        let style = NSMutableParagraphStyle(); style.alignment = .center; return style
-                    }()
-                ]
-                text.draw(in: CGRect(x: 0, y: 20, width: 110, height: 45), withAttributes: attributes)
-            }
-        } else {
-            image = UIImage(systemName: icon) ?? UIImage(systemName: "circle")!
-        }
+        let configuration = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
+        let image = (UIImage(systemName: icon, withConfiguration: configuration)
+                     ?? UIImage(systemName: "circle", withConfiguration: configuration)!).withRenderingMode(.alwaysTemplate)
+        let label = value.map { "\(title)\n\($0)" } ?? title
         let state = GridAction(signature: "\(title)|\(icon)|\(value ?? "")", perform: action)
-        let result = CPGridButton(titleVariants: [title], image: image) { _ in state.perform() }
+        let result = CPGridButton(titleVariants: [label], image: image) { _ in state.perform() }
         gridActions.setObject(state, forKey: result)
         return result
     }
@@ -136,6 +125,27 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return "Other sensors"
     }
 
+    private func thermalLabel(_ group: String) -> String {
+        switch group {
+        case "Processors": return "CPU / DSP"
+        case "Onboard GPU": return "GPU"
+        case "Connectivity": return "Radios"
+        case "Other sensors": return "Sensors"
+        default: return group
+        }
+    }
+
+    private func thermalIcon(_ group: String) -> String {
+        switch group {
+        case "Processors", "Onboard GPU", "External GPU": return "cpu"
+        case "Memory": return "memorychip"
+        case "Cooling": return "fan"
+        case "Power": return "bolt"
+        case "Connectivity": return "antenna.radiowaves.left.and.right"
+        default: return "thermometer.medium"
+        }
+    }
+
     private func maximum(_ metrics: [DiagnosticMetric]) -> String {
         guard let value = metrics.compactMap(\.value).filter(\.isFinite).max() else { return "—" }
         return String(format: "%.1f °C", value)
@@ -150,31 +160,31 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         func rate(_ name: String) -> String {
             updates.first { $0.name.lowercased() == name.lowercased() }?.display ?? "—"
         }
-        overview = telemetryGrid(overview, title: "StarPilot", icon: "car.side", buttons: [
+        overview = telemetryGrid(overview, title: "Overview", icon: "car.side", buttons: [
             button("Connection", icon: "antenna.radiowaves.left.and.right", value: model.transport.connected ? model.transport.label : "Offline") { [weak self] in
                 self?.notice(diagnostics.fresh ? "Telemetry connected." : diagnostics.status)
             },
-            button("Driving status", icon: "car.side", value: sample?.engaged.map { $0 ? "Engaged" : "Inactive" } ?? "—"),
+            button("Status", icon: "car.side", value: sample?.engaged.map { $0 ? "Engaged" : "Inactive" } ?? "—"),
             button("CPU / DSP", icon: "cpu", value: maximum(temps.filter { thermalGroup($0) == "Processors" })),
-            button("Onboard GPU", icon: "cpu", value: maximum(temps.filter { thermalGroup($0) == "Onboard GPU" })),
+            button("GPU", icon: "cpu", value: maximum(temps.filter { thermalGroup($0) == "Onboard GPU" })),
             button("Memory", icon: "memorychip", value: maximum(temps.filter { thermalGroup($0) == "Memory" })),
-            button("Display FPS", icon: "display", value: rate("UI")),
-            button("Model FPS", icon: "speedometer", value: rate("modelV2")),
+            button("Display", icon: "display", value: rate("UI")),
+            button("Model", icon: "speedometer", value: rate("modelV2")),
             button("External GPU", icon: "cpu", value: maximum(temps.filter(external)))
         ])
         let groups = ["Processors", "Onboard GPU", "Memory", "Cooling", "Power", "Connectivity", "External GPU", "Other sensors"]
-        temperatures = telemetryGrid(temperatures, title: "Temperatures", icon: "thermometer.medium", buttons: groups.map { group in
-            button(group, icon: "thermometer.medium", value: maximum(temps.filter { thermalGroup($0) == group })) { [weak self] in
+        temperatures = telemetryGrid(temperatures, title: "Temps", icon: "thermometer.medium", buttons: groups.map { group in
+            button(thermalLabel(group), icon: thermalIcon(group), value: maximum(temps.filter { thermalGroup($0) == group })) { [weak self] in
                 self?.showMetrics(group, kind: group)
             }
         })
         rates = telemetryGrid(rates, title: "Rates", icon: "speedometer", buttons: [
-            button("Camera FPS", icon: "camera", value: "\(updates.filter { $0.name.lowercased().contains("camera") }.count) readings") { [weak self] in self?.showMetrics("Cameras", kind: "cameras") },
-            button("Models & planning", icon: "cpu") { [weak self] in self?.showMetrics("Models & planning", kind: "models") },
+            button("Cameras", icon: "camera") { [weak self] in self?.showMetrics("Cameras", kind: "cameras") },
+            button("Models", icon: "cpu") { [weak self] in self?.showMetrics("Models & planning", kind: "models") },
             button("Driving", icon: "car.side") { [weak self] in self?.showMetrics("Driving", kind: "driving") },
             button("Display", icon: "display", value: rate("UI")) { [weak self] in self?.showMetrics("Display", kind: "display") },
             button("External GPU", icon: "cpu") { [weak self] in self?.showMetrics("External GPU", kind: "external") },
-            button("Other rates", icon: "waveform.path") { [weak self] in self?.showMetrics("Other rates", kind: "other") }
+            button("Other", icon: "waveform.path") { [weak self] in self?.showMetrics("Other rates", kind: "other") }
         ])
         if let page = controller?.topTemplate as? CPGridTemplate, page.userInfo is MetricPageState { updateMetrics(page) }
     }
@@ -227,6 +237,12 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func request(_ path: String, method: String = "GET", body: Data = Data()) async throws -> Any {
         guard AppModel.shared.transport.connected else { throw BridgeError.message("Connect your iPhone to comma first.") }
         let original = session
+        let started = Date()
+        defer {
+            if path == "/api/params/all" || path.hasPrefix("/assets/") {
+                AppModel.shared.connectionLog.record("CarPlay read \(path): \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+            }
+        }
         let response = try await AppModel.shared.transport.request(path: path, method: method,
             headers: body.isEmpty ? [:] : ["Content-Type": "application/json"], body: body)
         try Task.checkCancellation()
@@ -235,43 +251,109 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return try JSONSerialization.jsonObject(with: response.bodyData)
     }
 
+    private func localCatalogue() -> [[String: Any]] {
+        let assets = AppModel.shared.assets
+        let root = assets.inUseRoot ?? assets.readyRoot ?? assets.bundledRoot
+        let path = root.appendingPathComponent("assets/components/tools/device_settings_layout.json")
+        guard let data = try? Data(contentsOf: path),
+              data.count <= 1_048_576,
+              let sections = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return sections
+    }
+
     private func loadGalaxy() {
+        if !catalogue.isEmpty { showCategories(); return }
         guard !busy else { return }
         busy = true
-        if let toggles { updateGrid(toggles, buttons: [button("Loading Galaxy…", icon: "hourglass")]) }
         work = Task { [weak self] in
             guard let self else { return }
             defer { self.busy = false }
             do {
-                let original = self.session
                 let layout = try await self.request("/assets/components/tools/device_settings_layout.json") as? [[String: Any]] ?? []
-                let values = try await self.request("/api/params/all") as? [String: Any] ?? [:]
-                guard original == self.session else { throw BridgeError.message("Connection changed. Try again.") }
-                self.catalogue = layout; self.values = values
+                guard !layout.isEmpty else { throw BridgeError.message("Galaxy menus are unavailable. Try again when connected.") }
+                self.catalogue = layout
                 self.showCategories()
             } catch {
                 guard !Task.isCancelled else { return }
-                if let toggles = self.toggles { self.updateGrid(toggles, buttons: [self.button("Retry Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]) }
                 self.notice(error.localizedDescription)
             }
         }
     }
 
-    private func showCategories() {
-        guard let toggles else { return }
+    private func categoryLabel(_ name: String) -> String {
+        if name.hasPrefix("Lateral") { return "Steering" }
+        if name.hasPrefix("Longitudinal") { return "Speed & following" }
+        if name.hasPrefix("Visual") { return "Display" }
+        if name.hasPrefix("Vision") { return "Speed limits" }
+        return name
+    }
+
+    private func categoryIcon(_ name: String) -> String {
+        if name.hasPrefix("Favorites") { return "star" }
+        if name.hasPrefix("Lateral") || name.hasPrefix("Wheel") { return "steeringwheel" }
+        if name.hasPrefix("Longitudinal") { return "speedometer" }
+        if name.hasPrefix("Vision") { return "signpost.right" }
+        if name.hasPrefix("Visual") { return "display" }
+        if name.hasPrefix("Sounds") { return "speaker.wave.2" }
+        if name.hasPrefix("Vehicle") { return "car.side" }
+        if name.hasPrefix("Device") { return "internaldrive" }
+        if name.hasPrefix("Developer") { return "hammer" }
+        return "switch.2"
+    }
+
+    private func categoryButtons() -> [CPGridButton] {
+        guard !catalogue.isEmpty else {
+            return [button("Load menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]
+        }
         let count = max(1, (catalogue.count + 5) / 6)
         categoryPage = min(categoryPage, count - 1)
         var buttons = catalogue.dropFirst(categoryPage * 6).prefix(6).map { section in
             let name = section["name"] as? String ?? "Settings"
-            return button(name, icon: "switch.2") { [weak self] in self?.showSettings(section) }
+            return button(categoryLabel(name), icon: categoryIcon(name)) { [weak self] in self?.openSettings(section) }
         }
-        if categoryPage > 0 { buttons.append(button("Previous menus", icon: "arrow.left") { [weak self] in self?.categoryPage -= 1; self?.showCategories() }) }
-        if categoryPage + 1 < count { buttons.append(button("More menus", icon: "arrow.right") { [weak self] in self?.categoryPage += 1; self?.showCategories() }) }
-        if buttons.isEmpty {
-            buttons = [button("Retry Galaxy menus", icon: "arrow.clockwise") { [weak self] in self?.loadGalaxy() }]
+        if categoryPage > 0 { buttons.append(button("Previous", icon: "arrow.left") { [weak self] in self?.categoryPage -= 1; self?.showCategories() }) }
+        if categoryPage + 1 < count { buttons.append(button("More", icon: "arrow.right") { [weak self] in self?.categoryPage += 1; self?.showCategories() }) }
+        return buttons
+    }
+
+    private func showCategories() {
+        guard let toggles else { return }
+        updateGrid(toggles, buttons: categoryButtons())
+    }
+
+    private func openSettings(_ section: [String: Any]) {
+        guard !busy else { return }
+        if valuesSession == session, Date().timeIntervalSince(valuesAt) < 30 {
+            showSettings(section); return
         }
-        toggles.updateTitle(count > 1 ? "Galaxy toggles · \(categoryPage + 1)/\(count)" : "Galaxy toggles")
-        updateGrid(toggles, buttons: buttons)
+        let name = categoryLabel(section["name"] as? String ?? "Settings")
+        let loading = CPGridTemplate(title: name, gridButtons: [
+            button("Reading settings…", icon: "arrow.triangle.2.circlepath")
+        ])
+        controller?.pushTemplate(loading, animated: true, completion: nil)
+        busy = true
+        work = Task { [weak self, weak loading] in
+            guard let self else { return }
+            defer { self.busy = false }
+            do {
+                let original = self.session
+                let fresh = try await self.request("/api/params/all") as? [String: Any] ?? [:]
+                guard original == self.session else { throw BridgeError.message("Connection changed. Try again.") }
+                self.values = fresh; self.valuesSession = original; self.valuesAt = Date()
+                guard let loading, self.controller?.topTemplate === loading else { return }
+                let params = (section["params"] as? [[String: Any]] ?? []).filter(self.visible)
+                self.settingsPage(loading, title: name, params: params, index: 0)
+            } catch {
+                guard !Task.isCancelled, let loading, self.controller?.topTemplate === loading else { return }
+                self.updateGrid(loading, buttons: [
+                    self.button("Retry", icon: "arrow.clockwise") { [weak self] in
+                        self?.controller?.popTemplate(animated: false, completion: nil)
+                        self?.openSettings(section)
+                    }
+                ])
+                self.notice(error.localizedDescription)
+            }
+        }
     }
 
     private func bool(_ value: Any?) -> Bool? {
@@ -288,7 +370,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func showSettings(_ section: [String: Any]) {
-        let name = section["name"] as? String ?? "Galaxy"
+        let name = categoryLabel(section["name"] as? String ?? "Galaxy")
         let params = (section["params"] as? [[String: Any]] ?? []).filter(visible)
         let page = CPGridTemplate(title: name, gridButtons: [button("Loading settings…", icon: "hourglass")])
         settingsPage(page, title: name, params: params, index: 0)
@@ -302,7 +384,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let key = param["key"] as? String ?? ""
             let label = param["label"] as? String ?? key
             let value = bool(values[key]).map { $0 ? "On" : "Off" } ?? "iPhone"
-            return button(label, icon: "switch.2", value: value) { [weak self, weak page] in
+            return button(label, icon: value == "On" ? "checkmark.circle.fill" : value == "Off" ? "circle" : "iphone", value: value) { [weak self, weak page] in
                 self?.confirmToggle(param, page: page, title: title, params: params, index: current)
             }
         }
@@ -359,6 +441,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                     guard original == self.session else { throw BridgeError.message("Connection changed. Please try again.") }
                     _ = try await self.request("/api/params", method: "PUT", body: payload)
                     self.values = try await self.request("/api/params/all") as? [String: Any] ?? [:]
+                    self.valuesSession = self.session; self.valuesAt = Date()
                     if let page { self.settingsPage(page, title: title, params: params, index: index) }
                 } catch {
                     if !Task.isCancelled { self.notice(error.localizedDescription) }
