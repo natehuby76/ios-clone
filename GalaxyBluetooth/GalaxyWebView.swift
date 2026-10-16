@@ -27,6 +27,7 @@ final class GalaxyPageDiagnostics: ObservableObject {
         downloadError = "The file couldn’t be downloaded. Please try again."
     }
 
+    var recover: ((Bool) -> Void)?
     @Published var copied = false
     @Published var stalled = false
     @Published var mounted = false
@@ -54,7 +55,7 @@ final class GalaxyPageDiagnostics: ObservableObject {
         mounted = true; stalled = false; deadline?.cancel()
         record("Galaxy content rendered")
     }
-    func fail(_ event: String) { record(event); stalled = true; deadline?.cancel() }
+    func fail(_ event: String) { record(event); mounted = false; stalled = true; deadline?.cancel() }
     func retry() { reloadID = UUID() }
     func report(server: LoopbackServer, connection: String) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -84,7 +85,7 @@ struct GalaxyWebView: View {
     var body: some View {
         ZStack {
             GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive)
-                .id(diagnostics.reloadID)
+                .id(url.absoluteString + diagnostics.reloadID.uuidString)
             if diagnostics.stalled {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.bubble").font(.largeTitle).foregroundStyle(.purple)
@@ -94,7 +95,7 @@ struct GalaxyWebView: View {
                     Button(diagnostics.copied ? "Report copied" : "Copy error report") {
                         UIPasteboard.general.string = report(); diagnostics.copied = true
                     }.buttonStyle(.borderedProminent).tint(.purple)
-                    Button("Retry Galaxy") { diagnostics.copied = false; diagnostics.retry() }.buttonStyle(.bordered)
+                    Button("Retry Galaxy") { diagnostics.copied = false; diagnostics.recover?(false) }.buttonStyle(.bordered)
                 }.padding(28).frame(maxWidth: 420)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(20)
             }
@@ -268,6 +269,11 @@ private struct GalaxyPage: UIViewRepresentable {
             case "resource": diagnostics.record("Resource failed: \(path)")
             case "script": diagnostics.record("JavaScript error: \(path), line \(body["code"] as? Int ?? 0)")
             case "promise": diagnostics.record("Unhandled JavaScript promise rejection")
+            case "search":
+                if let phase = body["phase"] as? String, ["started", "results", "partial", "ready"].contains(phase),
+                   let count = body["count"] as? Int, (0...50_000).contains(count) {
+                    diagnostics.record("Toggle search \(phase): \(count) settings indexed")
+                }
             default: break
             }
         }
@@ -282,9 +288,17 @@ private struct GalaxyPage: UIViewRepresentable {
         private func navigationFailed(_ error: Error) {
             let value = error as NSError
             if !downloads.isEmpty, value.code == NSURLErrorCancelled || (value.domain == "WKErrorDomain" && value.code == 102) { return }
+            if value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled { return }
             diagnostics.fail("Navigation failed: \(value.domain) \(value.code)")
+            if isVisible, value.domain == NSURLErrorDomain,
+               [NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost].contains(value.code) {
+                diagnostics.recover?(true)
+            }
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { diagnostics.fail("Galaxy web content process terminated") }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            diagnostics.fail("Galaxy web content process terminated")
+            if isVisible { diagnostics.recover?(true) }
+        }
 
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

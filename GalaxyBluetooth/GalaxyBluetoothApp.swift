@@ -56,6 +56,31 @@ final class AppModel: ObservableObject {
             }
         }
     }
+    private var galaxyRecoveryTask: Task<Void, Never>?
+    private var lastAutomaticGalaxyRecovery: TimeInterval = -.infinity
+    func recoverGalaxy(automatic: Bool = true, reload: Bool = true) {
+        guard phoneActive, galaxyRecoveryTask == nil else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if automatic && reload {
+            guard now - lastAutomaticGalaxyRecovery >= 30 else {
+                galaxyPage.record("Automatic page recovery paused; use Retry Galaxy")
+                return
+            }
+            lastAutomaticGalaxyRecovery = now
+        }
+        galaxyRecoveryTask = Task { @MainActor in
+            defer { self.galaxyRecoveryTask = nil }
+            let previousURL = self.server.url
+            let healthy = await self.server.ensureAvailable()
+            guard self.phoneActive else { return }
+            if healthy {
+                if self.opened && (reload || self.galaxyPage.stalled || previousURL != self.server.url) {
+                    self.galaxyPage.record("Local server checked; recreating Galaxy web page")
+                    self.galaxyPage.retry()
+                }
+            } else { self.galaxyPage.fail("Local server unavailable after recovery attempt") }
+        }
+    }
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
@@ -130,6 +155,7 @@ final class AppModel: ObservableObject {
         server = LoopbackServer(transport: cache, webRoot: assets.readyRoot ?? assets.bundledRoot)
         transport.mode = mode
         diagnostics.transport = transport; diagnostics.lan = lan
+        galaxyPage.recover = { [weak self] automatic in self?.recoverGalaxy(automatic: automatic) }
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
@@ -388,6 +414,12 @@ struct GalaxyRootView: View {
                         .opacity(model.tab == .galaxy ? 1 : 0)
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
+                } else if model.opened && model.tab == .galaxy {
+                    VStack(spacing: 16) {
+                        if server.error.isEmpty { ProgressView("Reconnecting Galaxy…") }
+                        else { Text(server.error).multilineTextAlignment(.center) }
+                        Button("Retry Galaxy") { model.recoverGalaxy(automatic: false) }.buttonStyle(.bordered)
+                    }.padding(24)
                 }
                 if model.developerMode && model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
@@ -408,7 +440,7 @@ struct GalaxyRootView: View {
         .onChange(of: bluetooth.connected) { _, connected in if connected { model.openIfReady() } }
         .task(id: scenePhase) {
             model.setPhoneActive(scenePhase == .active)
-            if scenePhase == .active { await model.assets.check() }
+            if scenePhase == .active { model.recoverGalaxy(reload: false); await model.assets.check() }
         }
     }
     private func select(_ requestedTab: CompanionTab) {

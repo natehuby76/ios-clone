@@ -23,3 +23,12 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 python3 tests/extract_legacy_link.py "$test_dir/LegacyLinkProbe.swift"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/LegacyLinkProbe.swift" -o "$test_dir/legacy-link-tests"
 "$test_dir/legacy-link-tests"
+
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/HTTP.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/NetworkTransport.swift GalaxyBluetooth/PrivateLANHTTP.swift GalaxyBluetooth/LoopbackServer.swift tests/LoopbackRecoveryRegression.swift -o "$test_dir/loopback-recovery-tests"
+"$test_dir/loopback-recovery-tests"
+
+if command -v node >/dev/null 2>&1; then
+  node tests/ToggleSearchRegression.mjs
+else
+  echo "Node unavailable: run tests/ToggleSearchRegression.mjs locally for JavaScript search checks."
+fi
