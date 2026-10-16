@@ -35,52 +35,36 @@ enum BridgeError: LocalizedError {
         func read(_ path: String, method: String = "GET") -> Task<BridgeResponse, Error> {
             Task { try await cache.request(path: path, method: method, headers: [:], body: Data()) }
         }
-        let params = "/api/params/all?galaxy_ble_settings=1", metadata = "/api/params/defaults"
-        let first = read(params)
+        let page = "/api/settings/pages/hub"
+        let first = read(page)
         await transport.until(1)
-        let joined = read(params)
+        let joined = read(page)
         for _ in 0..<10 { await Task.yield() }
-        precondition(transport.calls == 1, "Concurrent settings downloads were duplicated")
+        precondition(transport.calls == 1, "Concurrent page reads were duplicated")
         transport.reply(1)
         let a = try await first.value, b = try await joined.value
         precondition(a.bodyData == b.bodyData)
-        let fresh = read(params)
-        await transport.until(2); transport.reply(2)
-        _ = try await fresh.value
-        let defaults = read(metadata)
-        await transport.until(3); transport.reply(3)
-        _ = try await defaults.value
-        _ = try await cache.request(path: metadata, method: "GET", headers: [:], body: Data())
-        precondition(transport.calls == 3, "Stable metadata downloaded again")
-        transport.clock = 301
-        let expired = read(metadata)
-        await transport.until(4); transport.reply(4); _ = try await expired.value
-        let write = read("/api/params", method: "PUT")
-        await transport.until(5); transport.reply(5); _ = try await write.value
-        let afterWrite = read(metadata)
-        await transport.until(6); transport.reply(6); _ = try await afterWrite.value
-        transport.session = "second"
-        let afterReconnect = read(metadata)
-        await transport.until(7); transport.reply(7); _ = try await afterReconnect.value
-        let stale = read(params)
-        await transport.until(8)
-        let mutation = read("/api/params", method: "PUT")
-        await transport.until(9)
-        transport.reply(8)
-        do { _ = try await stale.value; preconditionFailure("Read from before mutation was accepted") } catch {}
-        transport.reply(9); _ = try await mutation.value
-        let oldSession = read(params)
-        await transport.until(10)
-        transport.session = "third"; transport.reply(10)
+        let fresh = read(page)
+        await transport.until(2); transport.reply(2); _ = try await fresh.value
+        let stale = read(page)
+        await transport.until(3)
+        let mutation = read("/api/settings/confirm", method: "POST")
+        await transport.until(4)
+        transport.reply(3)
+        do { _ = try await stale.value; preconditionFailure("Read from before mutation accepted") } catch {}
+        transport.reply(4); _ = try await mutation.value
+        let oldSession = read(page)
+        await transport.until(5)
+        transport.session = "second"; transport.reply(5)
         do { _ = try await oldSession.value; preconditionFailure("Old session read accepted") } catch {}
-        let cancelled = read(params)
-        await transport.until(11)
-        let survivor = read(params)
+        let cancelled = read(page)
+        await transport.until(6)
+        let survivor = read(page)
         for _ in 0..<10 { await Task.yield() }
-        cancelled.cancel(); transport.reply(11)
+        cancelled.cancel(); transport.reply(6)
         do { _ = try await cancelled.value; preconditionFailure("Cancelled caller received result") } catch {}
         _ = try await survivor.value
-        precondition(transport.calls == 11, "Cancellation duplicated shared request")
-        print("Read cache: coalescing, fresh values, expiry, writes, reconnects and cancellation passed")
+        precondition(transport.calls == 6)
+        print("SecretGood page reads: coalescing, fresh tokens, writes, reconnects and cancellation passed")
     }
 }

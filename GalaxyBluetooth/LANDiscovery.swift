@@ -9,7 +9,7 @@ struct DiscoveredComma: Identifiable {
 
 @MainActor
 final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
-    static let serviceType = "_starpilot-galaxy._tcp."
+    static let serviceType = "_sp-galaxy._tcp."
     @Published private(set) var devices: [DiscoveredComma] = []
     @Published private(set) var searching = false
     @Published private(set) var status = "Find comma on the same Wi-Fi or hotspot, without Bluetooth."

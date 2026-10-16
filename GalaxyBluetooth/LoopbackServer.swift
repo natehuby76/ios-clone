@@ -10,8 +10,8 @@ final class LoopbackServer: ObservableObject {
     @Published var error = ""
     private(set) var recentRequests: [String] = []
     var diagnosticSummary: String {
-        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/index.html").path)
-        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/js/app.js").path)
+        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("index.html").path)
+        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("js/app.js").path)
         return "Local server ready: \(url != nil)\nAsset source: \(webRoot.lastPathComponent == "Web" ? "bundled" : "saved update")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nLocal server error present: \(!error.isEmpty)"
     }
     static func reportPath(_ target: String) -> String {
@@ -32,14 +32,12 @@ final class LoopbackServer: ObservableObject {
         self.transport = transport
         let root = webRoot ?? Bundle.main.resourceURL!.appendingPathComponent("Web", isDirectory: true)
         self.webRoot = root
-        self.catalog = try? Data(contentsOf: root.appendingPathComponent("assets/components/tools/device_settings_layout.json"))
-        self.catalogSHA256 = catalog.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+
     }
 
     func useWebRoot(_ root: URL) {
         webRoot = root
-        catalog = try? Data(contentsOf: root.appendingPathComponent("assets/components/tools/device_settings_layout.json"))
-        catalogSHA256 = catalog.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+
     }
 
     func start() {
@@ -65,15 +63,6 @@ final class LoopbackServer: ObservableObject {
             }
             listener.start(queue: .main)
         } catch { self.error = error.localizedDescription }
-    }
-
-    static func adaptNativeAsset(_ data: Data, path: String) -> Data {
-        guard path == "assets/mobile/js/components/PersonalityProfiles.js",
-              let source = String(data: data, encoding: .utf8) else { return data }
-        let adapted = source.replacingOccurrences(of: "api.getParams()", with: "api.getSettingsParams()")
-            .replacingOccurrences(of: "if (this.busy || !this.ready || this.contextPending) return",
-                                  with: "if (document.hidden || this.busy || !this.ready || this.contextPending) return")
-        return Data(adapted.utf8)
     }
 
     func stop() {
@@ -117,17 +106,10 @@ final class LoopbackServer: ObservableObject {
             return .error(400, "Invalid local path.")
         }
         if path.hasPrefix("/_gateway/") { return .error(404, "Choose your connection in the native app.") }
-        let dynamic = path.hasPrefix("/api/") || path == "/assets/components/tools/device_settings_layout.json"
+        let dynamic = path.hasPrefix("/api/") || path == "/data/runtime.json"
         if dynamic {
             guard request.headers["x-galaxy-local"] == localSecret else { return .error(403, "Missing app request key.") }
             guard transport.connected else { return .error(503, "Your comma is disconnected. Open Connections to reconnect.") }
-            // Verify the device's catalog during the authenticated BLE handshake.
-            if request.method == "GET", request.body.isEmpty,
-               request.target == "/assets/components/tools/device_settings_layout.json?v=settings-tier-1",
-               request.headers["range"] == nil, let catalog, let catalogSHA256,
-               transport.catalogSHA256 == catalogSHA256 {
-                return LocalResponse(status: 200, headers: ["content-type": "application/json"], body: catalog)
-            }
             do {
                 let response = try await transport.request(path: request.target, method: request.method,
                                                           headers: request.headers, body: request.body)
@@ -135,16 +117,11 @@ final class LoopbackServer: ObservableObject {
             } catch { return .error(502, error.localizedDescription) }
         }
         guard ["GET", "HEAD"].contains(request.method) else { return .error(405, "Method is not supported for bundled files.") }
-        let assetPath: String
-        if path.hasPrefix("/assets/") { assetPath = String(path.dropFirst()) }
-        else if ["/", "/mobile", "/mobile/"].contains(path) { assetPath = "assets/mobile/index.html" }
-        else if path == "/manifest.json" { assetPath = "assets/manifest.json" }
-        else { assetPath = "classic.html" }
+        let assetPath = path == "/" ? "index.html" : String(path.dropFirst())
         let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
-        guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), var data = try? Data(contentsOf: file) else {
+        guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), let data = try? Data(contentsOf: file) else {
             return .error(404, "Bundled Galaxy asset was not found.")
         }
-        data = Self.adaptNativeAsset(data, path: assetPath)
         let mime: String
         switch file.pathExtension {
         case "js", "mjs": mime = "text/javascript"

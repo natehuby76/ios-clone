@@ -148,12 +148,18 @@ private struct GalaxyPage: UIViewRepresentable {
           window.__galaxyNative = true;
           const phoneAppearance = window.matchMedia('(prefers-color-scheme: dark)');
           const syncTheme = () => {
-            import('/assets/mobile/js/store.js')
-              .then(module => module.setTheme(phoneAppearance.matches ? 'dark' : 'light'))
-              .catch(() => {});
+            const theme = phoneAppearance.matches ? 'dark' : 'light';
+            localStorage.setItem('galaxy-preview-theme', theme);
+            document.documentElement.dataset.theme = theme;
           };
-          phoneAppearance.addEventListener('change', syncTheme);
-          window.addEventListener('DOMContentLoaded', syncTheme, {once: true});
+          syncTheme();
+          phoneAppearance.addEventListener('change', () => {
+            const dark = phoneAppearance.matches;
+            if ((document.documentElement.dataset.theme === 'dark') !== dark) {
+              document.querySelector('.gx-theme-toggle')?.click();
+            }
+            syncTheme();
+          });
           let nativeVisible = \(isActive ? "true" : "false");
           Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => nativeVisible ? 'visible' : 'hidden'});
           Object.defineProperty(document, 'hidden', {configurable: true, get: () => !nativeVisible});
@@ -192,7 +198,20 @@ private struct GalaxyPage: UIViewRepresentable {
             if (!local(req.url)) return originalFetch(req);
             const headers = new Headers(req.headers);
             headers.set('X-Galaxy-Local', key);
-            return originalFetch(new Request(req, { headers }));
+            return originalFetch(new Request(req, { headers })).then(async response => {
+              if (response.status === 501) {
+                const message = await response.clone().json().catch(() => null);
+                let notice = document.getElementById('native-wifi-notice');
+                if (!notice) {
+                  notice = document.createElement('button'); notice.id = 'native-wifi-notice';
+                  notice.setAttribute('role', 'status');
+                  notice.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;z-index:10000;padding:16px;border-radius:16px;background:Canvas;color:CanvasText;border:1px solid currentColor;font:inherit;';
+                  notice.onclick = () => notice.remove(); document.body.appendChild(notice);
+                }
+                notice.textContent = typeof message?.error === 'string' ? message.error : 'Connect to comma over Wi-Fi for this feature.';
+              }
+              return response;
+            });
           };
           const originalOpen = XMLHttpRequest.prototype.open;
           const originalSend = XMLHttpRequest.prototype.send;

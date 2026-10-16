@@ -128,9 +128,6 @@ final class AppModel: ObservableObject {
         })
         server = LoopbackServer(transport: cache, webRoot: assets.readyRoot ?? assets.bundledRoot)
         transport.mode = mode
-        if let saved = UserDefaults.standard.string(forKey: "galaxy.comma.identity"), LANTransport.deviceID(Data(saved.utf8)) != nil {
-            lan.bind(to: saved)
-        }
         diagnostics.transport = transport; diagnostics.lan = lan
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
@@ -257,8 +254,8 @@ final class AppModel: ObservableObject {
         let session = bluetooth.sessionIdentifier
         addressCheckSession = session
         do {
-            if identitySession != session {
-                let identity = try await bluetooth.request(path: "/api/params?key=DongleId", method: "GET", headers: [:], body: Data())
+            do {
+                let identity = try await bluetooth.request(path: "/data/runtime.json", method: "GET", headers: [:], body: Data())
                 guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
                 guard identity.status == 200, let value = LANTransport.deviceID(identity.bodyData) else {
@@ -266,11 +263,11 @@ final class AppModel: ObservableObject {
                     return
                 }
                 lan.bind(to: value)
-                UserDefaults.standard.set(value, forKey: "galaxy.comma.identity")
+
                 identitySession = session
             }
             guard findAddressAutomatically, !lan.connected else { return }
-            let response = try await bluetooth.request(path: "/api/device/status", method: "GET", headers: [:], body: Data())
+            let response = try await bluetooth.request(path: "/api/local-access", method: "GET", headers: [:], body: Data())
             guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session, response.status == 200,
                   !response.bodyData.isEmpty else { return }
             if let ip = LANTransport.reportedAddress(response.bodyData) {

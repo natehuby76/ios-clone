@@ -231,7 +231,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     static func backgroundRead(_ path: String) -> Bool {
         let endpoint = path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? path
-        return ["/api/device/status", "/api/stats", "/api/companion/diagnostics"].contains(endpoint)
+        return ["/api/device/state", "/api/system/monitor", "/api/local-access"].contains(endpoint)
     }
 
     static func nextRequestIndex(methods: [String], paths: [String], priorityStreak: Int) -> Int {

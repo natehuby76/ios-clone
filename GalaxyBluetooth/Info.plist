@@ -13,7 +13,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.21</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -39,7 +39,7 @@
 	<string>Scan the pairing code displayed on your comma to connect the Galaxy app over Bluetooth.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_starpilot-galaxy._tcp</string>
+		<string>_sp-galaxy._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to Galaxy on your comma over your local Wi-Fi network.</string>
