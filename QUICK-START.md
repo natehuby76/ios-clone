@@ -1,4 +1,4 @@
-# StarPilot iPhone testing — quick start
+# StarPilot BT quick start
 
 You need an iPhone and your own comma 4 or comma 3X running the pilot branch. Comma 3X support is ready for initial hardware testing; it has not yet been verified on a physical 3X.
 

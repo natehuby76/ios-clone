@@ -1,4 +1,4 @@
-# iPhone: Wi-Fi first, Bluetooth fallback pilot
+# StarPilot BT connection testing
 
 This is an experimental development build. Keep comma parked while testing.
 
