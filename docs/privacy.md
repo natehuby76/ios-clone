@@ -8,7 +8,7 @@ This policy covers the StarPilot BT iPhone companion. The publisher responsible 
 
 StarPilot BT displays Galaxy from a compatible StarPilot installation and sends your requests to the comma you connect. Local Bluetooth access does not require an internet account or a shared network. Some functions require local Wi-Fi or internet access on comma.
 
-Connection preferences, a remembered Bluetooth identifier and local address are stored on your iPhone. Pairing credentials are stored in the iOS Keychain. Galaxy interface files are cached on your iPhone. Bluetooth messages use authenticated encryption. Local Wi-Fi communication currently uses HTTP; use a trusted network.
+Connection preferences, a remembered Bluetooth identifier and local address are stored on your iPhone. Pairing credentials and the pairing ID supplied by comma are stored in the iOS Keychain. On an encrypted Bluetooth connection, the app sends the iOS-provided phone name to comma so it can label that phone in its pairing list. When replacing a pairing, it also sends the previous pairing ID so comma can remove the old entry. It does not add another device identifier. Galaxy interface files are cached on your iPhone. Bluetooth messages use authenticated encryption. Local Wi-Fi communication currently uses HTTP; use a trusted network.
 
 ## Permissions
 
