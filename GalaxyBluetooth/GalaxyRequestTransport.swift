@@ -29,7 +29,7 @@ enum SecretGoodGalaxy {
     }
 }
 
-/// Coalesce simultaneous page reads. View/intent tokens are never cached for later use.
+/// Coalesce simultaneous identical reads. View/intent tokens are never cached for later use.
 @MainActor
 final class GalaxyReadCache: GalaxyRequestTransport {
     private let transport: any GalaxyRequestTransport
@@ -64,10 +64,10 @@ final class GalaxyReadCache: GalaxyRequestTransport {
             defer { invalidate() }
             return try await transport.request(path: path, method: method, headers: headers, body: body)
         }
-        guard body.isEmpty, path.hasPrefix("/api/settings/pages/") else {
+        guard body.isEmpty, path.hasPrefix("/api/"), headers.keys.allSatisfy({ !["authorization", "range"].contains($0.lowercased()) }) else {
             return try await transport.request(path: path, method: method, headers: headers, body: body)
         }
-        let relevantHeaders = headers.filter { ["accept", "cookie", "range"].contains($0.key.lowercased()) }
+        let relevantHeaders = headers
             .map { "\($0.key.lowercased()):\($0.value)" }.sorted().joined(separator: "\n")
         let cacheKey = path + "\n" + relevantHeaders
         let token: UUID

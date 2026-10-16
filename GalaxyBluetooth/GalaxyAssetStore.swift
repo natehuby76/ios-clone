@@ -15,7 +15,7 @@ struct GalaxyAssetManifest: Codable {
             let parts = file.path.split(separator: "/", omittingEmptySubsequences: false)
             guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
                   file.path.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45, 46, 47, 95].contains($0) }),
-                  ["index.html", "manifest.webmanifest"].contains(file.path) || ["assets/", "css/", "js/", "vendor/", "data/"].contains(where: { file.path.hasPrefix($0) }),
+                  ["index.html", "manifest.webmanifest", "sentry-push-worker.js"].contains(file.path) || ["assets/", "css/", "js/", "vendor/", "data/"].contains(where: { file.path.hasPrefix($0) }),
                   (0...4_194_304).contains(file.size), Self.isHash(file.sha256) else {
                 throw BridgeError.message("Invalid Galaxy update file.")
             }
@@ -167,7 +167,16 @@ final class GalaxyAssetStore: ObservableObject {
             status = "Galaxy update ready. It applies when you next open Galaxy."
         } catch {
             if let stage { try? FileManager.default.removeItem(at: stage) }
-            status = "GitHub unavailable or update incompatible. Using saved Galaxy."
+            let source = readyRoot == nil ? "the Galaxy version included with this app" : "your saved Galaxy version"
+            if let failure = error as? URLError {
+                status = "Couldn’t check Galaxy updates (network error \(failure.code.rawValue)). Using \(source)."
+            } else if let failure = error as? BridgeError {
+                status = "\(failure.localizedDescription) Using \(source)."
+            } else if error is CancellationError {
+                status = "Galaxy update cancelled. Using \(source)."
+            } else {
+                status = "Galaxy update could not be read or saved. Using \(source)."
+            }
         }
     }
     private func download(_ url: URL, limit: Int) async throws -> (Data, HTTPURLResponse) {
@@ -176,7 +185,7 @@ final class GalaxyAssetStore: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Galaxy-iPhone-Pilot", forHTTPHeaderField: "User-Agent")
         let result = try await fetch(request, limit)
-        guard result.1.statusCode == 200 else { throw BridgeError.message("GitHub update unavailable.") }
+        guard result.1.statusCode == 200 else { throw BridgeError.message("GitHub update check returned HTTP \(result.1.statusCode).") }
         return result
     }
 }

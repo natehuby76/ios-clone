@@ -88,6 +88,7 @@ final class AppModel: ObservableObject {
     @Published var wantsConnection = true
     @Published var loadingLegacyURL = false
     @Published var legacyMessage = ""
+    @Published var legacyURL: URL?
     let bluetooth: BluetoothTransport
     let lan: LANTransport
     let transport: PreferredTransport
@@ -160,6 +161,7 @@ final class AppModel: ObservableObject {
         } else { connectionLog.record("\(route): \(reason)") }
     }
     func connect() {
+        legacyURL = nil
         do {
             if mode != .bluetooth, !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try lan.configure(address: address)
@@ -182,6 +184,7 @@ final class AppModel: ObservableObject {
         if tab == .connections { tab = .galaxy }
     }
     func disconnect() {
+        legacyURL = nil
         discovery.stop()
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
@@ -218,6 +221,7 @@ final class AppModel: ObservableObject {
     func fetchLegacyURL() async -> URL? {
         guard !loadingLegacyURL else { return nil }
         legacyMessage = ""
+        legacyURL = nil
         guard wantsConnection, transport.connected else {
             legacyMessage = "Connect to your comma first to get its Galaxy link."
             return nil
@@ -242,8 +246,11 @@ final class AppModel: ObservableObject {
             guard let url = status.browserURL else {
                 throw BridgeError.message("Your comma hasn’t provided a valid Galaxy link. Check its legacy Galaxy pairing.")
             }
+            legacyURL = url
+            connectionLog.record("Comma-specific legacy Galaxy link validated")
             return url
         } catch {
+            connectionLog.record("Comma-specific legacy Galaxy link unavailable")
             legacyMessage = (error as? BridgeError)?.localizedDescription ?? "Couldn’t get your comma’s Galaxy link. Check the connection and try again."
             return nil
         }
@@ -535,6 +542,9 @@ struct GalaxyRootView: View {
                 } label: {
                     Label(model.loadingLegacyURL ? "Getting Galaxy link…" : "Open legacy Galaxy", systemImage: "safari")
                 }.buttonStyle(.bordered).disabled(model.loadingLegacyURL)
+                if let url = model.legacyURL {
+                    Text(url.absoluteString).font(.caption).textSelection(.enabled)
+                }
                 Text("Gets this comma’s unique Galaxy link and opens it in your default browser.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !model.legacyMessage.isEmpty {
@@ -603,7 +613,7 @@ private struct DeveloperLogsView: View {
                     Button("Refresh") { log.detail = selectedReport(); log.copied = false }.buttonStyle(.bordered)
                 }
                 Button("Copy all reports") {
-                    UIPasteboard.general.string = [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog()].joined(separator: "\n\n")
+                    UIPasteboard.general.string = [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
                     log.copied = true
                 }
                 Text(log.section == "Connections" ? log.report(model: model) : log.detail)

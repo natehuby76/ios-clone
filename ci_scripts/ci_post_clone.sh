@@ -19,3 +19,7 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 python3 tests/check_secretgood_bundle.py
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/HTTP.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/NetworkTransport.swift GalaxyBluetooth/PrivateLANHTTP.swift GalaxyBluetooth/GalaxyAssetStore.swift tests/SecretGoodAssetsRegression.swift -o "$test_dir/secretgood-assets-tests"
 "$test_dir/secretgood-assets-tests"
+
+python3 tests/extract_legacy_link.py "$test_dir/LegacyLinkProbe.swift"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/LegacyLinkProbe.swift" -o "$test_dir/legacy-link-tests"
+"$test_dir/legacy-link-tests"

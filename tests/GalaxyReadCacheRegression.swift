@@ -65,6 +65,15 @@ enum BridgeError: LocalizedError {
         do { _ = try await cancelled.value; preconditionFailure("Cancelled caller received result") } catch {}
         _ = try await survivor.value
         precondition(transport.calls == 6)
+        let background = read("/api/system/monitor")
+        await transport.until(7)
+        let duplicate = read("/api/system/monitor")
+        for _ in 0..<10 { await Task.yield() }
+        precondition(transport.calls == 7, "Concurrent monitor reads must share one transfer")
+        transport.reply(7)
+        _ = try await background.value; _ = try await duplicate.value
+        let nextSample = read("/api/system/monitor")
+        await transport.until(8); transport.reply(8); _ = try await nextSample.value
         print("SecretGood page reads: coalescing, fresh tokens, writes, reconnects and cancellation passed")
     }
 }

@@ -30,6 +30,8 @@ tests = r'''
         precondition(Probe.nextRequestIndex(methods: ["GET", "GET"], paths: ["/api/system/monitor", "/api/settings/pages/hub"], priorityStreak: 3) == 0)
         precondition(Probe.nextRequestIndex(methods: ["PUT", "GET"], paths: ["/api/settings/confirm", "/api/settings/pages/hub"], priorityStreak: 0) == 0)
         precondition(Probe.backgroundRead("/api/device/state?refresh=1"))
+        precondition(Probe.nextRequestIndex(methods: ["GET", "GET", "GET"], paths: ["/api/models/status", "/api/drives/stats?timezone=UTC", "/api/settings/pages/hub"], priorityStreak: 0) == 2)
+        precondition(Probe.backgroundRead("/api/software/status?history=0"))
         precondition(Probe.useNotifications(method: "GET", path: "/api/settings/pages/hub", supported: true, fastReads: true))
         precondition(!Probe.useNotifications(method: "GET", path: "/api/settings/pages/hub", supported: false, fastReads: true))
         precondition(!Probe.useNotifications(method: "GET", path: "/_bridge/health", supported: true, fastReads: true))
