@@ -1,4 +1,4 @@
-# StarPilot Live / CarPlay pilot
+# StarPilot BT CarPlay testing
 
 The phone receives a continuous JPEG stream of the full comma display over local Wi-Fi, targeting 20 FPS at 960 pixels wide. The actual received FPS is shown on the phone. Bluetooth carries diagnostics only. Hardware throughput and capture overhead still need measurement.
 

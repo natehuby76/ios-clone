@@ -95,16 +95,23 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     func scan() {
-        guard central.state == .poweredOn else { status = "Bluetooth is unavailable or permission is required."; return }
+        guard central.state == .poweredOn else { onEvent?("Bluetooth scan blocked: state=\(central.state.rawValue)"); status = "Bluetooth is unavailable or permission is required."; return }
         devices = []
         peripherals = [:]
+        onEvent?("Bluetooth service scan started; timeout=15s")
+        for found in central.retrieveConnectedPeripherals(withServices: [CBUUID(string: Wire.service)]) {
+            peripherals[found.identifier] = found
+            devices.append(NearbyDevice(id: found.identifier, name: found.name ?? "Galaxy", signal: 0))
+        }
+        onEvent?("Bluetooth scan found \(devices.count) already-connected service candidates")
         central.scanForPeripherals(withServices: [CBUUID(string: Wire.service)], options: nil)
         isScanning = true
-        status = "Looking for the Galaxy Bluetooth bridge…"
+        status = "Looking for your comma…"
         scanTimeout?.cancel()
         scanTimeout = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard !Task.isCancelled, let self else { return }
+            self.onEvent?("Bluetooth service scan finished: candidates=\(self.devices.count)")
             self.central.stopScan()
             self.isScanning = false
             self.status = self.devices.isEmpty ? "No bridge found. Start the bridge on your comma and enable Bluetooth in StarPilot." : "Select your comma to connect."
@@ -231,7 +238,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     static func backgroundRead(_ path: String) -> Bool {
         let endpoint = path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? path
-        return ["/api/device/status", "/api/stats", "/api/companion/diagnostics"].contains(endpoint)
+        return ["/api/device/state", "/api/system/monitor", "/api/local-access", "/api/models/status", "/api/software/status", "/api/drives/stats"].contains(endpoint)
     }
 
     static func nextRequestIndex(methods: [String], paths: [String], priorityStreak: Int) -> Int {
@@ -331,6 +338,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onEvent?("iOS Bluetooth state changed: \(central.state.rawValue)")
         switch central.state {
         case .poweredOn: status = "Ready to scan for your comma."
         case .unauthorized: failConnection("Allow Bluetooth access in iPhone Settings.")
@@ -346,11 +354,12 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
                                   name: advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "Galaxy",
                                   signal: RSSI.intValue)
         if let index = devices.firstIndex(where: { $0.id == device.id }) { devices[index] = device }
-        else { devices.append(device) }
+        else { devices.append(device); onEvent?("Bluetooth service candidate discovered: RSSI=\(RSSI.intValue), candidates=\(devices.count)") }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard peripheral == self.peripheral else { return }
+        onEvent?("Bluetooth link established; discovering Galaxy service")
         peripheral.discoverServices([CBUUID(string: Wire.service)])
     }
 
@@ -368,8 +377,9 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peripheral == self.peripheral else { return }
         guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == CBUUID(string: Wire.service) }) else {
-            failConnection("Galaxy Bluetooth service was not found."); return
+            failConnection("StarPilot BT service was not found."); return
         }
+        onEvent?("Bluetooth Galaxy service found; discovering characteristics")
         peripheral.discoverCharacteristics([CBUUID(string: Wire.rx), CBUUID(string: Wire.tx), CBUUID(string: Wire.info), CBUUID(string: Wire.notify)], for: service)
     }
 
@@ -382,6 +392,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         guard rx != nil, tx != nil, let info = service.characteristics?.first(where: { $0.uuid == CBUUID(string: Wire.info) }) else {
             failConnection("The comma bridge has incompatible Bluetooth characteristics."); return
         }
+        onEvent?("Bluetooth characteristics ready; reading handshake challenge")
         peripheral.readValue(for: info)
     }
 

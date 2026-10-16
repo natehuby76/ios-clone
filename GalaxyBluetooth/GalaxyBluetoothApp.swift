@@ -56,6 +56,31 @@ final class AppModel: ObservableObject {
             }
         }
     }
+    private var galaxyRecoveryTask: Task<Void, Never>?
+    private var lastAutomaticGalaxyRecovery: TimeInterval = -.infinity
+    func recoverGalaxy(automatic: Bool = true, reload: Bool = true) {
+        guard phoneActive, galaxyRecoveryTask == nil else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if automatic && reload {
+            guard now - lastAutomaticGalaxyRecovery >= 30 else {
+                galaxyPage.record("Automatic page recovery paused; use Retry Galaxy")
+                return
+            }
+            lastAutomaticGalaxyRecovery = now
+        }
+        galaxyRecoveryTask = Task { @MainActor in
+            defer { self.galaxyRecoveryTask = nil }
+            let previousURL = self.server.url
+            let healthy = await self.server.ensureAvailable()
+            guard self.phoneActive else { return }
+            if healthy {
+                if self.opened && (reload || self.galaxyPage.stalled || previousURL != self.server.url) {
+                    self.galaxyPage.record("Local server checked; recreating Galaxy web page")
+                    self.galaxyPage.retry()
+                }
+            } else { self.galaxyPage.fail("Local server unavailable after recovery attempt") }
+        }
+    }
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
@@ -88,6 +113,7 @@ final class AppModel: ObservableObject {
     @Published var wantsConnection = true
     @Published var loadingLegacyURL = false
     @Published var legacyMessage = ""
+    @Published var legacyURL: URL?
     let bluetooth: BluetoothTransport
     let lan: LANTransport
     let transport: PreferredTransport
@@ -128,10 +154,8 @@ final class AppModel: ObservableObject {
         })
         server = LoopbackServer(transport: cache, webRoot: assets.readyRoot ?? assets.bundledRoot)
         transport.mode = mode
-        if let saved = UserDefaults.standard.string(forKey: "galaxy.comma.identity"), LANTransport.deviceID(Data(saved.utf8)) != nil {
-            lan.bind(to: saved)
-        }
         diagnostics.transport = transport; diagnostics.lan = lan
+        galaxyPage.recover = { [weak self] automatic in self?.recoverGalaxy(automatic: automatic) }
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
@@ -163,6 +187,7 @@ final class AppModel: ObservableObject {
         } else { connectionLog.record("\(route): \(reason)") }
     }
     func connect() {
+        legacyURL = nil
         do {
             if mode != .bluetooth, !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try lan.configure(address: address)
@@ -185,6 +210,7 @@ final class AppModel: ObservableObject {
         if tab == .connections { tab = .galaxy }
     }
     func disconnect() {
+        legacyURL = nil
         discovery.stop()
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
@@ -221,6 +247,7 @@ final class AppModel: ObservableObject {
     func fetchLegacyURL() async -> URL? {
         guard !loadingLegacyURL else { return nil }
         legacyMessage = ""
+        legacyURL = nil
         guard wantsConnection, transport.connected else {
             legacyMessage = "Connect to your comma first to get its Galaxy link."
             return nil
@@ -245,8 +272,11 @@ final class AppModel: ObservableObject {
             guard let url = status.browserURL else {
                 throw BridgeError.message("Your comma hasn’t provided a valid Galaxy link. Check its legacy Galaxy pairing.")
             }
+            legacyURL = url
+            connectionLog.record("Comma-specific legacy Galaxy link validated")
             return url
         } catch {
+            connectionLog.record("Comma-specific legacy Galaxy link unavailable")
             legacyMessage = (error as? BridgeError)?.localizedDescription ?? "Couldn’t get your comma’s Galaxy link. Check the connection and try again."
             return nil
         }
@@ -257,8 +287,8 @@ final class AppModel: ObservableObject {
         let session = bluetooth.sessionIdentifier
         addressCheckSession = session
         do {
-            if identitySession != session {
-                let identity = try await bluetooth.request(path: "/api/params?key=DongleId", method: "GET", headers: [:], body: Data())
+            do {
+                let identity = try await bluetooth.request(path: "/data/runtime.json", method: "GET", headers: [:], body: Data())
                 guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
                 guard identity.status == 200, let value = LANTransport.deviceID(identity.bodyData) else {
@@ -266,11 +296,11 @@ final class AppModel: ObservableObject {
                     return
                 }
                 lan.bind(to: value)
-                UserDefaults.standard.set(value, forKey: "galaxy.comma.identity")
+
                 identitySession = session
             }
             guard findAddressAutomatically, !lan.connected else { return }
-            let response = try await bluetooth.request(path: "/api/device/status", method: "GET", headers: [:], body: Data())
+            let response = try await bluetooth.request(path: "/api/local-access", method: "GET", headers: [:], body: Data())
             guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session, response.status == 200,
                   !response.bodyData.isEmpty else { return }
             if let ip = LANTransport.reportedAddress(response.bodyData) {
@@ -316,13 +346,16 @@ struct GalaxyRootView: View {
     @ObservedObject var assets: GalaxyAssetStore
     @ObservedObject var server: LoopbackServer
     @ObservedObject var discovery: LANDiscovery
+    @ObservedObject var galaxyPage: GalaxyPageDiagnostics
+    private var editorFocused: Bool { model.tab == .galaxy && galaxyPage.landscapeEditor }
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
-        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery
+        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery; galaxyPage = model.galaxyPage
     }
     var body: some View {
         VStack(spacing: 0) {
+            if !editorFocused {
             VStack(spacing: 14) {
                 HStack {
                     if !model.developerMode && model.tab == .connections {
@@ -334,7 +367,7 @@ struct GalaxyRootView: View {
                         }
                         Text("Settings").font(.title3.bold())
                     } else {
-                        Text("StarPilot").font(.title3.bold())
+                        Text("StarPilot BT").font(.title3.bold())
                     }
                     Spacer()
                     HStack(spacing: 5) {
@@ -375,6 +408,7 @@ struct GalaxyRootView: View {
                     }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 }
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
+            }
             ZStack {
                 if model.opened, let url = server.url {
                     GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
@@ -384,6 +418,12 @@ struct GalaxyRootView: View {
                         .opacity(model.tab == .galaxy ? 1 : 0)
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
+                } else if model.opened && model.tab == .galaxy {
+                    VStack(spacing: 16) {
+                        if server.error.isEmpty { ProgressView("Reconnecting Galaxy…") }
+                        else { Text(server.error).multilineTextAlignment(.center) }
+                        Button("Retry Galaxy") { model.recoverGalaxy(automatic: false) }.buttonStyle(.bordered)
+                    }.padding(24)
                 }
                 if model.developerMode && model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
@@ -395,6 +435,8 @@ struct GalaxyRootView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(uiColor: .systemBackground))
+        .ignoresSafeArea(.container, edges: editorFocused ? .all : [])
+        .statusBarHidden(editorFocused)
         .onChange(of: model.showConnections) { _, show in
             if show { select(.connections); model.showConnections = false }
         }
@@ -404,7 +446,7 @@ struct GalaxyRootView: View {
         .onChange(of: bluetooth.connected) { _, connected in if connected { model.openIfReady() } }
         .task(id: scenePhase) {
             model.setPhoneActive(scenePhase == .active)
-            if scenePhase == .active { await model.assets.check() }
+            if scenePhase == .active { model.recoverGalaxy(reload: false); await model.assets.check() }
         }
     }
     private func select(_ requestedTab: CompanionTab) {
@@ -413,7 +455,7 @@ struct GalaxyRootView: View {
         model.tab = tab
         model.diagnostics.live = tab == .live
     }
-    private let brandPurple = Color(red: 0.55, green: 0.36, blue: 0.96)
+    private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
 
     private var connectionView: some View {
         ScrollView {
@@ -422,8 +464,8 @@ struct GalaxyRootView: View {
                     Image("StarPilotHero")
                         .resizable().scaledToFit()
                         .frame(maxWidth: 480)
-                        .accessibilityLabel("StarPilot")
-                    Text("Galaxy companion")
+                        .accessibilityLabel("StarPilot BT")
+                    Text("StarPilot BT")
                         .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity).padding(.top, 8)
                 Text("Connect your comma").font(.title2.bold())
@@ -538,11 +580,17 @@ struct GalaxyRootView: View {
                 } label: {
                     Label(model.loadingLegacyURL ? "Getting Galaxy link…" : "Open legacy Galaxy", systemImage: "safari")
                 }.buttonStyle(.bordered).disabled(model.loadingLegacyURL)
+                if let url = model.legacyURL {
+                    Text(url.absoluteString).font(.caption).textSelection(.enabled)
+                }
                 Text("Gets this comma’s unique Galaxy link and opens it in your default browser.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !model.legacyMessage.isEmpty {
                     Text(model.legacyMessage).font(.caption).foregroundStyle(.secondary)
                 }
+                Divider()
+                Link("Privacy policy", destination: URL(string: "https://github.com/natehuby76/ios-clone/blob/codex/secretgood-galaxy/docs/privacy.md")!)
+                Link("StarPilot support", destination: URL(string: "https://wiki.firestar.link/ticketsystem/")!)
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }.background(Color(uiColor: .systemBackground)).tint(brandPurple)
@@ -566,7 +614,7 @@ final class ConnectionEventLog: ObservableObject {
     func report(model: AppModel) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         return """
-        StarPilot connection diagnostics
+        StarPilot BT connection diagnostics
         \(ISO8601DateFormatter().string(from: Date()))
         App: \(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))
         iOS: \(UIDevice.current.systemVersion)
@@ -606,7 +654,7 @@ private struct DeveloperLogsView: View {
                     Button("Refresh") { log.detail = selectedReport(); log.copied = false }.buttonStyle(.bordered)
                 }
                 Button("Copy all reports") {
-                    UIPasteboard.general.string = [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog()].joined(separator: "\n\n")
+                    UIPasteboard.general.string = [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
                     log.copied = true
                 }
                 Text(log.section == "Connections" ? log.report(model: model) : log.detail)
