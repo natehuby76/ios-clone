@@ -455,7 +455,7 @@ struct GalaxyRootView: View {
         model.tab = tab
         model.diagnostics.live = tab == .live
     }
-    private let brandPurple = Color(red: 0.55, green: 0.36, blue: 0.96)
+    private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
 
     private var connectionView: some View {
         ScrollView {
