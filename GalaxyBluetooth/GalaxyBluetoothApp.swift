@@ -346,13 +346,16 @@ struct GalaxyRootView: View {
     @ObservedObject var assets: GalaxyAssetStore
     @ObservedObject var server: LoopbackServer
     @ObservedObject var discovery: LANDiscovery
+    @ObservedObject var galaxyPage: GalaxyPageDiagnostics
+    private var editorFocused: Bool { model.tab == .galaxy && galaxyPage.landscapeEditor }
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
-        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery
+        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery; galaxyPage = model.galaxyPage
     }
     var body: some View {
         VStack(spacing: 0) {
+            if !editorFocused {
             VStack(spacing: 14) {
                 HStack {
                     if !model.developerMode && model.tab == .connections {
@@ -405,6 +408,7 @@ struct GalaxyRootView: View {
                     }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 }
             }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
+            }
             ZStack {
                 if model.opened, let url = server.url {
                     GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
@@ -431,6 +435,8 @@ struct GalaxyRootView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(uiColor: .systemBackground))
+        .ignoresSafeArea(.container, edges: editorFocused ? .all : [])
+        .statusBarHidden(editorFocused)
         .onChange(of: model.showConnections) { _, show in
             if show { select(.connections); model.showConnections = false }
         }

@@ -28,6 +28,7 @@ final class GalaxyPageDiagnostics: ObservableObject {
     }
 
     var recover: ((Bool) -> Void)?
+    @Published var landscapeEditor = false
     @Published var copied = false
     @Published var stalled = false
     @Published var mounted = false
@@ -42,7 +43,7 @@ final class GalaxyPageDiagnostics: ObservableObject {
     }
     func begin() {
         deadline?.cancel()
-        started = Date(); mounted = false; stalled = false
+        started = Date(); mounted = false; stalled = false; landscapeEditor = false
         record("Page loading")
         deadline = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 12_000_000_000) } catch { return }
@@ -172,6 +173,57 @@ private struct GalaxyPage: UIViewRepresentable {
           const emit = (kind, path = '', code = 0) => {
             try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind, path, code}); } catch (_) {}
           };
+          // Keep this native presentation independent of downloaded Galaxy assets.
+          const editorScreen = matchMedia('(orientation: landscape) and (max-height: 600px)');
+          let editorFocused = false;
+          const editorCSS = document.createElement('style');
+          editorCSS.textContent = `
+            html.native-layout-editor .blur-nav,
+            html.native-layout-editor .gx-appbar__pill,
+            html.native-layout-editor .gx-appbar__menu,
+            html.native-layout-editor .gx-layout > .gx-page-header { display: none !important; }
+            html.native-layout-editor .gx-app { animation: none; }
+            html.native-layout-editor .gx-appbar {
+              position: fixed; inset: max(4px, env(safe-area-inset-top)) auto auto max(8px, env(safe-area-inset-left));
+              width: 44px; padding: 0; margin: 0; z-index: 20;
+            }
+            html.native-layout-editor .gx-appbar__back { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+            html.native-layout-editor .gx-content {
+              max-width: none; padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+            }
+            html.native-layout-editor .gx-layout { --layout-sticky-top: max(4px, env(safe-area-inset-top)); display: grid; gap: 6px; }
+            html.native-layout-editor .gx-layout__savebar {
+              grid-row: 1; margin-left: 52px; padding: 0 4px 0 10px; min-height: 44px; gap: 4px;
+            }
+            html.native-layout-editor .gx-layout__savebar .gx-btn { min-height: 44px; padding-inline: 12px; }
+            html.native-layout-editor .gx-layout__targets { grid-row: 2; margin: 0; gap: 8px; }
+            html.native-layout-editor .gx-layout__targets .gx-btn { min-height: 44px; padding: 4px 12px; }
+            html.native-layout-editor .gx-layout__workspace { gap: 8px; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr); }
+            html.native-layout-editor .gx-layout__preview-card { padding: 4px; gap: 4px; }
+            html.native-layout-editor .gx-layout__preview-card > p.gx-note:not([role]) { display: none; }
+            html.native-layout-editor .gx-layout__preview-card .gx-layout__preview {
+              width: auto; max-width: 100%; max-height: calc(100svh - 200px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin-inline: auto;
+            }
+            html.native-layout-editor .gx-layout__inspector {
+              padding: 8px; gap: 8px; max-height: calc(100svh - 124px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow: auto;
+            }
+            html.native-layout-editor .gx-layout__sections { margin: -8px -8px 0; padding: 4px; gap: 2px; top: -8px; }
+            html.native-layout-editor .gx-layout__sections .gx-btn { min-height: 44px; padding: 4px 8px; white-space: nowrap; }
+          `;
+          const syncEditor = () => {
+            const focused = editorScreen.matches && !!document.querySelector('.gx-layout');
+            if (focused === editorFocused) return;
+            editorFocused = focused;
+            document.documentElement.classList.toggle('native-layout-editor', focused);
+            try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind: 'editorFocus', active: focused}); } catch (_) {}
+          };
+          const startEditorPresentation = () => {
+            document.head.appendChild(editorCSS);
+            new MutationObserver(syncEditor).observe(document.body, {childList: true, subtree: true});
+            editorScreen.addEventListener('change', syncEditor);
+            syncEditor();
+          };
+          document.addEventListener('DOMContentLoaded', startEditorPresentation, {once: true});
           const pathOnly = value => {
             try { return new URL(value, location.href).pathname; } catch (_) { return ''; }
           };
@@ -264,6 +316,10 @@ private struct GalaxyPage: UIViewRepresentable {
                   let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
             let path = LoopbackServer.reportPath(body["path"] as? String ?? "")
             switch kind {
+            case "editorFocus":
+                if message.frameInfo.isMainFrame, let active = body["active"] as? Bool {
+                    diagnostics.landscapeEditor = active
+                }
             case "rendered": if message.frameInfo.isMainFrame { diagnostics.rendered() }
             case "blank": if message.frameInfo.isMainFrame { diagnostics.begin() }
             case "resource": diagnostics.record("Resource failed: \(path)")
