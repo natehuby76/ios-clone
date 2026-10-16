@@ -588,6 +588,9 @@ struct GalaxyRootView: View {
                 if !model.legacyMessage.isEmpty {
                     Text(model.legacyMessage).font(.caption).foregroundStyle(.secondary)
                 }
+                Divider()
+                Link("Privacy policy", destination: URL(string: "https://github.com/natehuby76/ios-clone/blob/codex/secretgood-galaxy/docs/privacy.md")!)
+                Link("StarPilot support", destination: URL(string: "https://wiki.firestar.link/ticketsystem/")!)
                 if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
             }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }.background(Color(uiColor: .systemBackground)).tint(brandPurple)
