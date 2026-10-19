@@ -22,8 +22,16 @@ struct ConnectionSettingsView: View {
     private let muted = Color(red: 0.70, green: 0.65, blue: 0.77)
     private var connected: Bool { model.transport.connected }
     private var pairing: Bool { model.pairingInProgress }
+    private var needsPairing: Bool { model.mode != .lan && model.pairingKey.isEmpty }
+    private var connecting: Bool { !connected && (bluetooth.connecting || bluetooth.isScanning) }
+    private var primaryTitle: String {
+        if pairing { return "Pairing…" }
+        if connected { return model.opened ? "Open Galaxy" : "Preparing Galaxy…" }
+        if connecting { return "Connecting…" }
+        return needsPairing ? "Pair with comma" : "Reconnect"
+    }
     private var checking: Bool { model.matchingGalaxy || assets.checking }
-    private var status: String { pairing ? "Pairing with comma…" : connected ? "Connected via \(model.transport.label)" : "Not connected" }
+    private var status: String { pairing ? "Pairing with comma…" : connected ? "Connected via \(model.transport.label)" : connecting ? "Connecting to comma…" : "Not connected" }
 
     init(model: AppModel, returningFromGalaxy: Bool, select: @escaping (CompanionTab) -> Void) {
         self.model = model; self.returningFromGalaxy = returningFromGalaxy; self.select = select
@@ -91,7 +99,7 @@ struct ConnectionSettingsView: View {
                     Text(status).font(.system(size: 11)).foregroundStyle(muted).accessibilityAddTraits(.updatesFrequently)
                 }
                 Spacer(minLength: 4)
-                Text(pairing ? "Pairing…" : connected ? "Connected" : "Offline")
+                Text(pairing ? "Pairing…" : connected ? "Connected" : connecting ? "Connecting…" : "Offline")
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(pairing ? accent : connected ? .mint : muted)
                     .padding(.horizontal, 9).padding(.vertical, 6)
                     .background((pairing ? accent : connected ? Color.mint : muted).opacity(0.13), in: Capsule())
@@ -103,26 +111,19 @@ struct ConnectionSettingsView: View {
             }.pickerStyle(.segmented).disabled(pairing)
             Text(pairing ? "Keep Pair phone open on comma." : model.mode == .automatic ? "Wi-Fi first, Bluetooth as backup." : model.mode == .bluetooth ? "Local controls over Bluetooth." : "Uses your local Wi-Fi network.")
                 .font(.system(size: 11)).foregroundStyle(muted)
-            HStack(spacing: 9) {
-                Button {
-                    if model.opened { select(.galaxy) } else { model.connect() }
-                } label: {
-                    Text(pairing ? "Pairing…" : model.opened ? "Open Galaxy" : connected ? "Preparing Galaxy…" : "Connect to comma")
-                        .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(LinearGradient(colors: [Color(red: 0.73, green: 0.55, blue: 1), accent], startPoint: .leading, endPoint: .trailing), in: Capsule())
-                        .foregroundStyle(Color(red: 0.12, green: 0.06, blue: 0.19))
-                }.disabled(pairing || (connected && !model.opened)).opacity(pairing ? 0.65 : 1)
-                if model.mode != .lan || pairing {
-                    Button { model.pairWithComma() } label: {
-                        HStack(spacing: 6) {
-                            if pairing { PairingSignal() }
-                            Text(pairing ? "Pairing…" : "Pair phone")
-                        }.font(.system(size: 12)).frame(maxWidth: .infinity, minHeight: 44)
-                            .background(accent.opacity(pairing ? 0.17 : 0.04), in: Capsule())
-                            .overlay(Capsule().stroke(accent.opacity(pairing ? 0.8 : 0.25)))
-                    }.disabled(pairing)
-                }
-            }.buttonStyle(.plain)
+            Button {
+                if connected && model.opened { select(.galaxy) }
+                else if needsPairing { model.pairWithComma() }
+                else { model.connect() }
+            } label: {
+                HStack(spacing: 7) {
+                    if pairing { PairingSignal() }
+                    else if connecting || (connected && !model.opened) { ProgressView().controlSize(.small) }
+                    Text(primaryTitle)
+                }.font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity, minHeight: 44)
+                    .background(LinearGradient(colors: [Color(red: 0.73, green: 0.55, blue: 1), accent], startPoint: .leading, endPoint: .trailing), in: Capsule())
+                    .foregroundStyle(Color(red: 0.12, green: 0.06, blue: 0.19))
+            }.buttonStyle(.plain).disabled(pairing || connecting || (connected && !model.opened))
             if pairing {
                 Button("Cancel pairing") { model.cancelPairing() }.font(.system(size: 12)).frame(maxWidth: .infinity, minHeight: 30)
             } else if model.connectionMessage != "Connected over \(model.transport.label)." && !connected {
@@ -185,6 +186,7 @@ struct ConnectionSettingsView: View {
                 message(lan.status)
             }
             if model.mode != .lan {
+                Button("Pair again") { model.pairWithComma() }.disabled(pairing)
                 SecureField("64-character pairing key", text: $model.pairingKey)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
                 Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
