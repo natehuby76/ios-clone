@@ -94,6 +94,31 @@ import Foundation
         }
         let tooLarge = Data("POST /api/android-auto/upload HTTP/1.1\r\nContent-Length: 268435457\r\n\r\n".utf8)
         do { _ = try LocalRequest.parse(tooLarge); preconditionFailure("Package limit must hold") } catch {}
+        let discoveryServer = Server()
+        var probed: [String] = []
+        let discovered = await LANDiscoveryMatch.first(addresses: ["192.168.1.90", "192.168.1.90", "192.168.1.91"],
+                                                       expectedDeviceID: "0123456789abcdef", stillCurrent: { true }) { address, identity in
+            probed.append(address)
+            discoveryServer.corruptIdentity = address.hasSuffix("90")
+            let candidate = LANTransport(load: discoveryServer.load)
+            candidate.bind(to: identity)
+            try! candidate.configure(address: address)
+            let verified = await candidate.probe()
+            precondition(candidate.verifiedDeviceID == (verified ? identity : nil))
+            return verified
+        }
+        precondition(discovered == "192.168.1.91" && probed == ["192.168.1.90", "192.168.1.91"], "Try alternate interfaces, never select a different comma")
+        let unknown = await LANDiscoveryMatch.first(addresses: ["192.168.1.91"], expectedDeviceID: nil, stillCurrent: { true }) { _, _ in
+            preconditionFailure("First-time discovery requires an explicit choice")
+        }
+        precondition(unknown == nil)
+        var sameNetwork = true
+        let stale = await LANDiscoveryMatch.first(addresses: ["192.168.1.91"], expectedDeviceID: "0123456789abcdef", stillCurrent: { sameNetwork }) { _, _ in
+            await Task.yield()
+            sameNetwork = false
+            return true
+        }
+        precondition(stale == nil, "Reject verification completed after the network or selected comma changes")
         print("SecretGood LAN: cookies, refresh, mutation safety, identity and isolation passed")
     }
 }

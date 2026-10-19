@@ -94,7 +94,7 @@ final class AppModel: ObservableObject {
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
-    func setPhoneActive(_ active: Bool) { phoneActive = active; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
+    func setPhoneActive(_ active: Bool) { phoneActive = active; if !active { automaticLAN?.cancel() }; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
     func setCarPlayActive(_ active: Bool) { carPlayActive = active; diagnostics.carPlayActive = active; updateMonitoring() }
     private func updateMonitoring() {
         // Sharing phone GPS keeps the app running in the background, so keep reconnecting too.
@@ -110,6 +110,7 @@ final class AppModel: ObservableObject {
     @Published var networkDetails = "Comma can use a hotspot, Wi-Fi or its SIM for internet. Your connection here controls how this iPhone reaches comma."
     @Published var mode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "galaxy.connection.mode") ?? "") ?? .automatic {
         didSet {
+            automaticLAN?.cancel()
             transport.mode = mode
             UserDefaults.standard.set(mode.rawValue, forKey: "galaxy.connection.mode")
             if mode == .lan { bluetooth.disconnect() }
@@ -136,6 +137,10 @@ final class AppModel: ObservableObject {
     private var lastAddressCheck = Date.distantPast
     private var identitySession = ""
     private var addressCheckSession = ""
+    private var localAddressNetwork = ""
+    private var automaticLAN: Task<Void, Never>?
+    private var lastLANDiscovery = Date.distantPast
+    private var triedLANAddresses = Set<String>()
     /// One step for the app and music: comma's open pairing window gives this iPhone its key, then music is set up in the same window.
     func pairWithComma() {
         guard !pairingInProgress else { return }
@@ -181,6 +186,7 @@ final class AppModel: ObservableObject {
         let transport = PreferredTransport(lan: lan, bluetooth: bluetooth, invalidateLAN: { lan.invalidate(reason: $0) })
         let assets = GalaxyAssetStore()
         self.bluetooth = bluetooth; self.lan = lan; self.transport = transport; self.assets = assets
+        lan.bind(to: UserDefaults.standard.string(forKey: "galaxy.comma.identity"))
         let cache = GalaxyReadCache(transport: transport, sessionID: {
             transport.usesLAN ? "lan-" + lan.generation : "ble-" + bluetooth.sessionIdentifier
         })
@@ -190,6 +196,7 @@ final class AppModel: ObservableObject {
         galaxyPage.recover = { [weak self] automatic in self?.recoverGalaxy(automatic: automatic) }
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
+        discovery.onDevicesChanged = { [weak self] in self?.discoverAutomaticLAN() }
         lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
         bluetooth.onEvent = { [weak self] reason in self?.logConnection(reason) }
         claimer.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
@@ -201,12 +208,17 @@ final class AppModel: ObservableObject {
                 let interfaces = path.availableInterfaces
                     .filter { path.usesInterfaceType($0.type) }
                     .map { "\($0.name):\($0.index)" }.sorted().joined(separator: ",")
-                let fingerprint = "\(path.status)|\(route)|\(interfaces)|ipv4=\(path.supportsIPv4)"
+                let fingerprint = "\(path.status)|\(route)|\(interfaces)|ipv4=\(path.supportsIPv4)|\(LANDiscovery.networkSignature())"
                 guard fingerprint != self.lastNetworkPath else { return }
                 self.lastNetworkPath = fingerprint
                 self.connectionLog.record(reason)
+                self.automaticLAN?.cancel()
+                self.discovery.networkChanged()
+                self.triedLANAddresses.removeAll()
+                self.lastLANDiscovery = .distantPast
                 self.lan.invalidate(reason: reason)
                 self.lastAddressCheck = .distantPast
+                self.discoverAutomaticLAN()
             }
         }
         pathMonitor.start(queue: .main)
@@ -232,6 +244,7 @@ final class AppModel: ObservableObject {
             wantsConnection = true
             lastReconnect = .distantPast
             lastAddressCheck = .distantPast
+            localAddressNetwork = ""
             connectionMessage = "Checking your comma…"
         } catch { connectionMessage = error.localizedDescription }
     }
@@ -287,6 +300,7 @@ final class AppModel: ObservableObject {
     }
     func disconnect() {
         legacyURL = nil
+        automaticLAN?.cancel()
         discovery.stop()
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
@@ -313,6 +327,8 @@ final class AppModel: ObservableObject {
                 connectionMessage = "Connection changed. Select the comma again."
                 return
             }
+            lan.bind(to: candidate.verifiedDeviceID)
+            UserDefaults.standard.set(candidate.verifiedDeviceID, forKey: "galaxy.comma.identity")
             address = device.address
             connect()
             connectionLog.record("User selected a discovered comma; LAN verification passed")
@@ -361,9 +377,10 @@ final class AppModel: ObservableObject {
         guard bluetooth.connected, Date().timeIntervalSince(lastAddressCheck) >= 20 || addressCheckSession != bluetooth.sessionIdentifier else { return }
         lastAddressCheck = Date()
         let session = bluetooth.sessionIdentifier
+        let networkPath = lastNetworkPath
         addressCheckSession = session
         do {
-            do {
+            if identitySession != session {
                 let identity = try await bluetooth.request(path: "/data/runtime.json", method: "GET", headers: [:], body: Data())
                 guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
@@ -372,14 +389,19 @@ final class AppModel: ObservableObject {
                     return
                 }
                 lan.bind(to: value)
+                UserDefaults.standard.set(value, forKey: "galaxy.comma.identity")
 
                 identitySession = session
             }
-            guard findAddressAutomatically, !lan.connected else { return }
+            let network = session + "|" + networkPath
+            guard findAddressAutomatically, !lan.connected, localAddressNetwork != network else { return }
+            let generation = lan.generation
             let response = try await bluetooth.request(path: "/api/local-access", method: "GET", headers: [:], body: Data())
             guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session, response.status == 200,
+                  lastNetworkPath == networkPath, lan.generation == generation, !lan.connected,
                   !response.bodyData.isEmpty else { return }
             if let ip = LANTransport.reportedAddress(response.bodyData) {
+                localAddressNetwork = network
                 try lan.configure(address: ip)
                 address = ip
                 UserDefaults.standard.set(ip, forKey: "galaxy.lan.address")
@@ -390,6 +412,44 @@ final class AppModel: ObservableObject {
             // Galaxy's online:true means the server responds, not that comma can reach the internet.
         } catch { /* Discovery is optional; it must not disrupt working BLE. */ }
     }
+    private func discoverAutomaticLAN() {
+        guard phoneActive, wantsConnection, mode == .automatic,
+              !pairingInProgress, !selectingDiscoveredComma, !lan.connected,
+              let identity = lan.expectedDeviceID else { return }
+        if !discovery.searching, Date().timeIntervalSince(lastLANDiscovery) >= 20 {
+            lastLANDiscovery = Date()
+            triedLANAddresses.removeAll()
+            discovery.start()
+        }
+        guard automaticLAN == nil else { return }
+        let addresses = discovery.devices.map(\.address).filter { !triedLANAddresses.contains($0) }
+        guard !addresses.isEmpty else { return }
+        triedLANAddresses.formUnion(addresses)
+        let generation = lan.generation
+        automaticLAN = Task { @MainActor in
+            defer { self.automaticLAN = nil }
+            let stillCurrent = {
+                self.phoneActive && self.wantsConnection && self.mode == .automatic
+                    && !self.pairingInProgress && !self.selectingDiscoveredComma && !self.lan.connected
+                    && self.lan.generation == generation && self.lan.expectedDeviceID == identity
+            }
+            let address = await LANDiscoveryMatch.first(addresses: addresses, expectedDeviceID: identity, stillCurrent: stillCurrent) { address, identity in
+                let candidate = LANTransport()
+                candidate.bind(to: identity)
+                guard (try? candidate.configure(address: address)) != nil else { return false }
+                return await candidate.probe()
+            }
+            guard let address, !Task.isCancelled, stillCurrent() else { return }
+            do { try self.lan.configure(address: address) } catch { return }
+            self.address = address
+            UserDefaults.standard.set(address, forKey: "galaxy.lan.address")
+            if await self.lan.probe() {
+                self.discovery.stop()
+                self.connectionLog.record("Automatic Wi-Fi discovery verified the paired comma")
+            }
+        }
+    }
+
     func monitor() async {
         while !Task.isCancelled {
             if wantsConnection && !pairingInProgress {
@@ -404,7 +464,9 @@ final class AppModel: ObservableObject {
                         do { try lan.configure(address: address) }
                         catch { connectionMessage = error.localizedDescription }
                     }
+                    discoverAutomaticLAN()
                     _ = await lan.probe()
+                    if lan.connected { discovery.stop() }
                 }
                 guard !pairingInProgress else { continue }
                 if transport.label != lastRoute { logConnection("Connection availability changed") }

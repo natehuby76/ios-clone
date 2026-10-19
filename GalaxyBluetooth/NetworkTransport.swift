@@ -73,6 +73,7 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     private(set) var endpoint: URL?
     private(set) var generation = UUID().uuidString
     private(set) var expectedDeviceID: String?
+    private(set) var verifiedDeviceID: String?
 
     private var cookie: String?
     private var sessionTask: (UUID, Task<String, Error>)?
@@ -121,7 +122,7 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     func clearEndpoint() { endpoint = nil; invalidate(reason: "Saved LAN endpoint cleared") }
     func invalidate(reason: String = "LAN verification reset") {
         cookie = nil; sessionTask?.1.cancel(); sessionTask = nil
-        connected = false; generation = UUID().uuidString
+        connected = false; verifiedDeviceID = nil; generation = UUID().uuidString
         onEvent?(reason)
     }
     func probe() async -> Bool {
@@ -136,6 +137,7 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
             let changed = connected != available
             connected = available
+            verifiedDeviceID = available ? identity : nil
             status = available ? "Local comma verified." : "Local endpoint unavailable or does not match the paired comma."
             if changed { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: HTTP \(response.statusCode), unavailable status or identity mismatch") }
         } catch {
@@ -287,5 +289,22 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
         }
         guard mode != .lan, bluetooth.connected else { throw BridgeError.message("Your comma is disconnected. Open Connections to reconnect.") }
         return try await bluetooth.request(path: path, method: method, headers: headers, body: body)
+    }
+}
+
+@MainActor
+enum LANDiscoveryMatch {
+    static func first(addresses: [String], expectedDeviceID: String?, stillCurrent: () -> Bool,
+                      probe: (String, String) async -> Bool) async -> String? {
+        guard let identity = expectedDeviceID, !identity.isEmpty else { return nil }
+        var seen = Set<String>()
+        for address in addresses.prefix(16) {
+            guard !Task.isCancelled, stillCurrent() else { return nil }
+            guard seen.insert(address).inserted, (try? LANTransport.endpoint(address)) != nil else { continue }
+            let verified = await probe(address, identity)
+            guard !Task.isCancelled, stillCurrent() else { return nil }
+            if verified { return address }
+        }
+        return nil
     }
 }
