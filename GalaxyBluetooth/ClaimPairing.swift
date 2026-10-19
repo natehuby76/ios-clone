@@ -56,12 +56,13 @@ enum ClaimCrypto {
 /// A one-shot Bluetooth connection that asks the comma with its pairing window open for a key.
 /// It is separate from `BluetoothTransport` so the normal encrypted connection code is untouched.
 @MainActor
-final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, @preconcurrency CBPeripheralDelegate {
     struct Outcome {
         let result: ClaimResult
         let deviceID: UUID
     }
 
+    var onEvent: ((String) -> Void)?
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var rx: CBCharacteristic?
@@ -74,11 +75,19 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var writeIndex = 0
     private var assembler = FrameAssembler()
     private var claimed: ClaimResult?
+    private var handingOff = false
     private var timeout: Task<Void, Never>?
 
     func claim(name: String) async throws -> Outcome {
         guard continuation == nil else { throw BridgeError.message("Pairing is already in progress.") }
         self.name = name
+        challenge = Data()
+        outgoing = []
+        writeIndex = 0
+        assembler = FrameAssembler()
+        claimed = nil
+        handingOff = false
+        onEvent?("Phone pairing started")
         privateKey = P256.KeyAgreement.PrivateKey()
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
@@ -92,6 +101,7 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private func fail(_ message: String) {
+        onEvent?("Phone pairing failed: " + message)
         finish(.failure(BridgeError.message(message)))
     }
 
@@ -100,12 +110,13 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         self.continuation = nil
         timeout?.cancel()
         central?.stopScan()
-        if let peripheral { central?.cancelPeripheralConnection(peripheral) }
+        if let peripheral, peripheral.state != .disconnected { central?.cancelPeripheralConnection(peripheral) }
         peripheral = nil; rx = nil; tx = nil; central = nil
         continuation.resume(with: result)
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central === self.central, continuation != nil else { return }
         switch central.state {
         case .poweredOn: central.scanForPeripherals(withServices: [CBUUID(string: Wire.service)], options: nil)
         case .unauthorized: fail("Allow Bluetooth access in iPhone Settings.")
@@ -117,7 +128,8 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard self.peripheral == nil else { return }
+        guard central === self.central, continuation != nil, self.peripheral == nil else { return }
+        onEvent?("Phone pairing found comma; connecting")
         central.stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
@@ -125,18 +137,24 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        guard peripheral == self.peripheral else { return }
+        guard central === self.central, peripheral == self.peripheral else { return }
+        onEvent?("Phone pairing connected; discovering service")
         peripheral.discoverServices([CBUUID(string: Wire.service)])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        guard peripheral == self.peripheral else { return }
+        guard central === self.central, peripheral == self.peripheral else { return }
         fail(error?.localizedDescription ?? "Could not connect to comma.")
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        guard peripheral == self.peripheral, continuation != nil else { return }
-        fail(error?.localizedDescription ?? "comma disconnected.")
+        guard central === self.central, peripheral == self.peripheral, continuation != nil else { return }
+        if handingOff, let claimed {
+            onEvent?("Phone pairing complete; starting encrypted connection")
+            finish(.success(Outcome(result: claimed, deviceID: peripheral.identifier)))
+        } else {
+            fail(error?.localizedDescription ?? "comma disconnected.")
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -161,9 +179,11 @@ final class ClaimTransport: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral, characteristic.uuid == CBUUID(string: Wire.rx) else { return }
         if let error { fail(error.localizedDescription); return }
-        if let claimed {
-            // The acknowledgement of the last reply packet was accepted: the reply is complete.
-            finish(.success(Outcome(result: claimed, deviceID: peripheral.identifier)))
+        if claimed != nil {
+            // Release this connection before the normal transport connects to the same comma.
+            handingOff = true
+            onEvent?("Phone pairing key received; closing setup connection")
+            central?.cancelPeripheralConnection(peripheral)
             return
         }
         writeIndex += 1

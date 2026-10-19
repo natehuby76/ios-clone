@@ -7,6 +7,9 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/PairingCode.swift GalaxyBluetooth/ClaimPairing.swift tests/ClaimPairingRegression.swift -o "$test_dir/claim-pairing-tests"
 "$test_dir/claim-pairing-tests"
+python3 tests/extract_claim_transport.py "$test_dir/ClaimTransportProbe.swift"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/PairingCode.swift "$test_dir/ClaimTransportProbe.swift" -o "$test_dir/claim-transport-tests"
+"$test_dir/claim-transport-tests"
 "$test_dir/pairing-phone-tests"
 
 python3 tests/extract_carplay_navigation.py "$test_dir/NavigationProbe.swift"

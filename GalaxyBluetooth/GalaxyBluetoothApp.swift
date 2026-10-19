@@ -140,6 +140,9 @@ final class AppModel: ObservableObject {
     func pairWithComma() {
         guard !pairingInProgress else { return }
         pairingInProgress = true
+        offerAudioPairing = false
+        showAudioPairing = false
+        bluetooth.disconnect(reason: "Starting new phone pairing")
         connectionMessage = "Open Settings → Bluetooth → Pair phone on comma (or Pair phone in Galaxy). Looking for comma…"
         Task { @MainActor in
             defer { pairingInProgress = false }
@@ -187,6 +190,7 @@ final class AppModel: ObservableObject {
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
         bluetooth.onEvent = { [weak self] reason in self?.logConnection(reason) }
+        claimer.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         pathMonitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in
                 guard let self else { return }
@@ -351,7 +355,7 @@ final class AppModel: ObservableObject {
     }
     func monitor() async {
         while !Task.isCancelled {
-            if wantsConnection {
+            if wantsConnection && !pairingInProgress {
                 if mode != .lan, !bluetooth.connected, !bluetooth.connecting, !bluetooth.isScanning,
                    !pairingKey.isEmpty, Date().timeIntervalSince(lastReconnect) >= 25 {
                     lastReconnect = Date()
@@ -365,10 +369,17 @@ final class AppModel: ObservableObject {
                     }
                     _ = await lan.probe()
                 }
+                guard !pairingInProgress else { continue }
                 if transport.label != lastRoute { logConnection("Connection availability changed") }
-                if transport.connected { openIfReady(); connectionMessage = "Connected over \(transport.label)." }
-                if transport.connected, offerAudioPairing { offerAudioPairing = false; startAudioPairing() }
-                else { connectionMessage = "Wi-Fi unavailable. Pair over Bluetooth below, or check your comma’s IP address." }
+                if transport.connected {
+                    openIfReady()
+                    connectionMessage = "Connected over \(transport.label)."
+                    if offerAudioPairing { offerAudioPairing = false; startAudioPairing() }
+                } else if mode == .bluetooth {
+                    connectionMessage = "Reconnecting over Bluetooth. If you forgot this phone on comma, open Pair phone on comma and Pair with comma here."
+                } else {
+                    connectionMessage = "Wi-Fi unavailable. Pair over Bluetooth below, or check your comma’s IP address."
+                }
             }
             do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
         }
