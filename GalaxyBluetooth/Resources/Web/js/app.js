@@ -34,6 +34,7 @@ const LongitudinalCurvesPage = page(() => import("./longitudinal-curves.js").the
 import { DevicePreferencesPage, devicePage } from "./device-preferences.js"
 const BluetoothPage = page(() => import("./bluetooth.js").then((module) => module.BluetoothPage))
 const AndroidAutoPage = page(() => import("./android-auto.js").then((module) => module.AndroidAutoPage))
+const SpotifyPage = page(() => import("./spotify.js").then((module) => module.SpotifyPage))
 const VehicleControlsPage = page(() => import("./vehicle-controls.js").then((module) => module.VehicleControlsPage))
 const OnroadLayoutPage = page(() => import("./onroad-layout.js").then((module) => module.OnroadLayoutPage))
 const GalaxyPage = page(() => import("./galaxy.js").then((module) => module.GalaxyPage))
@@ -81,7 +82,7 @@ const auth = new LocalAuth({ publish: (update) => {
 
 
 createApp({
-  components: { BottomNav, GalaxyLoading, Home, Tools, Logs, SoftwarePage, NavigationPage, ModelsPage, LaboratoryPage, SettingsPage, SettingsRecoveryPage, ToggleSearch, PlotsPage, FlmPage, LocalRecordingsPage, CamerasPage, SentryEventsPage, VasmPage, PipPage, DrivingPage, DevicePreferencesPage, BluetoothPage, AndroidAutoPage, LongitudinalCurvesPage, VehicleControlsPage, OnroadLayoutPage, GalaxyPage, DevicePicker, DeviceState, MenuTile },
+  components: { BottomNav, GalaxyLoading, Home, Tools, Logs, SoftwarePage, NavigationPage, ModelsPage, LaboratoryPage, SettingsPage, SettingsRecoveryPage, ToggleSearch, PlotsPage, FlmPage, LocalRecordingsPage, CamerasPage, SentryEventsPage, VasmPage, PipPage, DrivingPage, DevicePreferencesPage, BluetoothPage, AndroidAutoPage, SpotifyPage, LongitudinalCurvesPage, VehicleControlsPage, OnroadLayoutPage, GalaxyPage, DevicePicker, DeviceState, MenuTile },
   data: () => ({ state, authState, authForm, route, NAV, routeDirection: 1, updateRestart, UPDATE_RESTART_MESSAGE, nextLayoutLeavePresentation: "inline" }),
   computed: {
     visibleTools() { return state.tools.filter(tool => tool.visibility !== "authenticated" ||
@@ -203,7 +204,7 @@ createApp({
         </div>
       </aside>
       <main class="gx-content" :style="{'--route-direction': routeDirection}"><div class="gx-route-stage">
-        <Transition name="gx-route" @before-enter="setPageActive($event, true)" @before-leave="setPageActive($event, false)"><div class="gx-route" :key="route.path">
+        <Transition name="gx-route" @before-enter="setPageActive($event, true)" @before-leave="setPageActive($event, false)"><div class="gx-route" :key="isActive('/recordings') ? '/recordings' : route.path">
         <template v-if="state.loading && !state.error"><GalaxyLoading v-if="state.startupPending && !state.updateRestarting" message="Connecting to your device…" /></template>
         <GxNotice v-else-if="state.error" tone="danger">{{ state.error }}</GxNotice>
         <section v-else-if="state.monitorMode === 'local' && authState.status !== 'authenticated'" class="gx-card gx-auth" aria-label="Galaxy sign in">
@@ -218,8 +219,8 @@ createApp({
         </section>
         <GxNotice v-else-if="state.pageError" tone="danger">{{ state.pageError }} <button class="gx-btn" @click="reloadPage">Reload page</button></GxNotice>
         <Home v-else-if="route.path === '/'" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
-        <LocalRecordingsPage v-else-if="route.path === '/recordings' && authState.localAccess" :mode="state.monitorMode" :unauthorized="sessionExpired" />
-        <GxState v-else-if="route.path === '/recordings'">Routes require a local Galaxy connection. Open a local address from Home while connected to the comma's hotspot or local network.</GxState>
+        <LocalRecordingsPage v-else-if="isActive('/recordings') && authState.localAccess" :mode="state.monitorMode" :unauthorized="sessionExpired" :route-path="route.path" :go="go" />
+        <GxState v-else-if="isActive('/recordings')">Routes require a local Galaxy connection. Open a local address from Home while connected to the comma's hotspot or local network.</GxState>
         <CamerasPage v-else-if="route.path === '/cameras'" :mode="state.monitorMode" :go="go" :unauthorized="sessionExpired" />
         <SentryEventsPage v-else-if="['/cameras/events', '/cameras/sentry-settings'].includes(route.path)" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
         <PipPage v-else-if="route.path === '/cameras/pip'" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
@@ -237,6 +238,7 @@ createApp({
         <LaboratoryPage v-else-if="route.path === '/model_laboratory'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
         <BluetoothPage v-else-if="route.path === '/bluetooth'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
         <AndroidAutoPage v-else-if="route.path === '/android-auto'" :mode="state.monitorMode" :local-access="authState.localAccess" :unauthorized="sessionExpired" />
+        <SpotifyPage v-else-if="route.path === '/spotify'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
         <VehicleControlsPage v-else-if="route.path === '/vehicle'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
         <DevicePreferencesPage v-else-if="route.path === '/device-preferences'" :mode="state.monitorMode" :go="go" />
         <SettingsPage @nested="ensureBackEntry" ref="activeSettings" v-else-if="deviceSettingsPage" :key="deviceSettingsPage" :mode="state.monitorMode" :unauthorized="sessionExpired" :initial-page="deviceSettingsPage" :title="deviceSettingsPage === 'sounds' ? 'Sounds & Alerts' : 'Display'" :return-to="returnToDevice" />

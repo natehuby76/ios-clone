@@ -92,6 +92,7 @@ export class SoftwareStatusFeed {
     this.busy = false
     this.mutating = false
     this.blocked = false
+    this.connectionLost = false
     this.uncertain = false
     this.uncertainAction = null
     this.actionPriorRequestId = null
@@ -101,12 +102,7 @@ export class SoftwareStatusFeed {
   }
 
   emit(status) {
-    const request = this.data?.operations?.request
-    const baseline = this.installBaseline
-    if (baseline && (request?.action === "install" || request?.outcome === "restarting" ||
-        this.data?.operations?.progress?.stage === "rebooting" || this.data?.updater.fast?.stage === "rebooting" ||
-        this.error && (request?.state === "pending" && request.action === baseline.action ||
-          this.uncertain && baseline.action === "install"))) this.restarting(baseline)
+    if (this.installBaseline && this.connectionLost) this.restarting(this.installBaseline)
     this.publish({ status, data: this.data, busy: this.busy, uncertain: this.uncertain,
     notice: this.notice, error: this.error }) }
 
@@ -119,7 +115,7 @@ export class SoftwareStatusFeed {
     this.controller = this.timeout = this.pollTimer = null
     this.data = this.installBaseline = this.uncertainAction = this.actionPriorRequestId = null
     this.attempted = false
-    this.busy = this.mutating = this.blocked = this.uncertain = false
+    this.busy = this.mutating = this.blocked = this.connectionLost = this.uncertain = false
     this.notice = this.error = ""
     this.emit("idle")
   }
@@ -161,18 +157,22 @@ export class SoftwareStatusFeed {
       this.busy = this.mutating = false
       this.attempted = true
       this.blocked = true
+      this.connectionLost = true
       if (body !== null) { this.uncertain = true; this.uncertainAction = body }
       this.error = body !== null ? "The request timed out. Its result is unknown; wait for a fresh status before trying another action." :
         "Software status timed out. Refresh to try again."
       this.emit(this.data ? "ready" : "unavailable")
       this.schedulePoll(2000)
     }, 5000)
+    let reachedServer = false
     try {
       const response = await this.fetcher(body === null ? "./api/software/status" + (this.includeHistory ? "" : "?history=0") : "./api/software/action", {
         credentials: "same-origin", cache: "no-store", signal: controller.signal,
         ...(body === null ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
       })
       if (!this.active || generation !== this.generation || controller.signal.aborted) return null
+      reachedServer = true
+      this.connectionLost = false
       const payload = typeof response.json === "function" ? await response.json().catch(() => null) : null
       if (!this.active || generation !== this.generation || controller.signal.aborted) return null
       if (response.status === 401 || response.status === 503 &&
@@ -242,6 +242,7 @@ export class SoftwareStatusFeed {
       if (this.active && generation === this.generation && !controller.signal.aborted) {
         this.attempted = true
         this.blocked = true
+        this.connectionLost = !reachedServer
         if (body !== null) {
           this.uncertain = !error?.rejected
           this.uncertainAction = this.uncertain ? body : null

@@ -240,13 +240,49 @@ final class AppModel: ObservableObject {
         audioWindowOpen = false
         audioPairing.start(windowOpen: windowOpen)
     }
-    func openIfReady() {
-        guard wantsConnection, transport.connected, !opened else { return }
-        let root = assets.readyRoot ?? assets.bundledRoot
+    private var openingGalaxy = false
+    private var matchingGalaxy = false
+    private var lastGalaxyMatch = Date.distantPast
+
+    func applyMatchedGalaxy() {
+        guard opened, let root = assets.readyRoot, root != assets.inUseRoot else { return }
         assets.inUseRoot = root
         server.useWebRoot(root)
-        opened = true
-        if tab == .connections { tab = .galaxy }
+        recoverGalaxy(automatic: false)
+    }
+
+    func checkGalaxyUpdates() async {
+        guard wantsConnection, transport.connected, !matchingGalaxy else { return }
+        matchingGalaxy = true
+        lastGalaxyMatch = Date()
+        defer { matchingGalaxy = false }
+        let bleSession = bluetooth.sessionIdentifier
+        let lanSession = lan.generation
+        do {
+            let response = try await transport.request(path: "/api/software/status?history=0", method: "GET", headers: [:], body: Data())
+            guard wantsConnection, transport.connected, bluetooth.sessionIdentifier == bleSession, lan.generation == lanSession else { return }
+            guard response.status == 200 else { throw BridgeError.message("Comma’s Galaxy version could not be read.") }
+            let source = try GalaxySource.parse(response.bodyData)
+            await assets.check(source: source, stillCurrent: { self.wantsConnection && self.transport.connected && self.bluetooth.sessionIdentifier == bleSession && self.lan.generation == lanSession })
+        } catch {
+            if bluetooth.sessionIdentifier == bleSession && lan.generation == lanSession {
+                assets.unavailable("Couldn’t match Galaxy to comma.")
+            }
+        }
+    }
+    func openIfReady() {
+        guard wantsConnection, transport.connected, !opened, !openingGalaxy else { return }
+        openingGalaxy = true
+        Task { @MainActor in
+            defer { openingGalaxy = false }
+            await checkGalaxyUpdates()
+            guard wantsConnection, transport.connected, !opened else { return }
+            let root = assets.readyRoot ?? assets.bundledRoot
+            assets.inUseRoot = root
+            server.useWebRoot(root)
+            opened = true
+            if tab == .connections { tab = .galaxy }
+        }
     }
     func disconnect() {
         legacyURL = nil
@@ -373,6 +409,9 @@ final class AppModel: ObservableObject {
                 if transport.label != lastRoute { logConnection("Connection availability changed") }
                 if transport.connected {
                     openIfReady()
+                    if Date().timeIntervalSince(lastGalaxyMatch) > 60 && !openingGalaxy {
+                        Task { await self.checkGalaxyUpdates() }
+                    }
                     connectionMessage = "Connected over \(transport.label)."
                     if offerAudioPairing { offerAudioPairing = false; startAudioPairing() }
                 } else if mode == .bluetooth {
@@ -505,13 +544,14 @@ struct GalaxyRootView: View {
         }
         .task(id: scenePhase) {
             model.setPhoneActive(scenePhase == .active)
-            if scenePhase == .active { model.recoverGalaxy(reload: false); await model.assets.check() }
+            if scenePhase == .active { model.recoverGalaxy(reload: false); await model.checkGalaxyUpdates() }
         }
     }
     private func select(_ requestedTab: CompanionTab) {
         let tab = requestedTab.isDeveloperPage && !model.developerMode ? (model.opened ? CompanionTab.galaxy : .connections) : requestedTab
         if tab != .connections { discovery.stop() }
         model.tab = tab
+        if tab == .galaxy { model.applyMatchedGalaxy() }
         model.diagnostics.live = tab == .live
     }
     private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
@@ -621,7 +661,7 @@ struct GalaxyRootView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Open Dev / Logs") { select(.logs) }
                 }
-                Button("Check Galaxy updates") { Task { await assets.check() } }.disabled(assets.checking)
+                Button("Check Galaxy updates") { Task { await model.checkGalaxyUpdates() } }.disabled(assets.checking)
                 Text("Screens are saved on your iPhone. GitHub updates apply next time you open Galaxy, without interrupting your current screen.")
                     .font(.caption).foregroundStyle(.secondary)
                 if model.opened {
