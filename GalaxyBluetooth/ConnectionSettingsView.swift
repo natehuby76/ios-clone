@@ -15,6 +15,7 @@ struct ConnectionSettingsView: View {
     @State private var advanced = false
     @State private var confirmForget = false
     @State private var checked = false
+    @State private var openAfterReconnect = false
 
     private let accent = Color(red: 0.68, green: 0.48, blue: 0.96)
     private let background = Color(red: 0.035, green: 0.035, blue: 0.078)
@@ -80,6 +81,9 @@ struct ConnectionSettingsView: View {
             }.padding(.horizontal, 18).padding(.top, 0).padding(.bottom, 12)
                 .frame(maxWidth: 460).frame(maxWidth: .infinity)
         }.scrollBounceBehavior(.basedOnSize).background(background).foregroundStyle(Color.white)
+            .onChange(of: connected) { _, _ in openReconnectedGalaxy() }
+            .onChange(of: model.opened) { _, _ in openReconnectedGalaxy() }
+            .onChange(of: model.wantsConnection) { _, value in if !value { openAfterReconnect = false } }
             .tint(accent).preferredColorScheme(.dark)
             .confirmationDialog("Forget Bluetooth pairing?", isPresented: $confirmForget, titleVisibility: .visible) {
                 Button("Forget pairing", role: .destructive) {
@@ -87,6 +91,12 @@ struct ConnectionSettingsView: View {
                     lan.bind(to: nil); UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
                 }
             } message: { Text("This removes the saved app pairing. Pair your phone again to reconnect.") }
+    }
+
+    private func openReconnectedGalaxy() {
+        guard openAfterReconnect, connected, model.opened else { return }
+        openAfterReconnect = false
+        select(.galaxy)
     }
 
     private var connectionPanel: some View {
@@ -114,7 +124,7 @@ struct ConnectionSettingsView: View {
             Button {
                 if connected && model.opened { select(.galaxy) }
                 else if needsPairing { model.pairWithComma() }
-                else { model.connect() }
+                else { openAfterReconnect = true; model.connect(); openReconnectedGalaxy() }
             } label: {
                 HStack(spacing: 7) {
                     if pairing { PairingSignal() }
