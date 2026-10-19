@@ -1,6 +1,6 @@
 # StarPilot BT privacy policy
 
-Updated October 16, 2026.
+Updated October 18, 2026. Changes for version 1.0.1.
 
 This policy covers the StarPilot BT iPhone companion. The publisher responsible for this release is the seller identified on its App Store listing. Public support and privacy requests use the [StarPilot support ticket process](https://wiki.firestar.link/ticketsystem/). Ask for your request to be directed to the StarPilot BT app publisher. Do not post private information in a public channel.
 
@@ -12,13 +12,13 @@ Connection preferences, a remembered Bluetooth identifier and local address are 
 
 ## Permissions
 
-Bluetooth permission is used to find and connect to comma. Local Network permission is used for local Wi-Fi discovery and requests. Camera permission is used to scan the pairing code. The native scanner does not save or upload camera images during scanning.
+Bluetooth permission is used to find and connect to comma. Local Network permission is used for local Wi-Fi discovery and requests. Pairing uses the pairing window on comma; version 1.0.1 does not request camera permission or scan QR codes.
 
-The native app does not request access to the iPhone's contacts, microphone, photo library or location. Features available through Galaxy may handle location, recordings or other information from comma, independently of these iPhone permissions.
+The native app does not request access to the iPhone's contacts, microphone or photo library. Optional phone GPS sharing requests location permission only when you enable it. While enabled and connected, it sends recent location fixes, accuracy, timestamps and available altitude, speed and bearing to your comma, about once a second. Sharing may continue in the background with the iOS location indicator. You can turn sharing off in the app or revoke permission in iPhone Settings. This native feature does not upload GPS fixes to the app publisher; comma's navigation features and any providers configured there handle received location under their own settings and policies.
 
 ## Network services
 
-The app checks the official StarPilot repository on GitHub for Galaxy interface updates and downloads those files. GitHub receives the network information needed to serve these requests, including the connecting IP address and requested resource. Its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) describes its handling of service information.
+Version 1.0.1 checks the StarPilot developer integration repository `dirwin31/openpilot`, branch `companion-ios-phone-music`, on GitHub for Galaxy interface updates and downloads those files. GitHub receives the network information needed to serve these requests, including the connecting IP address and requested resource. Its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) describes its handling of service information.
 
 The native companion does not include advertising or an advertising-tracking SDK. Its diagnostics screen does not automatically upload reports to the publisher.
 

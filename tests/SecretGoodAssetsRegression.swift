@@ -10,7 +10,9 @@ import CryptoKit
         let bundled = root.appendingPathComponent("bundle")
         try manager.createDirectory(at: bundled, withIntermediateDirectories: true)
         let defaults = UserDefaults(suiteName: "secretgood-assets-" + UUID().uuidString)!
-        defer { defaults.removeObject(forKey: "galaxy.secretgood.assets.manifest"); defaults.removeObject(forKey: "galaxy.secretgood.commit") }
+        defer { defaults.removeObject(forKey: "galaxy.phoneMusic.assets.manifest"); defaults.removeObject(forKey: "galaxy.phoneMusic.commit") }
+        precondition(GalaxyAssetStore.repository == "dirwin31/openpilot")
+        precondition(GalaxyAssetStore.branch == "companion-ios-phone-music")
         let commit = String(repeating: "a", count: 40)
         var files = ["index.html": Data("<html>Galaxy</html>".utf8), "js/boot.js": Data("import './app.js'".utf8), "js/app.js": Data("const galaxy = true".utf8), "data/catalog.json": Data("{}".utf8), "sentry-push-worker.js": Data("self.addEventListener('push', () => {})".utf8)]
         var rawCalls = 0

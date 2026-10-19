@@ -44,6 +44,16 @@ final class AppModel: ObservableObject {
     @Published var selectingDiscoveredComma = false
     private var lastRoute = "Reconnecting…"
     @Published var showDiagnostics = false
+    @Published var showAudioPairing = false
+    private var offerAudioPairing = false
+    private var audioWindowOpen = false
+    private let claimer = ClaimTransport()
+    lazy var audioPairing = AudioPairing(transport: { [weak self] in self?.transport })
+    lazy var phoneLocation: PhoneLocation = {
+        let value = PhoneLocation(transport: { [weak self] in self?.transport })
+        value.onSharingChanged = { [weak self] _ in self?.updateMonitoring() }
+        return value
+    }()
     @Published var tab: CompanionTab = .galaxy
     @Published var developerMode = UserDefaults.standard.bool(forKey: "galaxy.app.developerMode") {
         didSet {
@@ -87,7 +97,8 @@ final class AppModel: ObservableObject {
     func setPhoneActive(_ active: Bool) { phoneActive = active; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
     func setCarPlayActive(_ active: Bool) { carPlayActive = active; diagnostics.carPlayActive = active; updateMonitoring() }
     private func updateMonitoring() {
-        if phoneActive || carPlayActive {
+        // Sharing phone GPS keeps the app running in the background, so keep reconnecting too.
+        if phoneActive || carPlayActive || phoneLocation.sharing {
             if monitorTask == nil { monitorTask = Task { await monitor() } }
         } else { monitorTask?.cancel(); monitorTask = nil }
     }
@@ -107,7 +118,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var showConnections = false
-    @Published var showPairingScanner = false
+    @Published var pairingInProgress = false
     @Published var opened = false
     @Published var connectionMessage = "Choose a connection, or use Automatic for Wi-Fi with Bluetooth fallback."
     @Published var wantsConnection = true
@@ -125,12 +136,23 @@ final class AppModel: ObservableObject {
     private var lastAddressCheck = Date.distantPast
     private var identitySession = ""
     private var addressCheckSession = ""
-    func importPairingKey(_ code: PairingCode) {
-        // Save imported keys only after the encrypted handshake.
+    /// One step for the app and music: comma's open pairing window gives this iPhone its key, then music is set up in the same window.
+    func pairWithComma() {
+        guard !pairingInProgress else { return }
+        pairingInProgress = true
+        connectionMessage = "Open Settings → Bluetooth → Pair phone on comma (or Pair phone in Galaxy). Looking for comma…"
+        Task { @MainActor in
+            defer { pairingInProgress = false }
+            do { importClaim(try await claimer.claim(name: UIDevice.current.name)) }
+            catch { connectionMessage = error.localizedDescription }
+        }
+    }
+    private func importClaim(_ outcome: ClaimTransport.Outcome) {
+        // The key is saved only after the encrypted handshake, like any imported key.
         opened = false
-        wantsConnection = false
+        wantsConnection = true
         bluetooth.forgetSavedDevice()
-        PairingKeyStore.stage(code)
+        PairingKeyStore.stage(PairingCode(key: outcome.result.key, id: outcome.result.id))
         lan.clearEndpoint()
         lan.bind(to: nil)
         address = ""
@@ -138,10 +160,15 @@ final class AppModel: ObservableObject {
         addressCheckSession = ""
         UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
         UserDefaults.standard.removeObject(forKey: "galaxy.lan.address")
-        pairingKey = code.key
+        UserDefaults.standard.set(outcome.deviceID.uuidString, forKey: "galaxy.bluetooth.device")
+        pairingKey = outcome.result.key
         if mode == .lan { mode = .automatic }
-        connectionMessage = "Code scanned. Select your comma below to finish pairing."
-        bluetooth.scan()
+        connectionMessage = "Paired. Connecting to comma…"
+        offerAudioPairing = true
+        audioWindowOpen = true
+        lastReconnect = Date()
+        bluetooth.reconnectSaved(pairingKey: pairingKey)
+        if !bluetooth.connecting { bluetooth.scan() }
     }
     init() {
         let bluetooth = BluetoothTransport()
@@ -177,6 +204,7 @@ final class AppModel: ObservableObject {
             }
         }
         pathMonitor.start(queue: .main)
+        updateMonitoring()
     }
     deinit { pathMonitor.cancel() }
     private func logConnection(_ reason: String) {
@@ -200,6 +228,13 @@ final class AppModel: ObservableObject {
             lastAddressCheck = .distantPast
             connectionMessage = "Checking your comma…"
         } catch { connectionMessage = error.localizedDescription }
+    }
+    func startAudioPairing() {
+        guard transport.connected else { return }
+        showAudioPairing = true
+        let windowOpen = audioWindowOpen
+        audioWindowOpen = false
+        audioPairing.start(windowOpen: windowOpen)
     }
     func openIfReady() {
         guard wantsConnection, transport.connected, !opened else { return }
@@ -332,10 +367,20 @@ final class AppModel: ObservableObject {
                 }
                 if transport.label != lastRoute { logConnection("Connection availability changed") }
                 if transport.connected { openIfReady(); connectionMessage = "Connected over \(transport.label)." }
+                if transport.connected, offerAudioPairing { offerAudioPairing = false; startAudioPairing() }
                 else { connectionMessage = "Wi-Fi unavailable. Pair over Bluetooth below, or check your comma’s IP address." }
             }
             do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
         }
+    }
+}
+
+private struct PhoneLocationRow: View {
+    @ObservedObject var location: PhoneLocation
+    var body: some View {
+        Toggle("Share phone GPS with comma", isOn: Binding(get: { location.sharing }, set: { location.setSharing($0) }))
+        Text(location.status.isEmpty ? "Comma uses this iPhone's GPS for navigation when its own GPS has no fix. Keeps sending in the background while on." : location.status)
+            .font(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -444,6 +489,9 @@ struct GalaxyRootView: View {
             if show { if model.developerMode { select(.live) }; model.showDiagnostics = false }
         }
         .onChange(of: bluetooth.connected) { _, connected in if connected { model.openIfReady() } }
+        .sheet(isPresented: $model.showAudioPairing, onDismiss: { model.audioPairing.dismiss() }) {
+            AudioPairingSheet(pairing: model.audioPairing) { model.showAudioPairing = false }
+        }
         .task(id: scenePhase) {
             model.setPhoneActive(scenePhase == .active)
             if scenePhase == .active { model.recoverGalaxy(reload: false); await model.assets.check() }
@@ -508,36 +556,38 @@ struct GalaxyRootView: View {
                 if model.mode != .lan {
                     Divider()
                     Text("Bluetooth pairing").font(.headline)
-                    Text("On comma, open Settings → Pair phone. Scan its code here, then select your comma below. After pairing once, the app reconnects automatically.")
+                    Text("On comma open Settings → Bluetooth → Pair phone (or tap Pair phone on the Bluetooth page in Galaxy), then tap Pair here. Afterwards open iPhone Settings → Bluetooth and tap comma once for music. After pairing once, the app reconnects automatically.")
                         .font(.subheadline).foregroundStyle(.secondary)
-                    Button("Scan pairing code") { model.showPairingScanner = true }
-                        .buttonStyle(.borderedProminent).tint(brandPurple)
-                        .sheet(isPresented: $model.showPairingScanner) {
-                            PairingScannerSheet { model.importPairingKey($0) }
+                    PhoneLocationRow(location: model.phoneLocation)
+                    Button(model.pairingInProgress ? "Pairing…" : "Pair with comma") { model.pairWithComma() }
+                        .buttonStyle(.borderedProminent).tint(brandPurple).disabled(model.pairingInProgress)
+                    DisclosureGroup("Use a pairing key instead") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SecureField("64-character pairing key", text: $model.pairingKey)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .font(.system(.body, design: .monospaced))
+                            .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                        Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
+                            .buttonStyle(.bordered).disabled(bluetooth.isScanning || bluetooth.connecting)
+                        Text(bluetooth.status).font(.subheadline).foregroundStyle(.secondary)
+                        ForEach(bluetooth.devices) { device in
+                            Button {
+                                model.opened = false
+                                model.wantsConnection = true
+                                model.lan.clearEndpoint()
+                                model.lan.bind(to: nil)
+                                model.address = ""
+                                UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
+                                UserDefaults.standard.removeObject(forKey: "galaxy.lan.address")
+                                bluetooth.connect(device, pairingKey: model.pairingKey)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "car.side.fill"); Text(device.name).font(.headline)
+                                    Spacer(); Image(systemName: "chevron.right")
+                                }.padding(16).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                            }.buttonStyle(.plain).disabled(bluetooth.connecting)
                         }
-                    SecureField("64-character pairing key", text: $model.pairingKey)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .font(.system(.body, design: .monospaced))
-                        .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                    Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
-                        .buttonStyle(.bordered).disabled(bluetooth.isScanning || bluetooth.connecting)
-                    Text(bluetooth.status).font(.subheadline).foregroundStyle(.secondary)
-                    ForEach(bluetooth.devices) { device in
-                        Button {
-                            model.opened = false
-                            model.wantsConnection = true
-                            model.lan.clearEndpoint()
-                            model.lan.bind(to: nil)
-                            model.address = ""
-                            UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
-                            UserDefaults.standard.removeObject(forKey: "galaxy.lan.address")
-                            bluetooth.connect(device, pairingKey: model.pairingKey)
-                        } label: {
-                            HStack {
-                                Image(systemName: "car.side.fill"); Text(device.name).font(.headline)
-                                Spacer(); Image(systemName: "chevron.right")
-                            }.padding(16).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                        }.buttonStyle(.plain).disabled(bluetooth.connecting)
+                    }.padding(.top, 8)
                     }
                     if bluetooth.connecting { Button("Cancel Bluetooth connection") { bluetooth.disconnect() } }
                     Button("Forget Bluetooth pairing") {

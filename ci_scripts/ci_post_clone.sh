@@ -1,9 +1,12 @@
 #!/bin/sh
 set -eu
-cd "$CI_PRIMARY_REPOSITORY_PATH"
+cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
-swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/PairingScanner.swift GalaxyBluetooth/PairingKeyStore.swift tests/PairingPhoneRegression.swift -o "$test_dir/pairing-phone-tests"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/PairingCode.swift GalaxyBluetooth/PairingKeyStore.swift tests/PairingPhoneRegression.swift -o "$test_dir/pairing-phone-tests"
+
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/PairingCode.swift GalaxyBluetooth/ClaimPairing.swift tests/ClaimPairingRegression.swift -o "$test_dir/claim-pairing-tests"
+"$test_dir/claim-pairing-tests"
 "$test_dir/pairing-phone-tests"
 
 python3 tests/extract_carplay_navigation.py "$test_dir/NavigationProbe.swift"
@@ -16,6 +19,11 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/GalaxyRequestTransport.swift tests/GalaxyReadCacheRegression.swift -o "$test_dir/read-cache-tests"
 "$test_dir/read-cache-tests"
+
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/AudioPairing.swift tests/AudioPairingRegression.swift -o "$test_dir/audio-pairing-tests"
+"$test_dir/audio-pairing-tests"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/PhoneLocation.swift tests/PhoneLocationRegression.swift -o "$test_dir/phone-location-tests"
+"$test_dir/phone-location-tests"
 
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/HTTP.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/NetworkTransport.swift GalaxyBluetooth/PrivateLANHTTP.swift tests/SecretGoodLANRegression.swift -o "$test_dir/secretgood-lan-tests"
 "$test_dir/secretgood-lan-tests"

@@ -108,7 +108,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         onEvent?("Bluetooth scan found \(devices.count) already-connected service candidates")
         central.scanForPeripherals(withServices: [CBUUID(string: Wire.service)], options: nil)
         isScanning = true
-        status = "Looking for your comma…"
+        status = "Looking for the Galaxy Bluetooth bridge…"
         scanTimeout?.cancel()
         scanTimeout = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)

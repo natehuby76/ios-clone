@@ -33,9 +33,9 @@ struct GalaxyAssetManifest: Codable {
 
 @MainActor
 final class GalaxyAssetStore: ObservableObject {
-    // SecretGood is the only supported Galaxy source.
-    static let repository = "firestar5683/StarPilot"
-    static let branch = "SecretGoodStarPilot"
+    // Temporary source until the companion changes land upstream.
+    static let repository = "dirwin31/openpilot"
+    static let branch = "companion-ios-phone-music"
     static let resourcePath = "openpilot/starpilot/galaxy/web"
     @Published private(set) var status = "Galaxy is available offline."
     @Published private(set) var checking = false
@@ -48,11 +48,11 @@ final class GalaxyAssetStore: ObservableObject {
     init(bundledRoot: URL? = nil, cacheRoot: URL? = nil, defaults: UserDefaults = .standard,
          fetch: @escaping (URLRequest, Int) async throws -> (Data, HTTPURLResponse) = { try await BoundedHTTP.load($0, limit: $1) }) {
         self.bundledRoot = bundledRoot ?? Bundle.main.resourceURL!.appendingPathComponent("Web", isDirectory: true)
-        self.cacheRoot = cacheRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("SecretGoodGalaxyUpdates", isDirectory: true)
+        self.cacheRoot = cacheRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PhoneMusicGalaxyUpdates", isDirectory: true)
         self.defaults = defaults
         self.fetch = fetch
         // Validate saved assets before trusting a previous completed update.
-        if let hash = defaults.string(forKey: "galaxy.secretgood.assets.manifest"), GalaxyAssetManifest.isHash(hash) {
+        if let hash = defaults.string(forKey: "galaxy.phoneMusic.assets.manifest"), GalaxyAssetManifest.isHash(hash) {
             let root = self.cacheRoot.appendingPathComponent(hash, isDirectory: true)
             if Self.verify(root) { readyRoot = root; status = "Using saved Galaxy from GitHub." }
         }
@@ -82,7 +82,7 @@ final class GalaxyAssetStore: ObservableObject {
                 throw BridgeError.message("Invalid GitHub revision.")
             }
             let base = URL(string: "https://raw.githubusercontent.com/\(Self.repository)/\(commit)/\(Self.resourcePath)/")!
-            if readyRoot != nil, defaults.string(forKey: "galaxy.secretgood.commit") == commit {
+            if readyRoot != nil, defaults.string(forKey: "galaxy.phoneMusic.commit") == commit {
                 status = "Galaxy is up to date."; return
             }
             struct Tree: Decodable {
@@ -147,7 +147,7 @@ final class GalaxyAssetStore: ObservableObject {
             let hash = GalaxyAssetManifest.digest(data)
             if readyRoot?.lastPathComponent == hash {
                 try manager.removeItem(at: staging); stage = nil
-                defaults.set(commit, forKey: "galaxy.secretgood.commit")
+                defaults.set(commit, forKey: "galaxy.phoneMusic.commit")
                 status = "Galaxy is up to date."; return
             }
             try data.write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
@@ -159,8 +159,8 @@ final class GalaxyAssetStore: ObservableObject {
             // Keep one previous version while an open WebView is still using it.
             let previous = readyRoot
             readyRoot = destination
-            defaults.set(hash, forKey: "galaxy.secretgood.assets.manifest")
-            defaults.set(commit, forKey: "galaxy.secretgood.commit")
+            defaults.set(hash, forKey: "galaxy.phoneMusic.assets.manifest")
+            defaults.set(commit, forKey: "galaxy.phoneMusic.commit")
             if let contents = try? manager.contentsOfDirectory(at: cacheRoot, includingPropertiesForKeys: nil) {
                 for root in contents where root.standardizedFileURL.path != destination.standardizedFileURL.path && root.standardizedFileURL.path != previous?.standardizedFileURL.path && root.standardizedFileURL.path != inUseRoot?.standardizedFileURL.path { try? manager.removeItem(at: root) }
             }
