@@ -110,7 +110,7 @@ final class AppModel: ObservableObject {
     @Published var networkDetails = "Comma can use a hotspot, Wi-Fi or its SIM for internet. Your connection here controls how this iPhone reaches comma."
     @Published var mode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "galaxy.connection.mode") ?? "") ?? .automatic {
         didSet {
-            automaticLAN?.cancel()
+            automaticLAN?.cancel(); lanProbeTask?.cancel()
             transport.mode = mode
             UserDefaults.standard.set(mode.rawValue, forKey: "galaxy.connection.mode")
             if mode == .lan { bluetooth.disconnect() }
@@ -139,6 +139,7 @@ final class AppModel: ObservableObject {
     private var addressCheckSession = ""
     private var localAddressNetwork = ""
     private var automaticLAN: Task<Void, Never>?
+    private var lanProbeTask: Task<Void, Never>?
     private var lastLANDiscovery = Date.distantPast
     private var triedLANAddresses = Set<String>()
     /// One step for the app and music: comma's open pairing window gives this iPhone its key, then music is set up in the same window.
@@ -212,7 +213,7 @@ final class AppModel: ObservableObject {
                 guard fingerprint != self.lastNetworkPath else { return }
                 self.lastNetworkPath = fingerprint
                 self.connectionLog.record(reason)
-                self.automaticLAN?.cancel()
+                self.automaticLAN?.cancel(); self.lanProbeTask?.cancel()
                 self.discovery.networkChanged()
                 self.triedLANAddresses.removeAll()
                 self.lastLANDiscovery = .distantPast
@@ -300,7 +301,7 @@ final class AppModel: ObservableObject {
     }
     func disconnect() {
         legacyURL = nil
-        automaticLAN?.cancel()
+        automaticLAN?.cancel(); lanProbeTask?.cancel()
         discovery.stop()
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
@@ -382,7 +383,7 @@ final class AppModel: ObservableObject {
         do {
             if identitySession != session {
                 let identity = try await bluetooth.request(path: "/data/runtime.json", method: "GET", headers: [:], body: Data())
-                guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
+                guard !Task.isCancelled, wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
                 guard identity.status == 200, let value = LANTransport.deviceID(identity.bodyData) else {
                     networkDetails = "Automatic local discovery needs a registered device identifier. Bluetooth still works; enter comma’s IP manually for Wi-Fi."
@@ -397,7 +398,7 @@ final class AppModel: ObservableObject {
             guard findAddressAutomatically, !lan.connected, localAddressNetwork != network else { return }
             let generation = lan.generation
             let response = try await bluetooth.request(path: "/api/local-access", method: "GET", headers: [:], body: Data())
-            guard wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session, response.status == 200,
+            guard !Task.isCancelled, wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session, response.status == 200,
                   lastNetworkPath == networkPath, lan.generation == generation, !lan.connected,
                   !response.bodyData.isEmpty else { return }
             if let ip = LANTransport.reportedAddress(response.bodyData) {
@@ -450,6 +451,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func probeLocalConnection() {
+        guard lanProbeTask == nil else { return }
+        lanProbeTask = Task { @MainActor in
+            defer { self.lanProbeTask = nil }
+            await self.learnAddress()
+            guard !Task.isCancelled, self.wantsConnection, self.mode != .bluetooth else { return }
+            if self.lan.endpoint == nil, !self.address.isEmpty {
+                do { try self.lan.configure(address: self.address) }
+                catch { self.connectionMessage = error.localizedDescription }
+            }
+            _ = await self.lan.probe()
+            if !Task.isCancelled, self.lan.connected { self.discovery.stop() }
+        }
+    }
+
     func monitor() async {
         while !Task.isCancelled {
             if wantsConnection && !pairingInProgress {
@@ -459,14 +475,8 @@ final class AppModel: ObservableObject {
                     bluetooth.reconnectSaved(pairingKey: pairingKey)
                 }
                 if mode != .bluetooth {
-                    await learnAddress()
-                    if lan.endpoint == nil, !address.isEmpty {
-                        do { try lan.configure(address: address) }
-                        catch { connectionMessage = error.localizedDescription }
-                    }
                     discoverAutomaticLAN()
-                    _ = await lan.probe()
-                    if lan.connected { discovery.stop() }
+                    probeLocalConnection()
                 }
                 guard !pairingInProgress else { continue }
                 if transport.label != lastRoute { logConnection("Connection availability changed") }
