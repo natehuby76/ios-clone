@@ -101,6 +101,17 @@ tests = r'''
             let result = try await task.value
             precondition(result.result.key == credential && result.result.id == id)
             previous = central
+            if attempt == 0 {
+                let count = CBCentralManager.instances.count
+                let cancelled = Task { try await transport.claim(name: "iPhone") }
+                for _ in 0..<100 where CBCentralManager.instances.count == count { await Task.yield() }
+                let abandoned = CBCentralManager.instances.last!
+                transport.cancel()
+                abandoned.state = .poweredOff
+                transport.centralManagerDidUpdateState(abandoned)
+                do { _ = try await cancelled.value; preconditionFailure("Cancelled pairing returned a credential") }
+                catch is CancellationError { }
+            }
         }
         precondition(events.filter { $0.contains("pairing complete") }.count == 2)
         print("Repeated pairing, stale callbacks and setup handoff passed")

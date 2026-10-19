@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0AA00000000000000000007 /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000008 /* Lucide-LICENSE.txt */; };
+		C0AA00000000000000000005 /* Sora-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000006 /* Sora-OFL.txt */; };
+		C0AA00000000000000000003 /* Sora.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000004 /* Sora.ttf */; };
+		C0AA00000000000000000001 /* ConnectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000002 /* ConnectionSettingsView.swift */; };
 		D92135C445C249E6A5DC0011 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D92135C445C249E6A5DC0012 /* PrivacyInfo.xcprivacy */; };
 		140107256F4F4DF2910BED61 /* BluetoothTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47658A09FCC6A6C73D1A1A3 /* BluetoothTransport.swift */; };
 		1698566BBEF2185D9C80B6BB /* HTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34DE7063A67F0755E6E69BF7 /* HTTP.swift */; };
@@ -32,6 +36,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C0AA00000000000000000008 /* Lucide-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Resources/Lucide-LICENSE.txt; sourceTree = "<group>"; };
+		C0AA00000000000000000006 /* Sora-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Resources/Sora-OFL.txt; sourceTree = "<group>"; };
+		C0AA00000000000000000004 /* Sora.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/Sora.ttf; sourceTree = "<group>"; };
+		C0AA00000000000000000002 /* ConnectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSettingsView.swift; sourceTree = "<group>"; };
 		D92135C445C249E6A5DC0012 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		114E3D37646B3A8626A8A232 /* NetworkTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkTransport.swift; sourceTree = "<group>"; };
 		3356A9DC86451A9D92F074F8 /* GalaxyBluetoothApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalaxyBluetoothApp.swift; sourceTree = "<group>"; };
@@ -92,6 +100,10 @@
 				FACE00000000000000000002 /* PairingCode.swift */,
 				C1A100000000000000000002 /* ClaimPairing.swift */,
 				3356A9DC86451A9D92F074F8 /* GalaxyBluetoothApp.swift */,
+				C0AA00000000000000000002 /* ConnectionSettingsView.swift */,
+				C0AA00000000000000000004 /* Sora.ttf */,
+				C0AA00000000000000000006 /* Sora-OFL.txt */,
+				C0AA00000000000000000008 /* Lucide-LICENSE.txt */,
 				80D0F5CDB02B33E408C75D8C /* GalaxyRequestTransport.swift */,
 				BF41C7E4AB86DEB71B85E4F6 /* GalaxyWebView.swift */,
 				34DE7063A67F0755E6E69BF7 /* HTTP.swift */,
@@ -169,6 +181,9 @@
 				D92135C445C249E6A5DC0011 /* PrivacyInfo.xcprivacy in Resources */,
 				4E7D2B65B79ACE4A91B667A2 /* Resources/Web in Resources */,
 				606A672A792903E98EFFC2D9 /* Resources/Branding.xcassets in Resources */,
+				C0AA00000000000000000003 /* Sora.ttf in Resources */,
+				C0AA00000000000000000005 /* Sora-OFL.txt in Resources */,
+				C0AA00000000000000000007 /* Lucide-LICENSE.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -192,6 +207,7 @@
 				28D504D2BD92FF8A8AEB68A7 /* CompanionDiagnostics.swift in Sources */,
 				A6D597850E6DD0CDFB754EF8 /* CarPlaySceneDelegate.swift in Sources */,
 				36EBF9BB2BE027F139572ADA /* GalaxyBluetoothApp.swift in Sources */,
+				C0AA00000000000000000001 /* ConnectionSettingsView.swift in Sources */,
 				8BA587954B4079F504AAD35E /* GalaxyRequestTransport.swift in Sources */,
 				DE64BADD40C934E610D4D505 /* GalaxyWebView.swift in Sources */,
 				1698566BBEF2185D9C80B6BB /* HTTP.swift in Sources */,

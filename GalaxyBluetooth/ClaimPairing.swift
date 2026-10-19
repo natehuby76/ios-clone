@@ -100,6 +100,12 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
         }
     }
 
+    func cancel() {
+        guard continuation != nil else { return }
+        onEvent?("Phone pairing cancelled")
+        finish(.failure(CancellationError()))
+    }
+
     private func fail(_ message: String) {
         onEvent?("Phone pairing failed: " + message)
         finish(.failure(BridgeError.message(message)))

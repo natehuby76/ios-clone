@@ -54,7 +54,7 @@ final class AppModel: ObservableObject {
         value.onSharingChanged = { [weak self] _ in self?.updateMonitoring() }
         return value
     }()
-    @Published var tab: CompanionTab = .galaxy
+    @Published var tab: CompanionTab = .connections
     @Published var developerMode = UserDefaults.standard.bool(forKey: "galaxy.app.developerMode") {
         didSet {
             UserDefaults.standard.set(developerMode, forKey: "galaxy.app.developerMode")
@@ -147,9 +147,11 @@ final class AppModel: ObservableObject {
         Task { @MainActor in
             defer { pairingInProgress = false }
             do { importClaim(try await claimer.claim(name: UIDevice.current.name)) }
+            catch is CancellationError { connectionMessage = "Pairing cancelled." }
             catch { connectionMessage = error.localizedDescription }
         }
     }
+    func cancelPairing() { claimer.cancel() }
     private func importClaim(_ outcome: ClaimTransport.Outcome) {
         // The key is saved only after the encrypted handshake, like any imported key.
         opened = false
@@ -241,7 +243,7 @@ final class AppModel: ObservableObject {
         audioPairing.start(windowOpen: windowOpen)
     }
     private var openingGalaxy = false
-    private var matchingGalaxy = false
+    @Published private(set) var matchingGalaxy = false
     private var lastGalaxyMatch = Date.distantPast
 
     func applyMatchedGalaxy() {
@@ -281,7 +283,6 @@ final class AppModel: ObservableObject {
             assets.inUseRoot = root
             server.useWebRoot(root)
             opened = true
-            if tab == .connections { tab = .galaxy }
         }
     }
     func disconnect() {
@@ -425,14 +426,6 @@ final class AppModel: ObservableObject {
     }
 }
 
-private struct PhoneLocationRow: View {
-    @ObservedObject var location: PhoneLocation
-    var body: some View {
-        Toggle("Share phone GPS with comma", isOn: Binding(get: { location.sharing }, set: { location.setSharing($0) }))
-        Text(location.status.isEmpty ? "Comma uses this iPhone's GPS for navigation when its own GPS has no fix. Keeps sending in the background while on." : location.status)
-            .font(.caption).foregroundStyle(.secondary)
-    }
-}
 
 struct GalaxyRootView: View {
     @ObservedObject var model: AppModel
@@ -442,6 +435,7 @@ struct GalaxyRootView: View {
     @ObservedObject var server: LoopbackServer
     @ObservedObject var discovery: LANDiscovery
     @ObservedObject var galaxyPage: GalaxyPageDiagnostics
+    @State private var hasVisitedGalaxy = false
     private var editorFocused: Bool { model.tab == .galaxy && galaxyPage.landscapeEditor }
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -450,7 +444,7 @@ struct GalaxyRootView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            if !editorFocused {
+            if !editorFocused && model.tab != .connections {
             VStack(spacing: 14) {
                 HStack {
                     if !model.developerMode && model.tab == .connections {
@@ -525,7 +519,7 @@ struct GalaxyRootView: View {
                 } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
                     CompanionView(diagnostics: model.diagnostics)
                 } else if model.tab == .connections || !model.opened {
-                    connectionView
+                    ConnectionSettingsView(model: model, returningFromGalaxy: hasVisitedGalaxy, select: select)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -551,151 +545,12 @@ struct GalaxyRootView: View {
         let tab = requestedTab.isDeveloperPage && !model.developerMode ? (model.opened ? CompanionTab.galaxy : .connections) : requestedTab
         if tab != .connections { discovery.stop() }
         model.tab = tab
-        if tab == .galaxy { model.applyMatchedGalaxy() }
+        if tab == .galaxy { hasVisitedGalaxy = true; model.applyMatchedGalaxy() }
         model.diagnostics.live = tab == .live
     }
     private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
 
-    private var connectionView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(spacing: 8) {
-                    Image("StarPilotHero")
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: 480)
-                        .accessibilityLabel("StarPilot BT")
-                    Text("StarPilot BT")
-                        .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity).padding(.top, 8)
-                Text("Connect your comma").font(.title2.bold())
-                Picker("Connection", selection: $model.mode) {
-                    ForEach(ConnectionMode.allCases) { Text($0.title).tag($0) }
-                }.pickerStyle(.segmented)
-                Text("Automatic prefers local Wi-Fi and falls back to your paired comma over Bluetooth. Internet isn’t needed for local settings.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                Text(model.networkDetails).font(.caption).foregroundStyle(.secondary)
-                if model.mode != .bluetooth {
-                    HStack {
-                        Button(discovery.searching ? "Searching Wi-Fi…" : "Find comma on Wi-Fi") { discovery.start() }
-                            .buttonStyle(.bordered).disabled(discovery.searching || model.selectingDiscoveredComma)
-                        if discovery.searching { Button("Stop") { discovery.stop() }.font(.caption) }
-                    }
-                    Text(discovery.status).font(.caption).foregroundStyle(.secondary)
-                    ForEach(discovery.devices) { device in
-                        Button { Task { await model.selectDiscoveredComma(device) } } label: {
-                            HStack {
-                                Image(systemName: "wifi")
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(device.name).font(.headline)
-                                    Text(device.address).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer(); Image(systemName: "chevron.right")
-                            }.padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                        }.buttonStyle(.plain).disabled(model.selectingDiscoveredComma)
-                    }
-                    Toggle("Find comma’s address over Bluetooth", isOn: $model.findAddressAutomatically)
-                    Text("Comma IP address").font(.headline)
-                    TextField("192.168.10.85", text: $model.address)
-                        .keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                    Text(lan.status).font(.caption).foregroundStyle(.secondary)
-                }
-                Button { model.connect(); if model.opened { select(.galaxy) } } label: {
-                    Text("Connect").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 8)
-                }.buttonStyle(.borderedProminent).tint(brandPurple)
-                Text(model.connectionMessage).font(.subheadline).foregroundStyle(.secondary)
-                if model.mode != .lan {
-                    Divider()
-                    Text("Bluetooth pairing").font(.headline)
-                    Text("On comma open Settings → Bluetooth → Pair phone (or tap Pair phone on the Bluetooth page in Galaxy), then tap Pair here. Afterwards open iPhone Settings → Bluetooth and tap comma once for music. After pairing once, the app reconnects automatically.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    PhoneLocationRow(location: model.phoneLocation)
-                    Button(model.pairingInProgress ? "Pairing…" : "Pair with comma") { model.pairWithComma() }
-                        .buttonStyle(.borderedProminent).tint(brandPurple).disabled(model.pairingInProgress)
-                    DisclosureGroup("Use a pairing key instead") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SecureField("64-character pairing key", text: $model.pairingKey)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .font(.system(.body, design: .monospaced))
-                            .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                        Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
-                            .buttonStyle(.bordered).disabled(bluetooth.isScanning || bluetooth.connecting)
-                        Text(bluetooth.status).font(.subheadline).foregroundStyle(.secondary)
-                        ForEach(bluetooth.devices) { device in
-                            Button {
-                                model.opened = false
-                                model.wantsConnection = true
-                                model.lan.clearEndpoint()
-                                model.lan.bind(to: nil)
-                                model.address = ""
-                                UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
-                                UserDefaults.standard.removeObject(forKey: "galaxy.lan.address")
-                                bluetooth.connect(device, pairingKey: model.pairingKey)
-                            } label: {
-                                HStack {
-                                    Image(systemName: "car.side.fill"); Text(device.name).font(.headline)
-                                    Spacer(); Image(systemName: "chevron.right")
-                                }.padding(16).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                            }.buttonStyle(.plain).disabled(bluetooth.connecting)
-                        }
-                    }.padding(.top, 8)
-                    }
-                    if bluetooth.connecting { Button("Cancel Bluetooth connection") { bluetooth.disconnect() } }
-                    Button("Forget Bluetooth pairing") {
-                        bluetooth.forgetSavedDevice(); PairingKeyStore.remove(); model.pairingKey = ""
-                        model.lan.bind(to: nil); UserDefaults.standard.removeObject(forKey: "galaxy.comma.identity")
-                    }.font(.caption).foregroundStyle(.secondary)
-                }
-                Divider()
-                Text(assets.status).font(.caption).foregroundStyle(.secondary)
-                Toggle("Developer Mode", isOn: $model.developerMode)
-                Text("Show Live View, Diagnostics, and Dev / Logs on this iPhone.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if model.developerMode {
-                    Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads)
-                    if bluetooth.fastReadFallback {
-                        Label("Fast reads paused after an error. Reliable reads are active after reconnecting. Switch fast reads off and on to try again.", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("Experimental notification streaming for maximum transfer speed. Turn off to return to reliable reads. Changes apply to the next request.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button("Open Dev / Logs") { select(.logs) }
-                }
-                Button("Check Galaxy updates") { Task { await model.checkGalaxyUpdates() } }.disabled(assets.checking)
-                Text("Screens are saved on your iPhone. GitHub updates apply next time you open Galaxy, without interrupting your current screen.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if model.opened {
-                    Button("Back to Galaxy") { select(.galaxy) }
-                    Button("Disconnect") { model.disconnect(); select(.connections) }
-                }
-                Divider()
-                Text("Legacy connection").font(.headline)
-                Button {
-                    Task {
-                        if let url = await model.fetchLegacyURL() {
-                            openURL(url) { accepted in
-                                if !accepted { model.legacyMessage = "Couldn’t open your browser. Try again." }
-                            }
-                        }
-                    }
-                } label: {
-                    Label(model.loadingLegacyURL ? "Getting Galaxy link…" : "Open legacy Galaxy", systemImage: "safari")
-                }.buttonStyle(.bordered).disabled(model.loadingLegacyURL)
-                if let url = model.legacyURL {
-                    Text(url.absoluteString).font(.caption).textSelection(.enabled)
-                }
-                Text("Gets this comma’s unique Galaxy link and opens it in your default browser.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if !model.legacyMessage.isEmpty {
-                    Text(model.legacyMessage).font(.caption).foregroundStyle(.secondary)
-                }
-                Divider()
-                Link("Privacy policy", destination: URL(string: "https://github.com/natehuby76/ios-clone/blob/codex/secretgood-galaxy/docs/privacy.md")!)
-                Link("StarPilot support", destination: URL(string: "https://wiki.firestar.link/ticketsystem/")!)
-                if !server.error.isEmpty { Text(server.error).foregroundStyle(.red) }
-            }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
-        }.background(Color(uiColor: .systemBackground)).tint(brandPurple)
-    }
+
 }
 
 @MainActor
