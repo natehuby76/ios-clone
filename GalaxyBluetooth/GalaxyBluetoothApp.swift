@@ -508,6 +508,10 @@ struct GalaxyRootView: View {
     @ObservedObject var discovery: LANDiscovery
     @ObservedObject var galaxyPage: GalaxyPageDiagnostics
     @State private var hasVisitedGalaxy = false
+    private var galaxyColorScheme: ColorScheme? {
+        guard model.tab == .galaxy, let dark = galaxyPage.darkAppearance else { return nil }
+        return dark ? .dark : .light
+    }
     private var editorFocused: Bool { model.tab == .galaxy && galaxyPage.landscapeEditor }
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -595,7 +599,9 @@ struct GalaxyRootView: View {
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(model.tab == .galaxy && galaxyPage.darkAppearance == true
+            ? Color(red: 0.06, green: 0.05, blue: 0.09) : Color(uiColor: .systemBackground))
+        .preferredColorScheme(galaxyColorScheme)
         .ignoresSafeArea(.container, edges: editorFocused ? .all : [])
         .statusBarHidden(editorFocused)
         .onChange(of: model.showConnections) { _, show in
