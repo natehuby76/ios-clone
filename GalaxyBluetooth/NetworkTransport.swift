@@ -204,14 +204,14 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             var request = URLRequest(url: URL(string: endpoint.absoluteString + path)!)
             request.httpMethod = method
             request.httpBody = body.isEmpty ? nil : body
-            request.timeoutInterval = 8
+            request.timeoutInterval = LocalRequest.isPackageUpload(method: method, target: path) ? 120 : 8
             for (name, value) in headers where ["accept", "range", "content-type"].contains(name.lowercased()) {
                 request.setValue(value, forHTTPHeaderField: name)
             }
             request.setValue(usedCookie, forHTTPHeaderField: "Cookie")
             if !["GET", "HEAD"].contains(method) {
                 request.setValue(endpoint.absoluteString, forHTTPHeaderField: "Origin")
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue(LocalRequest.isPackageUpload(method: method, target: path) ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type")
             }
             let result = try await load(request, limit)
             try Task.checkCancellation()
@@ -231,7 +231,7 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         guard connected else { throw URLError(.notConnectedToInternet) }
         guard SecretGoodGalaxy.validTarget(path),
-              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method), body.count <= Wire.maxBody else {
+              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method), body.count <= LocalRequest.bodyLimit(method: method, target: path) else {
             throw BridgeError.message("Invalid Galaxy request.")
         }
         let (data, response) = try await authenticated(path: path, method: method, headers: headers, body: body, limit: 8 * Wire.maxBody)
