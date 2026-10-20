@@ -63,7 +63,7 @@ struct ConnectionSettingsView: View {
                 preferences
                 DisclosureGroup(isExpanded: $advanced) { advancedControls.padding(.top, 8) } label: {
                     Text("Advanced connection options").font(.system(size: 13)).frame(minHeight: 30)
-                }.padding(.horizontal, 14).padding(.vertical, 7).background(panel, in: RoundedRectangle(cornerRadius: 16))
+                }.tint(.white).padding(.horizontal, 14).padding(.vertical, 7).background(panel, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(accent.opacity(0.16)))
                 HStack(spacing: 18) {
                     Button(model.loadingLegacyURL ? "Getting link…" : "Legacy Galaxy") {
@@ -114,11 +114,19 @@ struct ConnectionSettingsView: View {
                     .padding(.horizontal, 9).padding(.vertical, 6)
                     .background((pairing ? accent : connected ? Color.mint : muted).opacity(0.13), in: Capsule())
             }
-            Picker("Connection mode", selection: $model.mode) {
-                Text("Automatic").tag(ConnectionMode.automatic)
-                Text("Bluetooth").tag(ConnectionMode.bluetooth)
-                Text("Wi-Fi").tag(ConnectionMode.lan)
-            }.pickerStyle(.segmented).disabled(pairing)
+            HStack(spacing: 3) {
+                ForEach([ConnectionMode.automatic, .bluetooth, .lan], id: \.self) { mode in
+                    Button { model.mode = mode } label: {
+                        Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Wi-Fi")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .foregroundStyle(model.mode == mode ? background : Color.white)
+                            .background(model.mode == mode ? accent : Color.clear, in: Capsule())
+                    }.buttonStyle(.plain)
+                        .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
+                }
+            }.padding(3).background(Color.white.opacity(0.07), in: Capsule())
+                .accessibilityLabel("Connection mode").disabled(pairing)
             Text(pairing ? "Keep Pair phone open on comma." : model.mode == .automatic ? "Wi-Fi first, Bluetooth as backup." : model.mode == .bluetooth ? "Local controls over Bluetooth." : "Uses your local Wi-Fi network.")
                 .font(.system(size: 11)).foregroundStyle(muted)
             Button {
