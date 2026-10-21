@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import CoreBluetooth
 import CryptoKit
+import UIKit
 
 struct NearbyDevice: Identifiable {
     let id: UUID
@@ -28,6 +29,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
     }
 
+    private var failedConnections = 0
+    var reconnectDelay: TimeInterval { min(25, 3 * pow(2, Double(min(failedConnections, 3)))) }
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var peripheral: CBPeripheral?
@@ -71,6 +74,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         let method: String
         let headers: [String: String]
         let body: Data
+        let phone: BridgePhone?
         let enqueuedAt = ProcessInfo.processInfo.systemUptime
         let completion: CheckedContinuation<BridgeResponse, Error>
     }
@@ -95,9 +99,15 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     func scan() {
-        guard central.state == .poweredOn else { status = "Bluetooth is unavailable or permission is required."; return }
+        guard central.state == .poweredOn else { onEvent?("Bluetooth scan blocked: state=\(central.state.rawValue)"); status = "Bluetooth is unavailable or permission is required."; return }
         devices = []
         peripherals = [:]
+        onEvent?("Bluetooth service scan started; timeout=15s")
+        for found in central.retrieveConnectedPeripherals(withServices: [CBUUID(string: Wire.service)]) {
+            peripherals[found.identifier] = found
+            devices.append(NearbyDevice(id: found.identifier, name: found.name ?? "Galaxy", signal: 0))
+        }
+        onEvent?("Bluetooth scan found \(devices.count) already-connected service candidates")
         central.scanForPeripherals(withServices: [CBUUID(string: Wire.service)], options: nil)
         isScanning = true
         status = "Looking for the Galaxy Bluetooth bridge…"
@@ -105,6 +115,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         scanTimeout = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard !Task.isCancelled, let self else { return }
+            self.onEvent?("Bluetooth service scan finished: candidates=\(self.devices.count)")
             self.central.stopScan()
             self.isScanning = false
             self.status = self.devices.isEmpty ? "No bridge found. Start the bridge on your comma and enable Bluetooth in StarPilot." : "Select your comma to connect."
@@ -161,6 +172,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     private func failConnection(_ message: String) {
+        failedConnections = min(failedConnections + 1, 4)
         if Self.shouldPauseFastReads(method: active?.method, notifications: activeNotifications,
                                      cancelled: message.lowercased().contains("cancelled")) {
             fastReadFallback = true
@@ -174,6 +186,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         else if lower.contains("timed out") { reason = "Bluetooth connection timed out" }
         else if lower.contains("pairing") { reason = "Bluetooth pairing or authentication failed" }
         else if lower.contains("encrypt") || lower.contains("verify bluetooth") { reason = "Bluetooth encrypted response failed" }
+        else if lower.hasPrefix("bluetooth operation failed:") { reason = message }
         else { reason = "Bluetooth connection failed" }
         if let active {
             onEvent?("\(reason): \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), sent=\(writeIndex)/\(outgoing.count), received packets=\(notificationCount), awaiting ack=\(awaitingAck)")
@@ -184,6 +197,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
+        try await request(path: path, method: method, headers: headers, body: body, phone: nil)
+    }
+
+    private func request(path: String, method: String, headers: [String: String], body: Data,
+                         phone: BridgePhone?) async throws -> BridgeResponse {
         let id = UUID().uuidString
         return try await withTaskCancellationHandler(operation: {
             try Task.checkCancellation()
@@ -196,7 +214,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
                     continuation.resume(throwing: BridgeError.message("Bluetooth queue is full or upload exceeds 1 MiB."))
                     return
                 }
-                queue.append(Pending(id: id, path: path, method: method, headers: headers, body: body, completion: continuation))
+                queue.append(Pending(id: id, path: path, method: method, headers: headers, body: body, phone: phone, completion: continuation))
                 pump()
             }
         }, onCancel: { [weak self] in
@@ -231,11 +249,16 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     static func backgroundRead(_ path: String) -> Bool {
         let endpoint = path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? path
-        return ["/api/device/status", "/api/stats", "/api/companion/diagnostics"].contains(endpoint)
+        return ["/api/device/state", "/api/system/monitor", "/api/local-access", "/api/models/status", "/api/software/status", "/api/drives/stats"].contains(endpoint)
     }
 
     static func nextRequestIndex(methods: [String], paths: [String], priorityStreak: Int) -> Int {
         guard methods.count == paths.count, !methods.isEmpty, methods[0] == "GET", priorityStreak < 3 else { return 0 }
+        // Keep the short-lived state badge from waiting behind large page snapshots.
+        for index in methods.indices {
+            if methods[index] != "GET" { break }
+            if URLComponents(string: paths[index])?.path == "/api/device/state" { return index }
+        }
         // A queued write is a barrier: never move a read from after it to before it.
         for index in methods.indices {
             if methods[index] != "GET" { break }
@@ -249,7 +272,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         let index = Self.nextRequestIndex(methods: queue.map(\.method), paths: queue.map(\.path), priorityStreak: priorityStreak)
         active = queue.remove(at: index)
         guard let active else { return }
-        priorityStreak = active.method == "GET" && !Self.backgroundRead(active.path) ? min(3, priorityStreak + 1) : 0
+        priorityStreak = index > 0 ? min(3, priorityStreak + 1) : 0
         requestStarted = ProcessInfo.processInfo.systemUptime
         receivedPackets = 0
         receivedWireBytes = 0
@@ -268,7 +291,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             notificationTag = try Wire.streamTag(session: session, counter: counter)
             let request = BridgeRequest(id: active.id, session: session, counter: counter, path: active.path,
                                         method: active.method, headers: active.headers, body: active.body.base64EncodedString(),
-                                        responseCodec: 2, responseFlow: activeNotifications ? "notify-window8" : activeReadStream ? "read-stream" : nil)
+                                        phone: active.phone, responseCodec: 2, responseFlow: activeNotifications ? "notify-window8" : activeReadStream ? "read-stream" : nil)
             outgoing = Wire.packets(try Wire.seal(request, key: key, direction: "request"),
                                     size: min(supportsNotifications ? 512 : 180, peripheral.maximumWriteValueLength(for: .withoutResponse)))
             timeoutTask = Task { @MainActor [weak self] in
@@ -331,6 +354,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onEvent?("iOS Bluetooth state changed: \(central.state.rawValue)")
         switch central.state {
         case .poweredOn: status = "Ready to scan for your comma."
         case .unauthorized: failConnection("Allow Bluetooth access in iPhone Settings.")
@@ -346,11 +370,12 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
                                   name: advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "Galaxy",
                                   signal: RSSI.intValue)
         if let index = devices.firstIndex(where: { $0.id == device.id }) { devices[index] = device }
-        else { devices.append(device) }
+        else { devices.append(device); onEvent?("Bluetooth service candidate discovered: RSSI=\(RSSI.intValue), candidates=\(devices.count)") }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard peripheral == self.peripheral else { return }
+        onEvent?("Bluetooth link established; discovering Galaxy service")
         peripheral.discoverServices([CBUUID(string: Wire.service)])
     }
 
@@ -368,8 +393,9 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peripheral == self.peripheral else { return }
         guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == CBUUID(string: Wire.service) }) else {
-            failConnection("Galaxy Bluetooth service was not found."); return
+            failConnection("StarPilot BT service was not found."); return
         }
+        onEvent?("Bluetooth Galaxy service found; discovering characteristics")
         peripheral.discoverCharacteristics([CBUUID(string: Wire.rx), CBUUID(string: Wire.tx), CBUUID(string: Wire.info), CBUUID(string: Wire.notify)], for: service)
     }
 
@@ -382,12 +408,13 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         guard rx != nil, tx != nil, let info = service.characteristics?.first(where: { $0.uuid == CBUUID(string: Wire.info) }) else {
             failConnection("The comma bridge has incompatible Bluetooth characteristics."); return
         }
+        onEvent?("Bluetooth characteristics ready; reading handshake challenge")
         peripheral.readValue(for: info)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral, characteristic.uuid == CBUUID(string: Wire.rx), active != nil else { return }
-        if let error { failConnection(error.localizedDescription); return }
+        if let error { failConnection("Bluetooth operation failed: \(LANTransport.failureCode(error))"); return }
         if awaitingAck {
             if activeNotifications { onEvent?("Bluetooth notification window acknowledged: packets=\(notificationCount), complete=\(completedResponse != nil)") }
             awaitingAck = false
@@ -407,7 +434,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral else { return }
-        if let error { failConnection(error.localizedDescription); return }
+        if let error { failConnection("Bluetooth operation failed: \(LANTransport.failureCode(error))"); return }
         guard let data = characteristic.value else { failConnection("Empty Bluetooth response."); return }
         if characteristic.uuid == CBUUID(string: Wire.notify) {
             receiveNotification(data)
@@ -421,7 +448,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             Task { @MainActor [weak self, weak peripheral] in
                 guard let self, let peripheral else { return }
                 do {
-                    let response = try await self.request(path: "/_bridge/health", method: "GET", headers: [:], body: Data())
+                    let response = try await self.request(path: "/_bridge/health", method: "GET", headers: [:], body: Data(),
+                        phone: PairingKeyStore.phone(for: self.keyText, name: UIDevice.current.name))
                     guard peripheral == self.peripheral, self.session == handshakeSession else { return }
                     guard response.status == 200 else { throw BridgeError.message("Bridge verification failed.") }
                     let health = try JSONDecoder().decode(BridgeHealth.self, from: response.bodyData)
@@ -479,6 +507,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         try PairingKeyStore.save(keyText)
         connectionTimeout?.cancel()
         if let peripheral { UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: "galaxy.bluetooth.device") }
+        failedConnections = 0
         connected = true
         connecting = false
         status = supportsNotifications ? "Connected with fast Bluetooth transfers" : "Connected over Bluetooth"

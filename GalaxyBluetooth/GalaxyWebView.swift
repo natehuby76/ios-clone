@@ -27,6 +27,9 @@ final class GalaxyPageDiagnostics: ObservableObject {
         downloadError = "The file couldn’t be downloaded. Please try again."
     }
 
+    var recover: ((Bool) -> Void)?
+    @Published var darkAppearance: Bool?
+    @Published var landscapeEditor = false
     @Published var copied = false
     @Published var stalled = false
     @Published var mounted = false
@@ -41,7 +44,7 @@ final class GalaxyPageDiagnostics: ObservableObject {
     }
     func begin() {
         deadline?.cancel()
-        started = Date(); mounted = false; stalled = false
+        started = Date(); mounted = false; stalled = false; landscapeEditor = false
         record("Page loading")
         deadline = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 12_000_000_000) } catch { return }
@@ -54,12 +57,12 @@ final class GalaxyPageDiagnostics: ObservableObject {
         mounted = true; stalled = false; deadline?.cancel()
         record("Galaxy content rendered")
     }
-    func fail(_ event: String) { record(event); stalled = true; deadline?.cancel() }
+    func fail(_ event: String) { record(event); mounted = false; stalled = true; deadline?.cancel() }
     func retry() { reloadID = UUID() }
     func report(server: LoopbackServer, connection: String) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         return """
-        StarPilot Galaxy diagnostics
+        StarPilot BT Galaxy diagnostics
         \(ISO8601DateFormatter().string(from: Date()))
         App: \(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))
         iOS: \(UIDevice.current.systemVersion)
@@ -80,11 +83,12 @@ struct GalaxyWebView: View {
     let requestKey: String
     @ObservedObject var diagnostics: GalaxyPageDiagnostics
     var isActive = true
+    var bluetooth = false
     let report: () -> String
     var body: some View {
         ZStack {
-            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive)
-                .id(diagnostics.reloadID)
+            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive, bluetooth: bluetooth)
+                .id(url.absoluteString + diagnostics.reloadID.uuidString)
             if diagnostics.stalled {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.bubble").font(.largeTitle).foregroundStyle(.purple)
@@ -94,7 +98,7 @@ struct GalaxyWebView: View {
                     Button(diagnostics.copied ? "Report copied" : "Copy error report") {
                         UIPasteboard.general.string = report(); diagnostics.copied = true
                     }.buttonStyle(.borderedProminent).tint(.purple)
-                    Button("Retry Galaxy") { diagnostics.copied = false; diagnostics.retry() }.buttonStyle(.bordered)
+                    Button("Retry Galaxy") { diagnostics.copied = false; diagnostics.recover?(false) }.buttonStyle(.bordered)
                 }.padding(28).frame(maxWidth: 420)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).padding(20)
             }
@@ -130,6 +134,7 @@ private struct GalaxyPage: UIViewRepresentable {
 
     let diagnostics: GalaxyPageDiagnostics
     let isActive: Bool
+    let bluetooth: Bool
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(origin: url, diagnostics: diagnostics)
         coordinator.isVisible = isActive
@@ -146,14 +151,33 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          window.__galaxyBluetooth = \(bluetooth ? "true" : "false");
           const phoneAppearance = window.matchMedia('(prefers-color-scheme: dark)');
           const syncTheme = () => {
-            import('/assets/mobile/js/store.js')
-              .then(module => module.setTheme(phoneAppearance.matches ? 'dark' : 'light'))
-              .catch(() => {});
+            const theme = phoneAppearance.matches ? 'dark' : 'light';
+            localStorage.setItem('galaxy-preview-theme', theme);
+            document.documentElement.dataset.theme = theme;
           };
-          phoneAppearance.addEventListener('change', syncTheme);
-          window.addEventListener('DOMContentLoaded', syncTheme, {once: true});
+          syncTheme();
+          phoneAppearance.addEventListener('change', () => {
+            const dark = phoneAppearance.matches;
+            if ((document.documentElement.dataset.theme === 'dark') !== dark) {
+              document.querySelector('.gx-theme-toggle')?.click();
+            }
+            syncTheme();
+          });
+          const reportTheme = () => {
+            const theme = document.documentElement?.dataset.theme;
+            if (theme !== 'dark' && theme !== 'light') return;
+            try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind: 'theme', dark: theme === 'dark'}); } catch (_) {}
+          };
+          const watchTheme = () => {
+            if (!document.documentElement) return;
+            new MutationObserver(reportTheme).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+            reportTheme();
+          };
+          if (document.documentElement) watchTheme();
+          else document.addEventListener('DOMContentLoaded', watchTheme, {once: true});
           let nativeVisible = \(isActive ? "true" : "false");
           Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => nativeVisible ? 'visible' : 'hidden'});
           Object.defineProperty(document, 'hidden', {configurable: true, get: () => !nativeVisible});
@@ -165,6 +189,57 @@ private struct GalaxyPage: UIViewRepresentable {
           const emit = (kind, path = '', code = 0) => {
             try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind, path, code}); } catch (_) {}
           };
+          // Keep this native presentation independent of downloaded Galaxy assets.
+          const editorScreen = matchMedia('(orientation: landscape) and (max-height: 600px)');
+          let editorFocused = false;
+          const editorCSS = document.createElement('style');
+          editorCSS.textContent = `
+            html.native-layout-editor .blur-nav,
+            html.native-layout-editor .gx-appbar__pill,
+            html.native-layout-editor .gx-appbar__menu,
+            html.native-layout-editor .gx-layout > .gx-page-header { display: none !important; }
+            html.native-layout-editor .gx-app { animation: none; }
+            html.native-layout-editor .gx-appbar {
+              position: fixed; inset: max(4px, env(safe-area-inset-top)) auto auto max(8px, env(safe-area-inset-left));
+              width: 44px; padding: 0; margin: 0; z-index: 20;
+            }
+            html.native-layout-editor .gx-appbar__back { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+            html.native-layout-editor .gx-content {
+              max-width: none; padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+            }
+            html.native-layout-editor .gx-layout { --layout-sticky-top: max(4px, env(safe-area-inset-top)); display: grid; gap: 6px; }
+            html.native-layout-editor .gx-layout__savebar {
+              grid-row: 1; margin-left: 52px; padding: 0 4px 0 10px; min-height: 44px; gap: 4px;
+            }
+            html.native-layout-editor .gx-layout__savebar .gx-btn { min-height: 44px; padding-inline: 12px; }
+            html.native-layout-editor .gx-layout__targets { grid-row: 2; margin: 0; gap: 8px; }
+            html.native-layout-editor .gx-layout__targets .gx-btn { min-height: 44px; padding: 4px 12px; }
+            html.native-layout-editor .gx-layout__workspace { gap: 8px; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr); }
+            html.native-layout-editor .gx-layout__preview-card { padding: 4px; gap: 4px; }
+            html.native-layout-editor .gx-layout__preview-card > p.gx-note:not([role]) { display: none; }
+            html.native-layout-editor .gx-layout__preview-card .gx-layout__preview {
+              width: auto; max-width: 100%; max-height: calc(100svh - 200px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin-inline: auto;
+            }
+            html.native-layout-editor .gx-layout__inspector {
+              padding: 8px; gap: 8px; max-height: calc(100svh - 124px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow: auto;
+            }
+            html.native-layout-editor .gx-layout__sections { margin: -8px -8px 0; padding: 4px; gap: 2px; top: -8px; }
+            html.native-layout-editor .gx-layout__sections .gx-btn { min-height: 44px; padding: 4px 8px; white-space: nowrap; }
+          `;
+          const syncEditor = () => {
+            const focused = editorScreen.matches && !!document.querySelector('.gx-layout');
+            if (focused === editorFocused) return;
+            editorFocused = focused;
+            document.documentElement.classList.toggle('native-layout-editor', focused);
+            try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind: 'editorFocus', active: focused}); } catch (_) {}
+          };
+          const startEditorPresentation = () => {
+            document.head.appendChild(editorCSS);
+            new MutationObserver(syncEditor).observe(document.body, {childList: true, subtree: true});
+            editorScreen.addEventListener('change', syncEditor);
+            syncEditor();
+          };
+          document.addEventListener('DOMContentLoaded', startEditorPresentation, {once: true});
           const pathOnly = value => {
             try { return new URL(value, location.href).pathname; } catch (_) { return ''; }
           };
@@ -192,7 +267,20 @@ private struct GalaxyPage: UIViewRepresentable {
             if (!local(req.url)) return originalFetch(req);
             const headers = new Headers(req.headers);
             headers.set('X-Galaxy-Local', key);
-            return originalFetch(new Request(req, { headers }));
+            return originalFetch(new Request(req, { headers })).then(async response => {
+              if (response.status === 501) {
+                const message = await response.clone().json().catch(() => null);
+                let notice = document.getElementById('native-wifi-notice');
+                if (!notice) {
+                  notice = document.createElement('button'); notice.id = 'native-wifi-notice';
+                  notice.setAttribute('role', 'status');
+                  notice.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;z-index:10000;padding:16px;border-radius:16px;background:Canvas;color:CanvasText;border:1px solid currentColor;font:inherit;';
+                  notice.onclick = () => notice.remove(); document.body.appendChild(notice);
+                }
+                notice.textContent = typeof message?.error === 'string' ? message.error : 'Connect to comma over Wi-Fi for this feature.';
+              }
+              return response;
+            });
           };
           const originalOpen = XMLHttpRequest.prototype.open;
           const originalSend = XMLHttpRequest.prototype.send;
@@ -218,6 +306,7 @@ private struct GalaxyPage: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.evaluateJavaScript("window.__galaxyBluetooth = \(bluetooth ? "true" : "false")", completionHandler: nil)
         context.coordinator.isVisible = isActive
         context.coordinator.syncVisibility(uiView)
     }
@@ -244,11 +333,27 @@ private struct GalaxyPage: UIViewRepresentable {
                   let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
             let path = LoopbackServer.reportPath(body["path"] as? String ?? "")
             switch kind {
+            case "theme":
+                if message.frameInfo.isMainFrame, let dark = body["dark"] as? Bool {
+                    diagnostics.darkAppearance = dark
+                    let background = dark ? UIColor(red: 0.06, green: 0.05, blue: 0.09, alpha: 1) : .systemBackground
+                    message.webView?.backgroundColor = background
+                    message.webView?.scrollView.backgroundColor = background
+                }
+            case "editorFocus":
+                if message.frameInfo.isMainFrame, let active = body["active"] as? Bool {
+                    diagnostics.landscapeEditor = active
+                }
             case "rendered": if message.frameInfo.isMainFrame { diagnostics.rendered() }
             case "blank": if message.frameInfo.isMainFrame { diagnostics.begin() }
             case "resource": diagnostics.record("Resource failed: \(path)")
             case "script": diagnostics.record("JavaScript error: \(path), line \(body["code"] as? Int ?? 0)")
             case "promise": diagnostics.record("Unhandled JavaScript promise rejection")
+            case "search":
+                if let phase = body["phase"] as? String, ["started", "results", "partial", "ready"].contains(phase),
+                   let count = body["count"] as? Int, (0...50_000).contains(count) {
+                    diagnostics.record("Toggle search \(phase): \(count) settings indexed")
+                }
             default: break
             }
         }
@@ -263,9 +368,17 @@ private struct GalaxyPage: UIViewRepresentable {
         private func navigationFailed(_ error: Error) {
             let value = error as NSError
             if !downloads.isEmpty, value.code == NSURLErrorCancelled || (value.domain == "WKErrorDomain" && value.code == 102) { return }
+            if value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled { return }
             diagnostics.fail("Navigation failed: \(value.domain) \(value.code)")
+            if isVisible, value.domain == NSURLErrorDomain,
+               [NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost].contains(value.code) {
+                diagnostics.recover?(true)
+            }
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { diagnostics.fail("Galaxy web content process terminated") }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            diagnostics.fail("Galaxy web content process terminated")
+            if isVisible { diagnostics.recover?(true) }
+        }
 
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

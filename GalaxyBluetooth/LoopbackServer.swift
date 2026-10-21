@@ -8,15 +8,18 @@ import UniformTypeIdentifiers
 final class LoopbackServer: ObservableObject {
     @Published var url: URL?
     @Published var error = ""
+    private(set) var lifecycleEvents: [String] = []
+    private(set) var listenerState = "stopped"
+    private var availabilityTask: Task<Bool, Never>?
     private(set) var recentRequests: [String] = []
     var diagnosticSummary: String {
-        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/index.html").path)
-        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("assets/mobile/js/app.js").path)
-        return "Local server ready: \(url != nil)\nAsset source: \(webRoot.lastPathComponent == "Web" ? "bundled" : "saved update")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nLocal server error present: \(!error.isEmpty)"
+        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("index.html").path)
+        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("js/app.js").path)
+        return "Local server ready: \(url != nil)\nLocal listener state: \(listenerState)\nRecent local server events:\n\(lifecycleEvents.joined(separator: "\n"))\nAsset source: \(webRoot.lastPathComponent == "Web" ? "bundled" : "saved update")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nLocal server error present: \(!error.isEmpty)"
     }
     static func reportPath(_ target: String) -> String {
         let path = String(target.prefix(512)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
-        if path.hasPrefix("/assets/") { return String(path.prefix(200)) }
+        if ["/assets/", "/js/", "/css/", "/vendor/"].contains(where: { path.hasPrefix($0) }) { return String(path.prefix(200)) }
         if path.hasPrefix("/api/") { return "/api/" + (path.split(separator: "/").dropFirst().first.map(String.init) ?? "") + "/…" }
         return path == "/" ? "/" : "[other path]"
     }
@@ -25,25 +28,74 @@ final class LoopbackServer: ObservableObject {
     private var connections: [UUID: LocalConnection] = [:]
     private var webRoot: URL
     private let transport: any GalaxyRequestTransport
+    private let probe: (URL) async -> Bool
     private var catalog: Data?
     private var catalogSHA256: String?
 
-    init(transport: any GalaxyRequestTransport, webRoot: URL? = nil) {
+    init(transport: any GalaxyRequestTransport, webRoot: URL? = nil,
+         probe: @escaping (URL) async -> Bool = { url in
+             var request = URLRequest(url: url.appendingPathComponent("_native/health"))
+             request.timeoutInterval = 2
+             guard let (data, response) = try? await BoundedHTTP.load(request, limit: 256) else { return false }
+             return response.statusCode == 200 && data == Data("galaxy-loopback-ready".utf8)
+         }) {
         self.transport = transport
+        self.probe = probe
         let root = webRoot ?? Bundle.main.resourceURL!.appendingPathComponent("Web", isDirectory: true)
         self.webRoot = root
-        self.catalog = try? Data(contentsOf: root.appendingPathComponent("assets/components/tools/device_settings_layout.json"))
-        self.catalogSHA256 = catalog.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+
     }
 
     func useWebRoot(_ root: URL) {
         webRoot = root
-        catalog = try? Data(contentsOf: root.appendingPathComponent("assets/components/tools/device_settings_layout.json"))
-        catalogSHA256 = catalog.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+
+    }
+
+    private func record(_ event: String) {
+        lifecycleEvents.append("\(ISO8601DateFormatter().string(from: Date())) \(event)")
+        if lifecycleEvents.count > 20 { lifecycleEvents.removeFirst(lifecycleEvents.count - 20) }
+    }
+
+    // Probe real HTTP service after suspension; an old URL is not proof of readiness.
+    func ensureAvailable() async -> Bool {
+        if let availabilityTask { return await availabilityTask.value }
+        let task = Task { @MainActor in
+            self.start()
+            await self.waitUntilReady()
+            if let url = self.url, await self.probe(url) {
+                self.record("Local HTTP health check passed")
+                return true
+            }
+            self.record("Local HTTP health check failed; restarting listener")
+            self.stop()
+            self.start()
+            await self.waitUntilReady()
+            guard let url = self.url, await self.probe(url) else {
+                self.stop()
+                self.error = "Galaxy couldn’t reconnect. Try again."
+                self.record("Local HTTP recovery failed")
+                return false
+            }
+            self.record("Local HTTP recovery succeeded")
+            return true
+        }
+        availabilityTask = task
+        defer { availabilityTask = nil }
+        return await task.value
+    }
+
+    private func waitUntilReady() async {
+        for _ in 0..<40 {
+            if url != nil || listener == nil { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     func start() {
         guard listener == nil else { return }
+        error = ""
+        listenerState = "starting"
+        record("Starting local listener")
         do {
             let parameters = NWParameters.tcp
             parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -51,34 +103,44 @@ final class LoopbackServer: ObservableObject {
             self.listener = listener
             listener.stateUpdateHandler = { [weak self, weak listener] state in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, let listener, self.listener === listener else { return }
                     switch state {
                     case .ready:
-                        if let port = listener?.port { self.url = URL(string: "http://127.0.0.1:\(port.rawValue)/") }
-                    case .failed(let failure): self.error = failure.localizedDescription
+                        self.listenerState = "ready"
+                        self.error = ""
+                        if let port = listener.port { self.url = URL(string: "http://127.0.0.1:\(port.rawValue)/") }
+                        self.record("Local listener ready")
+                    case .failed(let failure):
+                        self.stop()
+                        self.listenerState = "failed"
+                        self.error = failure.localizedDescription
+                        self.record("Local listener failed: \(failure)")
+                    case .waiting:
+                        self.url = nil
+                        self.listenerState = "waiting"
+                        self.record("Local listener waiting")
+                    case .cancelled:
+                        self.stop()
                     default: break
                     }
                 }
             }
-            listener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in self?.accept(connection) }
+            listener.newConnectionHandler = { [weak self, weak listener] connection in
+                Task { @MainActor in
+                    guard let self, let listener, self.listener === listener else { connection.cancel(); return }
+                    self.accept(connection)
+                }
             }
             listener.start(queue: .main)
-        } catch { self.error = error.localizedDescription }
-    }
-
-    static func adaptNativeAsset(_ data: Data, path: String) -> Data {
-        guard path == "assets/mobile/js/components/PersonalityProfiles.js",
-              let source = String(data: data, encoding: .utf8) else { return data }
-        let adapted = source.replacingOccurrences(of: "api.getParams()", with: "api.getSettingsParams()")
-            .replacingOccurrences(of: "if (this.busy || !this.ready || this.contextPending) return",
-                                  with: "if (document.hidden || this.busy || !this.ready || this.contextPending) return")
-        return Data(adapted.utf8)
+        } catch { listenerState = "failed"; self.error = error.localizedDescription; record("Could not create local listener") }
     }
 
     func stop() {
-        listener?.cancel()
+        let oldListener = listener
         listener = nil
+        oldListener?.cancel()
+        listenerState = "stopped"
+        record("Local listener stopped")
         url = nil
         for client in Array(connections.values) { client.close() }
     }
@@ -102,6 +164,98 @@ final class LoopbackServer: ObservableObject {
         return response
     }
 
+    static let nativeSearchScript = #"""
+    // Native Bluetooth search adapter v1. The verified upstream assets stay unchanged on disk.
+    if (window.__galaxyNative) {
+      const reportSearch = (phase, count) => {
+        try { window.webkit?.messageHandlers?.galaxyDiagnostics?.postMessage({ kind: 'search', phase, count }) } catch (_) {}
+      }
+      SettingsSearchIndex.prototype.collect = async function(generation, controller) {
+        const seen = new Set(INITIAL_PAGES)
+        const queue = [...INITIAL_PAGES]
+        let failed = 0, reportedResults = false
+        reportSearch('started', 0)
+        const current = () => this.generation === generation && !controller.signal.aborted
+        for (let cursor = 0; cursor < queue.length && current(); cursor++) {
+          const page = queue[cursor]
+          const timed = new AbortController()
+          let timer, abort
+          try {
+            const expired = new Promise((_, reject) => {
+              abort = () => { timed.abort(); reject(new DOMException('Search stopped', 'AbortError')) }
+              controller.signal.addEventListener('abort', abort, { once: true })
+              timer = setTimeout(abort, 20000)
+            })
+            const read = (async () => {
+              const response = await this.fetcher(`./api/settings/pages/${encodeURIComponent(page)}`,
+                { credentials: 'same-origin', cache: 'no-store', signal: timed.signal })
+              if (response.status === 401) { this.stop(); this.unauthorized(); return null }
+              if (!response.ok) throw new Error('Settings unavailable')
+              const data = await response.json()
+              if (data?.page !== page || !Array.isArray(data.rows) || typeof data.title !== 'string') throw new Error('Invalid settings page')
+              return data
+            })()
+            const data = await Promise.race([read, expired])
+            if (!current() || !data) return
+            const section = PAGE_SECTIONS.get(page.split('/')[0]) || 'Toggles'
+            for (const row of data.rows) {
+              if (typeof row?.label !== 'string' || !row.label) continue
+              if (typeof row.page === 'string' && row.page && !seen.has(row.page) && seen.size < 64) {
+                seen.add(row.page); queue.push(row.page)
+              }
+              if (row.page || isPipCropRow(row)) continue
+              this.entries.push({ page, label: row.label, title: data.title, section,
+                search: searchable(row, data.title, section) })
+            }
+          } catch {
+            if (!current()) return
+            failed++
+          } finally {
+            clearTimeout(timer)
+            if (abort) controller.signal.removeEventListener('abort', abort)
+          }
+          // Publish each page immediately; one slow page must not hide earlier matches.
+          if (current() && this.entries.length && !reportedResults) {
+            reportedResults = true; reportSearch('results', this.entries.length)
+          }
+          if (current()) this.publish({ status: 'loading', entries: [...this.entries], failed })
+        }
+        if (!current()) return
+        this.status = failed ? 'partial' : 'ready'
+        reportSearch(this.status, this.entries.length)
+        this.publish({ status: this.status, entries: [...this.entries], failed })
+      }
+      const closeSearch = ToggleSearch.methods.close
+      ToggleSearch.methods.close = function() { this.index.stop(); closeSearch.call(this) }
+      const searchKey = ToggleSearch.methods.onKey
+      ToggleSearch.methods.onKey = function(event) {
+        if (event.key === 'Escape') this.index.stop()
+        searchKey.call(this, event)
+      }
+      const chooseSearchHit = ToggleSearch.methods.choose
+      ToggleSearch.methods.choose = function(hit) { this.index.stop(); chooseSearchHit.call(this, hit) }
+      ToggleSearch.template = ToggleSearch.template.replace("state.status === 'partial' && !state.entries.length", "state.status === 'partial' && !results.length")
+    }
+    """#
+
+    // Adapt known read deadlines when serving verified files; never alter the saved bundle.
+    static func nativeReadDeadlines(_ source: String, asset: String) -> String {
+        let timeout: String
+        switch asset {
+        case "js/snapshot-feed.js" where source.contains("export class SnapshotFeed"):
+            timeout = "globalThis.__galaxyBluetooth && this.constructor.subject !== 'device state' ? 20000 : 4000"
+        case "js/settings.js" where source.contains("async run(operation,"):
+            timeout = "globalThis.__galaxyBluetooth && !saving ? 20000 : 4000"
+        default: return source
+        }
+        var adapted = source.replacingOccurrences(of: "    }, 4000)", with: "    }, \(timeout))")
+        if asset == "js/snapshot-feed.js" {
+            adapted = adapted.replacingOccurrences(of: "interval: this.constructor.interval,", with:
+                "interval: globalThis.__galaxyBluetooth && this.constructor.subject !== 'device state' ? Math.max(15000, this.constructor.interval) : this.constructor.interval,")
+        }
+        return adapted
+    }
+
     private func respond(_ request: LocalRequest) async -> LocalResponse {
         guard let base = url, let port = base.port, request.headers["host"] == "127.0.0.1:\(port)" else {
             return .error(403, "Invalid local host.")
@@ -116,18 +270,14 @@ final class LoopbackServer: ObservableObject {
               !path.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else {
             return .error(400, "Invalid local path.")
         }
+        if path == "/_native/health", request.method == "GET" {
+            return LocalResponse(status: 200, headers: ["content-type": "text/plain"], body: Data("galaxy-loopback-ready".utf8))
+        }
         if path.hasPrefix("/_gateway/") { return .error(404, "Choose your connection in the native app.") }
-        let dynamic = path.hasPrefix("/api/") || path == "/assets/components/tools/device_settings_layout.json"
+        let dynamic = path.hasPrefix("/api/") || path == "/data/runtime.json"
         if dynamic {
             guard request.headers["x-galaxy-local"] == localSecret else { return .error(403, "Missing app request key.") }
             guard transport.connected else { return .error(503, "Your comma is disconnected. Open Connections to reconnect.") }
-            // Verify the device's catalog during the authenticated BLE handshake.
-            if request.method == "GET", request.body.isEmpty,
-               request.target == "/assets/components/tools/device_settings_layout.json?v=settings-tier-1",
-               request.headers["range"] == nil, let catalog, let catalogSHA256,
-               transport.catalogSHA256 == catalogSHA256 {
-                return LocalResponse(status: 200, headers: ["content-type": "application/json"], body: catalog)
-            }
             do {
                 let response = try await transport.request(path: request.target, method: request.method,
                                                           headers: request.headers, body: request.body)
@@ -135,16 +285,19 @@ final class LoopbackServer: ObservableObject {
             } catch { return .error(502, error.localizedDescription) }
         }
         guard ["GET", "HEAD"].contains(request.method) else { return .error(405, "Method is not supported for bundled files.") }
-        let assetPath: String
-        if path.hasPrefix("/assets/") { assetPath = String(path.dropFirst()) }
-        else if ["/", "/mobile", "/mobile/"].contains(path) { assetPath = "assets/mobile/index.html" }
-        else if path == "/manifest.json" { assetPath = "assets/manifest.json" }
-        else { assetPath = "classic.html" }
+        let assetPath = path == "/" ? "index.html" : String(path.dropFirst())
         let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
         guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), var data = try? Data(contentsOf: file) else {
             return .error(404, "Bundled Galaxy asset was not found.")
         }
-        data = Self.adaptNativeAsset(data, path: assetPath)
+        if ["js/snapshot-feed.js", "js/settings.js"].contains(assetPath), let source = String(data: data, encoding: .utf8) {
+            data = Data(Self.nativeReadDeadlines(source, asset: assetPath).utf8)
+        }
+        if assetPath == "js/toggle-search.js", let source = String(data: data, encoding: .utf8),
+           source.contains("export class SettingsSearchIndex"), source.contains("export const ToggleSearch") {
+            data.append(Data(("\n" + Self.nativeSearchScript).utf8))
+            record("Native incremental toggle search enabled")
+        }
         let mime: String
         switch file.pathExtension {
         case "js", "mjs": mime = "text/javascript"
@@ -206,10 +359,25 @@ private final class LocalConnection {
         }
     }
 
+    private var packageTimeout = false
+
     private func consume(_ chunk: Data?, ended: Bool, failure: NWError?) {
         guard !closed else { return }
         data.append(chunk ?? Data())
-        guard failure == nil, data.count <= Wire.maxBody + 16_388 else { close(); return }
+        guard failure == nil, data.count <= LocalRequest.maxPackageBody + 16_388 else { close(); return }
+        if !packageTimeout, let end = data.range(of: Data("\r\n\r\n".utf8)),
+           let header = String(data: data[..<end.lowerBound], encoding: .utf8),
+           let first = header.components(separatedBy: "\r\n").first {
+            let parts = first.split(separator: " ")
+            if parts.count == 3, LocalRequest.isPackageUpload(method: String(parts[0]), target: String(parts[1])) {
+                packageTimeout = true
+                headerTimeout?.cancel()
+                headerTimeout = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 120_000_000_000)
+                    if !Task.isCancelled { self?.close() }
+                }
+            }
+        }
         do {
             guard let request = try LocalRequest.parse(data) else {
                 if ended { close() } else { receive() }

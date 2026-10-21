@@ -73,6 +73,14 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     private(set) var endpoint: URL?
     private(set) var generation = UUID().uuidString
     private(set) var expectedDeviceID: String?
+    private(set) var verifiedDeviceID: String?
+
+    private var cookie: String?
+    private var sessionTask: (UUID, Task<String, Error>)?
+    private let load: (URLRequest, Int) async throws -> (Data, HTTPURLResponse)
+    init(load: @escaping (URLRequest, Int) async throws -> (Data, HTTPURLResponse) = { try await PrivateLANHTTP.load($0, limit: $1) }) {
+        self.load = load
+    }
 
     // An explicit private IPv4 address prevents cloud/loopback endpoints from being treated as the local comma.
     static func endpoint(_ address: String) throws -> URL {
@@ -92,11 +100,19 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     }
     static func reportedAddress(_ data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ip = json["lanIp"] as? String, (try? endpoint(ip)) != nil else { return nil }
-        return ip
+              let addresses = json["addresses"] as? [[String: Any]] else { return nil }
+        return addresses.compactMap { row -> String? in
+            guard let text = row["url"] as? String, let url = URL(string: text),
+                  let host = url.host, let expected = try? endpoint(host),
+                  url.scheme == "http", url.port == 8082, url.user == nil, url.password == nil,
+                  url.host == expected.host else { return nil }
+            return host
+        }.first
     }
     static func deviceID(_ data: Data) -> String? {
-        guard let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["schemaVersion"] as? Int == 1, json["monitor"] as? String == "local",
+              let value = json["instance"] as? String,
               value.count == 16, value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
         return value
     }
@@ -105,29 +121,23 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     }
     func clearEndpoint() { endpoint = nil; invalidate(reason: "Saved LAN endpoint cleared") }
     func invalidate(reason: String = "LAN verification reset") {
-        connected = false; generation = UUID().uuidString
+        cookie = nil; sessionTask?.1.cancel(); sessionTask = nil
+        connected = false; verifiedDeviceID = nil; generation = UUID().uuidString
         onEvent?(reason)
     }
     func probe() async -> Bool {
-        guard let endpoint else { return false }
-        var request = URLRequest(url: endpoint.appendingPathComponent("api/device/status"))
-        request.timeoutInterval = 2
+        guard endpoint != nil else { return false }
         let expectedGeneration = generation
         do {
-            let (data, response) = try await PrivateLANHTTP.load(request, limit: 65_536)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let (data, response) = try await authenticated(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
-            var available = response.statusCode == 200 && json?["online"] as? Bool == true
-                && ["Parked", "Driving"].contains(json?["status"] as? String ?? "")
-            if available, let expectedDeviceID {
-                var identityRequest = URLRequest(url: URL(string: endpoint.absoluteString + "/api/params?key=DongleId")!)
-                identityRequest.timeoutInterval = 2
-                let (identity, identityResponse) = try await PrivateLANHTTP.load(identityRequest, limit: 256)
-                available = identityResponse.statusCode == 200 && Self.deviceID(identity) == expectedDeviceID
-            }
+            let identity = Self.deviceID(data)
+            let available = response.statusCode == 200 && identity != nil
+                && (expectedDeviceID == nil || identity == expectedDeviceID)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
             let changed = connected != available
             connected = available
+            verifiedDeviceID = available ? identity : nil
             status = available ? "Local comma verified." : "Local endpoint unavailable or does not match the paired comma."
             if changed { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: HTTP \(response.statusCode), unavailable status or identity mismatch") }
         } catch {
@@ -154,28 +164,79 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         }
         return "\(value.domain) \(value.code)"
     }
+    private func sessionCookie(endpoint: URL, generation original: String) async throws -> String {
+        if let cookie { return cookie }
+        let token: UUID
+        let pending: Task<String, Error>
+        if let existing = sessionTask { (token, pending) = existing }
+        else {
+            token = UUID()
+            pending = Task {
+                var request = URLRequest(url: endpoint.appendingPathComponent("api/auth/session"))
+                request.timeoutInterval = 8
+                let (data, response) = try await load(request, 65_536)
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let cookies = HTTPCookie.cookies(withResponseHeaderFields: response.allHeaderFields.reduce(into: [String: String]()) {
+                    if let key = $1.key as? String { $0[key] = String(describing: $1.value) }
+                }, for: endpoint)
+                guard response.statusCode == 200, json?["authenticated"] as? Bool == true,
+                      json?["localAccess"] as? Bool == true,
+                      let value = cookies.first(where: { $0.name == "galaxy_session" && !$0.value.isEmpty }) else {
+                    throw BridgeError.message("Couldn’t open a local Galaxy session. Connect directly to comma’s Wi-Fi.")
+                }
+                return "galaxy_session=\(value.value)"
+            }
+            sessionTask = (token, pending)
+        }
+        defer { if sessionTask?.0 == token { sessionTask = nil } }
+        let value = try await pending.value
+        try Task.checkCancellation()
+        guard original == generation, self.endpoint == endpoint else { throw CancellationError() }
+        cookie = value
+        return value
+    }
+
+    private func authenticated(path: String, method: String, headers: [String: String], body: Data,
+                               limit: Int) async throws -> (Data, HTTPURLResponse) {
+        guard let endpoint else { throw URLError(.notConnectedToInternet) }
+        let original = generation
+        for attempt in 0...1 {
+            let usedCookie = try await sessionCookie(endpoint: endpoint, generation: original)
+            guard original == generation else { throw CancellationError() }
+            var request = URLRequest(url: URL(string: endpoint.absoluteString + path)!)
+            request.httpMethod = method
+            request.httpBody = body.isEmpty ? nil : body
+            request.timeoutInterval = LocalRequest.isPackageUpload(method: method, target: path) ? 120 : 8
+            for (name, value) in headers where ["accept", "range", "content-type"].contains(name.lowercased()) {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            request.setValue(usedCookie, forHTTPHeaderField: "Cookie")
+            if !["GET", "HEAD"].contains(method) {
+                request.setValue(endpoint.absoluteString, forHTTPHeaderField: "Origin")
+                request.setValue(LocalRequest.isPackageUpload(method: method, target: path) ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type")
+            }
+            let result = try await load(request, limit)
+            try Task.checkCancellation()
+            guard original == generation, self.endpoint == endpoint else { throw CancellationError() }
+            let message = (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any]
+            if attempt == 0, result.1.statusCode == 401,
+               message?["error"] as? String == "Refresh the local Galaxy session" {
+                // The server rejected this operation before execution. Retry only this explicit response.
+                if cookie == usedCookie { cookie = nil }
+                continue
+            }
+            return result
+        }
+        throw BridgeError.message("Galaxy session expired. Reconnect to comma.")
+    }
+
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
-        guard connected, let endpoint else { throw URLError(.notConnectedToInternet) }
-        guard let relative = URLComponents(string: path), relative.scheme == nil, relative.host == nil,
-              relative.fragment == nil, path.hasPrefix("/"), !path.hasPrefix("//"),
-              let decoded = relative.percentEncodedPath.removingPercentEncoding,
-              !decoded.contains("\\"), !decoded.contains("%"), !decoded.contains("//"),
-              !decoded.unicodeScalars.contains(where: { $0.value < 32 }),
-              !decoded.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),
-              decoded.hasPrefix("/api/") || decoded == "/assets/components/tools/device_settings_layout.json",
-              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method), body.count <= Wire.maxBody,
-              let url = URL(string: endpoint.absoluteString + path) else {
+        guard connected else { throw URLError(.notConnectedToInternet) }
+        guard SecretGoodGalaxy.validTarget(path),
+              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method), body.count <= LocalRequest.bodyLimit(method: method, target: path) else {
             throw BridgeError.message("Invalid Galaxy request.")
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.httpBody = body.isEmpty ? nil : body
-        // Bound stale-route delay; long downloads/streams need a separate route.
-        request.timeoutInterval = 8
-        for (name, value) in headers where ["content-type", "accept", "cookie", "range", "x-companion-nonce", "x-companion-mac"].contains(name.lowercased()) {
-            request.setValue(value, forHTTPHeaderField: name)
-        }
-        let (data, response) = try await PrivateLANHTTP.load(request, limit: 8 * Wire.maxBody)
+        let (data, response) = try await authenticated(path: path, method: method, headers: headers, body: body, limit: 8 * Wire.maxBody)
         var responseHeaders: [String: String] = [:]
         for (key, value) in response.allHeaderFields {
             if let name = key as? String, ["content-type", "content-range", "accept-ranges", "content-disposition"].contains(name.lowercased()) {
@@ -221,7 +282,29 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
                 guard mode == .automatic, bluetooth.connected else { throw error }
             }
         }
+        if SecretGoodGalaxy.needsWiFi(path) {
+            return BridgeResponse(id: UUID().uuidString, session: "wifi-required", counter: 0, status: 501,
+                                  headers: ["content-type": "application/json"],
+                                  body: Data("{\"error\":\"Connect to comma over local Wi-Fi to use this feature.\"}".utf8).base64EncodedString())
+        }
         guard mode != .lan, bluetooth.connected else { throw BridgeError.message("Your comma is disconnected. Open Connections to reconnect.") }
         return try await bluetooth.request(path: path, method: method, headers: headers, body: body)
+    }
+}
+
+@MainActor
+enum LANDiscoveryMatch {
+    static func first(addresses: [String], expectedDeviceID: String?, stillCurrent: () -> Bool,
+                      probe: (String, String) async -> Bool) async -> String? {
+        guard let identity = expectedDeviceID, !identity.isEmpty else { return nil }
+        var seen = Set<String>()
+        for address in addresses.prefix(16) {
+            guard !Task.isCancelled, stillCurrent() else { return nil }
+            guard seen.insert(address).inserted, (try? LANTransport.endpoint(address)) != nil else { continue }
+            let verified = await probe(address, identity)
+            guard !Task.isCancelled, stillCurrent() else { return nil }
+            if verified { return address }
+        }
+        return nil
     }
 }

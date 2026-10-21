@@ -32,6 +32,7 @@ struct CaptureStatus: Codable {
 
 @MainActor
 final class CompanionDiagnostics: ObservableObject {
+    @Published var system: [String: Any]?
     @Published var snapshot: DiagnosticSnapshot?
     @Published var screen: UIImage?
     @Published var status = "Connect and pair with comma to read diagnostics." { didSet { record(status) } }
@@ -50,7 +51,6 @@ final class CompanionDiagnostics: ObservableObject {
     private var reconnectCount = 0
     private var retryDelay = 1.0
     private var streamHasFrame = false
-    private var stream: LiveStream?
     private var streamHost = ""
     private var streamStarted = Date.distantPast
     private var streamGeneration = UUID()
@@ -77,7 +77,7 @@ final class CompanionDiagnostics: ObservableObject {
     }
     func diagnosticLog() -> String {
         let info = Bundle.main.infoDictionary ?? [:]
-        var lines = ["StarPilot Live diagnostics", ISO8601DateFormatter().string(from: Date()),
+        var lines = ["StarPilot BT Live diagnostics", ISO8601DateFormatter().string(from: Date()),
                      "App: \(info["CFBundleShortVersionString"] ?? "unknown") (\(info["CFBundleVersion"] ?? "unknown"))",
                      "iOS: \(UIDevice.current.systemVersion)",
                      "Connection: \(transport?.label ?? "Disconnected")",
@@ -104,20 +104,6 @@ final class CompanionDiagnostics: ObservableObject {
         guard let frameAt, lan?.connected == true else { return false }
         return Date().timeIntervalSince(frameAt) < 3
     }
-    private func headers(_ path: String) throws -> [String: String] {
-        let text = PairingKeyStore.load()
-        guard text.count == 64 else { throw BridgeError.message("Pair this phone with comma before opening diagnostics.") }
-        var bytes = Data()
-        var index = text.startIndex
-        while index < text.endIndex {
-            let next = text.index(index, offsetBy: 2)
-            guard let byte = UInt8(text[index..<next], radix: 16) else { throw BridgeError.message("Invalid pairing key.") }
-            bytes.append(byte); index = next
-        }
-        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        let signature = HMAC<SHA256>.authenticationCode(for: Data("\(nonce)\nGET\n\(path)".utf8), using: SymmetricKey(data: bytes))
-        return ["X-Companion-Nonce": nonce, "X-Companion-MAC": signature.map { String(format: "%02x", $0) }.joined()]
-    }
     private func updateActivity() {
         let active = carPlayActive || (phoneVisible && phoneActive)
         if !active {
@@ -141,95 +127,34 @@ final class CompanionDiagnostics: ObservableObject {
         }
     }
     private func pollDiagnostics() async {
-        if Date().timeIntervalSince(lastDiagnostics) >= 2 {
-            lastDiagnostics = Date()
-            do {
-                guard let transport else { return }
-                let path = "/api/companion/diagnostics"
-                let response = try await transport.request(path: path, method: "GET", headers: headers(path), body: Data())
-                try Task.checkCancellation()
-                lastDiagnosticsHTTP = response.status
-                guard response.status == 200 else {
-                    let error = (try? JSONSerialization.jsonObject(with: response.bodyData)) as? [String: Any]
-                    let message: String
-                    switch (response.status, error?["error"] as? String) {
-                    case (503, "Diagnostics are disabled on comma."):
-                        message = "On comma, open Settings → Bluetooth and turn on Allow phone diagnostics."
-                    case (503, "Waiting for comma UI telemetry."):
-                        message = "Diagnostics enabled. Waiting for comma UI telemetry."
-                    case (403, _):
-                        message = "Phone pairing was rejected. Scan comma’s pairing code again."
-                    case (404, _):
-                        message = "Update your comma build to support phone diagnostics."
-                    default:
-                        message = "Diagnostics request failed (HTTP \(response.status))."
-                    }
-                    throw BridgeError.message(message)
-                }
-                let sample = try JSONDecoder().decode(DiagnosticSnapshot.self, from: response.bodyData)
-                guard sample.ageSeconds.isFinite, sample.ageSeconds >= 0 else { throw BridgeError.message("Invalid telemetry age.") }
-                snapshot = sample; receivedAt = Date(); status = sample.ageSeconds < 5 ? "Connected · read only" : "Telemetry is outdated"
-                if let capture = sample.capture { captureSample = capture; captureSampleAt = Date() }
-            } catch { if !Task.isCancelled { status = error.localizedDescription; snapshot = nil; receivedAt = nil } }
+        guard Date().timeIntervalSince(lastDiagnostics) >= 3, let transport, transport.connected else { return }
+        lastDiagnostics = Date()
+        do {
+            let response = try await transport.request(path: "/api/system/monitor", method: "GET", headers: [:], body: Data())
+            try Task.checkCancellation()
+            lastDiagnosticsHTTP = response.status
+            let value = try JSONSerialization.jsonObject(with: response.bodyData) as? [String: Any] ?? [:]
+            guard response.status == 200, value["schemaVersion"] as? Int == 1 else {
+                throw BridgeError.message(value["error"] as? String ?? "System monitor unavailable.")
+            }
+            let cpu = (value["cpuPercent"] as? NSNumber)?.doubleValue
+            let memory = value["memory"] as? [String: Any] ?? [:]
+            let cores = value["cores"] as? [[String: Any]] ?? []
+            system = value
+            snapshot = DiagnosticSnapshot(ageSeconds: 0, engaged: nil, temperatures: [], rates:
+                [DiagnosticMetric(name: "CPU load", value: cpu, unit: "%"),
+                 DiagnosticMetric(name: "Memory", value: (memory["percent"] as? NSNumber)?.doubleValue, unit: "%")] +
+                cores.map { DiagnosticMetric(name: $0["name"] as? String ?? "CPU", value: ($0["percent"] as? NSNumber)?.doubleValue, unit: "%") }, capture: nil)
+            receivedAt = Date(); status = "Connected · read only"
+        } catch {
+            if !Task.isCancelled { status = error.localizedDescription; system = nil; snapshot = nil; receivedAt = nil }
         }
     }
     private func maintainStream() {
-        guard live, phoneVisible, phoneActive else { stopStream(); return }
-        guard let lan, lan.connected, let host = lan.endpoint?.host else {
-            stopStream(); screenStatus = "Live View needs local Wi-Fi. Diagnostics also work over Bluetooth."; return
-        }
-        if stream != nil && streamHost != host { record("Comma Wi-Fi address changed; reconnecting video"); stopStream() }
-        if stream != nil, streamHasFrame, let frameAt, Date().timeIntervalSince(frameAt) > 3 {
-            record("No video frame for 3 seconds; reconnecting")
-            stopStream(preserveFrame: true)
-        }
-        if stream != nil, !streamHasFrame, Date().timeIntervalSince(streamStarted) > 5 {
-            record("Video connection produced no frame within 5 seconds; retrying")
-            stopStream(preserveFrame: true)
-            retryDelay = min(8, retryDelay * 2)
-        }
-        guard stream == nil, Date().timeIntervalSince(lastStreamAttempt) >= retryDelay else { return }
-        lastStreamAttempt = Date()
-        do {
-            let headers = try headers("/api/companion/stream")
-            let generation = UUID(); streamGeneration = generation; streamHost = host
-            fpsStarted = Date(); frameCount = 0; streamHasFrame = false
-            reconnectCount += 1
-            record("Starting Wi-Fi video connection (attempt \(reconnectCount))")
-            let stream = LiveStream(host: host, headers: headers, frame: { [weak self] data in
-                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                      let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return }
-                let picture = UIImage(cgImage: image)
-                Task { @MainActor in
-                    guard let self, self.streamGeneration == generation else { return }
-                    if !self.streamHasFrame { self.record("Wi-Fi video receiving frames"); self.streamHasFrame = true }
-                    self.retryDelay = 1
-                    self.screen = picture; self.frameAt = Date(); self.frameCount += 1
-                    self.waitingSince = Date()
-                    let elapsed = Date().timeIntervalSince(self.fpsStarted)
-                    if elapsed >= 1 {
-                        self.displayFPS = Double(self.frameCount) / elapsed
-                        self.frameCount = 0; self.fpsStarted = Date()
-                    }
-                    self.screenStatus = String(format: "Full comma display · %.1f FPS · Wi-Fi", self.displayFPS)
-                }
-            }, failure: { [weak self] message in
-                Task { @MainActor in
-                    guard let self, self.streamGeneration == generation else { return }
-                    self.record("Video connection ended: \(message)")
-                    self.stopStream(preserveFrame: true)
-                    self.retryDelay = message.hasPrefix("Stream ") ? 1 : min(8, self.retryDelay * 2)
-                    self.screenStatus = "Reconnecting live video…"
-
-                }
-            })
-            streamStarted = Date(); self.stream = stream; stream.start()
-            screenStatus = "Connecting live stream…"
-        } catch { screenStatus = error.localizedDescription }
-
+        stopStream()
+        screenStatus = "Open Cameras & Monitoring in Galaxy for SecretGood’s camera views. Cameras require local Wi-Fi."
     }
     private func stopStream(preserveFrame: Bool = false) {
-        streamGeneration = UUID(); stream?.stop(); stream = nil; streamHasFrame = false
         if !preserveFrame { screen = nil; frameAt = nil; displayFPS = 0 }
     }
 }
@@ -254,7 +179,7 @@ struct CompanionView: View {
                         .frame(width: space.size.width, height: space.size.height)
                         .accessibilityLabel("Live comma display")
                 } else {
-                    ContentUnavailableView("Waiting for live video", systemImage: "play.rectangle", description: Text(diagnostics.screenStatus))
+                    ContentUnavailableView("Galaxy cameras", systemImage: "play.rectangle", description: Text(diagnostics.screenStatus))
                         .frame(width: space.size.width, height: space.size.height)
                 }
             }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
