@@ -3,13 +3,15 @@ import Foundation
 @MainActor final class NativeComma: GalaxyRequestTransport {
     var connected = true
     var response: [String: Any] = ["revision":"a", "enabled":true, "hasKey":true, "status":"noDestination", "destination":NSNull(), "routeKey":"0123456789abcdef", "route":[], "location":NSNull(), "instruction":NSNull()]
+    var reads: [String] = []
     var writes: [[String: Any]] = []
     var writeStatus = 200
     var changeConnection = false
     var afterRead: (() -> Void)?
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         if method == "GET" {
-            precondition(path == "/api/navigation/status" && body.isEmpty)
+            precondition(path.hasPrefix("/api/navigation/status") && body.isEmpty)
+            reads.append(path)
             let data = try JSONSerialization.data(withJSONObject: response)
             afterRead?()
             return make(200, data)
@@ -49,6 +51,18 @@ import Foundation
         precondition(comma.writes.count == 1)
         _ = try await NativeNavigationAPI.command(.end, transport: comma, expectedRevision: "b", stillCurrent: { true })
         precondition(comma.writes.count == 2)
+        // Command preflights may omit unchanged geometry, but keep revision checks.
+        comma.response.removeValue(forKey: "route")
+        comma.response["routeUnchanged"] = true
+        let version = String(repeating: "0123456789abcdef", count: 4)
+        _ = try await NativeNavigationAPI.command(.read, transport: comma, routeVersion: version, stillCurrent: { true })
+        precondition(comma.reads.last == "/api/navigation/status?routeKey=0123456789abcdef")
+        do {
+            _ = try await NativeNavigationAPI.command(.end, transport: comma, expectedRevision: "old", routeVersion: version, stillCurrent: { true })
+            preconditionFailure("Compact status bypassed revision protection")
+        } catch {}
+        precondition(comma.writes.count == 2)
+
         comma.writeStatus = 409
         do { _ = try await NativeNavigationAPI.command(.start(destination), transport: comma, stillCurrent: { true }); preconditionFailure() } catch {}
         precondition(comma.writes.count == 3, "A conflicting mutation was retried")

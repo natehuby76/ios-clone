@@ -58,6 +58,7 @@ struct CommaFollowingMap: UIViewRepresentable {
         private var startedAt: CFTimeInterval = 0
         private var duration = 0.0
         private var lastArrival: CFTimeInterval?
+        private var positionGeneration = -1
         private var acceptedDate = Date.distantPast
         private var bottomInset: CGFloat = 0
         private var distance = 2800.0
@@ -91,6 +92,13 @@ struct CommaFollowingMap: UIViewRepresentable {
 
         func update(bottomInset: CGFloat) {
             guard let map else { return }
+            if positionGeneration != navigation.positionDisplayGeneration {
+                stop()
+                if markerAdded { map.removeAnnotation(marker); markerAdded = false }
+                displayed = nil; target = nil; lastArrival = nil; framed = false
+                acceptedDate = .distantPast
+                positionGeneration = navigation.positionDisplayGeneration
+            }
             let insetChanged = self.bottomInset != bottomInset
             self.bottomInset = bottomInset
             if line !== navigation.commaPolyline {
@@ -117,10 +125,16 @@ struct CommaFollowingMap: UIViewRepresentable {
             guard navigation.commaFeedReady, let coordinate = navigation.commaPosition,
                   Date().timeIntervalSince(navigation.commaPositionSampleDate) <= 4 else {
                 stop()
-                if markerAdded { map.removeAnnotation(marker); markerAdded = false }
-                displayed = nil; target = nil; lastArrival = nil; framed = false
+                // Hold the last rendered position through delivery gaps. Never extrapolate
+                // or expose this display-only coordinate as a fresh GPS sample.
+                map.view(for: marker)?.accessibilityLabel = "Last known comma location"
+                if !navigation.navigating || navigation.destination == nil {
+                    if markerAdded { map.removeAnnotation(marker); markerAdded = false }
+                    displayed = nil; target = nil; lastArrival = nil; framed = false
+                }
                 return
             }
+            map.view(for: marker)?.accessibilityLabel = "Comma location"
             let received = navigation.commaPositionSampleDate
             if received != acceptedDate {
                 let now = CACurrentMediaTime()
@@ -158,7 +172,7 @@ struct CommaFollowingMap: UIViewRepresentable {
         func stop() { displayLink?.invalidate(); displayLink = nil }
         @objc private func frame(_ link: CADisplayLink) {
             guard navigation.commaFeedReady, Date().timeIntervalSince(acceptedDate) <= 4 else {
-                if let map, markerAdded { map.removeAnnotation(marker); markerAdded = false }
+                map?.view(for: marker)?.accessibilityLabel = "Last known comma location"
                 stop()
                 return
             }

@@ -296,8 +296,10 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             let request = BridgeRequest(id: active.id, session: session, counter: counter, path: active.path,
                                         method: active.method, headers: active.headers, body: active.body.base64EncodedString(),
                                         phone: active.phone, responseCodec: 2, responseFlow: activeNotifications ? "notify-window8" : activeReadStream ? "read-stream" : nil)
+            let packetLimit = min(supportsNotifications ? 512 : 180, peripheral.maximumWriteValueLength(for: .withResponse))
+            onEvent?("Bluetooth write limit: \(packetLimit) bytes; acknowledged writes; compression=2")
             outgoing = Wire.packets(try Wire.seal(request, key: key, direction: "request"),
-                                    size: min(supportsNotifications ? 512 : 180, peripheral.maximumWriteValueLength(for: .withoutResponse)))
+                                    size: packetLimit)
             timeoutTask = Task { @MainActor [weak self] in
                 let seconds: UInt64 = active.path == "/_bridge/health" ? 10 : 90
                 try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)

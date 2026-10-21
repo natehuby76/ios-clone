@@ -158,6 +158,13 @@ struct NavigationHome: View {
                             Button("Galaxy", systemImage: "sparkles") { selectAppTab(.galaxy) }
                             Button("Navigation", systemImage: "location.fill") { }
                             Button("Settings", systemImage: "gearshape.fill") { selectAppTab(.connections) }
+                            if connection.app.developerMode {
+                                Section("Developer") {
+                                    ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { item in
+                                        Button(item.rawValue, systemImage: item.icon) { selectAppTab(item) }
+                                    }
+                                }
+                            }
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: "location.fill").font(.system(size: 17, weight: .semibold)).foregroundStyle(StarPilotTheme.accent)

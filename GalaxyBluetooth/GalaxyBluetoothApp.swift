@@ -539,60 +539,6 @@ struct GalaxyRootView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            if !editorFocused && model.developerMode && model.tab != .connections && model.tab != .navigation {
-            VStack(spacing: 14) {
-                HStack {
-                    if !model.developerMode && model.tab == .connections {
-                        if model.opened {
-                            Button { select(.galaxy) } label: {
-                                Image(systemName: "chevron.left").font(.body.weight(.semibold))
-                                    .frame(width: 36, height: 36)
-                            }.buttonStyle(.plain).accessibilityLabel("Back to Galaxy")
-                        }
-                        Text("Settings").font(.title3.bold())
-                    } else {
-                        Text("StarPilot BT").font(.title3.bold())
-                    }
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle().fill(model.transport.connected ? Color.green : Color.orange).frame(width: 6, height: 6)
-                        Text(model.transport.label).font(.caption.weight(.medium))
-                    }.padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                    if !model.developerMode && model.tab != .connections {
-                        Button { select(.connections) } label: {
-                            Image(systemName: "gearshape.fill").font(.body.weight(.semibold))
-                                .frame(width: 36, height: 36)
-                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                        }.buttonStyle(.plain).accessibilityLabel("Settings")
-                    }
-                }
-                if model.developerMode {
-                    HStack(spacing: 4) {
-                        ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { tab in
-                            Button { select(tab) } label: {
-                                VStack(spacing: 5) {
-                                    Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
-                                    Text(tab.rawValue).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                                }.frame(maxWidth: .infinity).padding(.vertical, 10)
-                                    .foregroundStyle(model.tab == tab ? Color.white : Color.secondary)
-                                    .background(model.tab == tab ? brandPurple : Color.clear, in: RoundedRectangle(cornerRadius: 12))
-                            }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
-                        }
-                        Button { select(.connections) } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "gearshape.fill").font(.system(size: 17, weight: .semibold))
-                                    .frame(width: 36, height: 36)
-                                    .background(model.tab == .connections ? brandPurple : Color(uiColor: .tertiarySystemBackground), in: Circle())
-                                    .foregroundStyle(model.tab == .connections ? Color.white : Color.secondary)
-                                Text("Settings").font(.system(size: 10, weight: .semibold))
-                            }.frame(width: 60).padding(.vertical, 4)
-                                .foregroundStyle(model.tab == .connections ? Color.primary : Color.secondary)
-                        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
-                    }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                }
-            }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12).background(chromeBackground)
-            }
             ZStack {
                 if model.opened, let url = server.url {
                     GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
@@ -624,7 +570,7 @@ struct GalaxyRootView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if !editorFocused && !(model.tab == .navigation && navigation.navigating) {
-                CompanionNavigationBar(tab: model.tab, navigation: model.navigationServices.navigation, select: select)
+                CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode, navigation: model.navigationServices.navigation, select: select)
                     .frame(maxWidth: .infinity)
 
 
@@ -686,6 +632,7 @@ struct GalaxyRootView: View {
 
 private struct CompanionNavigationBar: View {
     let tab: CompanionTab
+    let developerMode: Bool
     @ObservedObject var navigation: NavigationModel
     let select: (CompanionTab) -> Void
     @State private var expanded = true
@@ -710,6 +657,16 @@ private struct CompanionNavigationBar: View {
                                 }
                         }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + item.rawValue)
                             .accessibilityAddTraits(tab == item ? .isSelected : [])
+                    }
+                    if developerMode {
+                        Menu {
+                            ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { item in
+                                Button(item.rawValue, systemImage: item.icon) { select(item) }
+                            }
+                        } label: {
+                            Image(systemName: "ladybug.fill").frame(width: 40, height: 44)
+                                .foregroundStyle(StarPilotTheme.accent)
+                        }.accessibilityLabel("Developer options")
                     }
                 }.padding(5)
             } else {

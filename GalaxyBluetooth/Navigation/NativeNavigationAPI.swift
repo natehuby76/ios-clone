@@ -68,8 +68,8 @@ enum NativeNavigationAPI {
     }
     @MainActor
     static func command(_ command: NavigationCommand, transport: any GalaxyRequestTransport,
-                        expectedRevision: String? = nil, stillCurrent: () -> Bool) async throws -> Data {
-        let response = try await transport.request(path: "/api/navigation/status", method: "GET", headers: [:], body: Data())
+                        expectedRevision: String? = nil, routeVersion: String? = nil, stillCurrent: () -> Bool) async throws -> Data {
+        let response = try await transport.request(path: try statusPath(version: routeVersion), method: "GET", headers: [:], body: Data())
         guard stillCurrent(), response.status == 200 else { throw BridgeError.message("Couldn’t verify comma’s navigation state.") }
         let state = try decode(response.bodyData)
         if case .read = command {

@@ -25,6 +25,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     @Published var selectedRoute = 0
     @Published var usingComma = false
     @Published var commaPolyline: MKPolyline?
+    @Published private(set) var positionDisplayGeneration = 0
     @Published var commaPosition: CLLocationCoordinate2D?
     @Published var commaFeedMessage = ""
     @Published var commaFeedReady = false
@@ -59,10 +60,10 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     private var commandRunning = false
     private var commandGeneration = UUID()
 #if targetEnvironment(simulator)
-    func refreshPreviewPosition() { lastCommaSample = Date(); locationMessage = "" }
+    func refreshPreviewPosition() { lastCommaSample = Date(); commaPositionSampleDate = Date(); locationMessage = "" }
 #endif
     var commaHeading: Double { commaBearing }
-    var commaPositionSampleDate: Date { lastCommaSample }
+    private(set) var commaPositionSampleDate = Date.distantPast
     private let followCameraDistance: CLLocationDistance = 2800
     private var commaBearing: Double = 0
     private var lastCommaSample = Date.distantPast
@@ -289,7 +290,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
             }
         } else { notice = "Phone navigation only." }
         usingComma = sendToComma
-        commaPolyline = nil; cachedCommaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
+        positionDisplayGeneration += 1; commaPolyline = nil; cachedCommaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
         commaFeedMessage = usingComma ? "Waiting for comma’s route…" : ""
         if usingComma {
             instruction = "Waiting for comma’s route"; distanceToTurn = 0; remainingTime = 0; remainingDistance = 0
@@ -330,7 +331,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
             }
         }
         directions?.cancel(); revision = UUID(); recalculating = false
-        usingComma = false; commaPolyline = nil; cachedCommaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
+        usingComma = false; positionDisplayGeneration += 1; commaPolyline = nil; cachedCommaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
         navigating = false; routes = []; destination = nil; commaDestination = nil; commaIdentity = nil
         onEvent?("Navigation ended; phone only: \(phoneOnly)")
         error = ""; instruction = ""; notice = phoneOnly ? "Phone route ended. Comma was left unchanged." : "Route ended."
@@ -412,6 +413,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                 commaFeedReady = true; commaFeedMessage = ""; error = ""
                 if let position = snapshot.position, snapshot.positionValidForSeconds == nil || snapshot.positionValidForSeconds! > Date().timeIntervalSince(requestedAt) {
                     commaPositionExpires = snapshot.positionValidForSeconds.map { requestedAt.addingTimeInterval($0) }
+                    commaPositionSampleDate = requestedAt
                     commaBearing = position.bearing
                     commaPosition = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
                 } else { commaPosition = nil }
@@ -433,7 +435,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     private func clearCommaDisplay(_ message: String, discardRoute: Bool = false) {
         onEvent?("Guidance cleared; discard route: \(discardRoute); was ready: \(commaFeedReady); cached route: \(cachedCommaPolyline != nil); last sample age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample))s")
         commaFeedReady = false; commaPolyline = nil; commaPosition = nil
-        if discardRoute { commaRouteVersion = nil; cachedCommaPolyline = nil }
+        if discardRoute { positionDisplayGeneration += 1; commaRouteVersion = nil; cachedCommaPolyline = nil }
         commaFeedMessage = message
         instruction = "Navigation unavailable"; distanceToTurn = 0; remainingDistance = 0; remainingTime = 0
     }
@@ -480,7 +482,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         navigating = false; usingComma = false
         results = []; routes = []; destination = nil; selectedRoute = 0
         commaDestination = nil; commaIdentity = nil; cachedCommaPolyline = nil
-        commaPolyline = nil; commaPosition = nil; commaRouteVersion = nil
+        positionDisplayGeneration += 1; commaPolyline = nil; commaPosition = nil; commaRouteVersion = nil
         commaFeedReady = false; commaFeedMessage = ""
         instruction = ""; distanceToTurn = 0; remainingTime = 0; remainingDistance = 0
         error = ""; notice = "Navigation reset."; followsUser = true
@@ -512,7 +514,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         let expires = ProcessInfo.processInfo.arguments.contains("--motion-expiry")
         for index in 0..<(expires ? 3 : 30) {
             guard !Task.isCancelled else { return }
-            lastCommaSample = Date()
+            lastCommaSample = Date(); commaPositionSampleDate = Date()
             commaBearing = index == 0 ? 359 : 1
             commaPosition = CLLocationCoordinate2D(latitude: start.latitude + Double(index) * 0.0004,
                 longitude: start.longitude)
