@@ -8,12 +8,14 @@ struct NavigationHome: View {
     @ObservedObject private var bluetooth: BluetoothTransport
     @Environment(\.scenePhase) private var scenePhase
     var openSettings: () -> Void
+    var selectAppTab: (CompanionTab) -> Void
     @State private var searchPurpose: PlaceSearchPurpose?
     @State private var showLibrary = false
     @State private var navigationPanelHeight: CGFloat = 0
     @State private var expanded = false
-    init(connection: CommaConnection, navigation: NavigationModel, saved: SavedPlacesStore, openSettings: @escaping () -> Void) {
+    init(connection: CommaConnection, navigation: NavigationModel, saved: SavedPlacesStore, selectAppTab: @escaping (CompanionTab) -> Void, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
+        self.selectAppTab = selectAppTab
         self.connection = connection; self.navigation = navigation; self.saved = saved
         bluetooth = connection.bluetooth
     }
@@ -23,7 +25,7 @@ struct NavigationHome: View {
                 if navigation.navigating && navigation.usingComma {
                     CommaFollowingMap(navigation: navigation, bottomInset: navigationPanelHeight)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
+                        .ignoresSafeArea(.container, edges: .top)
                 } else {
                     Map(position: $navigation.camera) {
                         UserAnnotation()
@@ -129,21 +131,12 @@ struct NavigationHome: View {
     }
     private var mapHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                connectionStatus
-                Spacer(minLength: 4)
-                Menu {
-                    Button("Copy diagnostic report", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = connection.app.connectionLog.report(model: connection.app)
-                        navigation.notice = "Diagnostic report copied."
-                    }
-                    Button("Reset navigation", systemImage: "arrow.counterclockwise", role: .destructive) {
-                        Task { await connection.app.navigationServices.resetNavigation() }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
-                        .background(.regularMaterial, in: Circle())
-                }.accessibilityLabel("Navigation options")
+            if !navigation.navigating {
+                HStack {
+                    connectionStatus
+                    Spacer(minLength: 4)
+                    navigationOptions
+                }
             }
             HStack(alignment: .top, spacing: 12) {
                 if navigation.navigating {
@@ -156,10 +149,23 @@ struct NavigationHome: View {
                         Spacer(minLength: 0)
                     }
                     .foregroundStyle(.white).padding(20)
-                    .background(StarPilotTheme.guidance, in: RoundedRectangle(cornerRadius: 20))
+                    .background(LinearGradient(colors: [StarPilotTheme.accent, StarPilotTheme.guidance], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 24))
                     .accessibilityElement(children: .combine)
                 } else { Spacer() }
                 VStack(spacing: 10) {
+                    if navigation.navigating {
+                        Menu {
+                            Button("Galaxy", systemImage: "sparkles") { selectAppTab(.galaxy) }
+                            Button("Navigation", systemImage: "location.fill") { }
+                            Button("Settings", systemImage: "gearshape.fill") { selectAppTab(.connections) }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "location.fill").font(.system(size: 17, weight: .semibold)).foregroundStyle(StarPilotTheme.accent)
+                                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                            }.frame(width: 56, height: 44)
+                        }.modifier(FloatingGalaxyGlass()).accessibilityIdentifier("expand-app-tabs").accessibilityLabel("Navigation, show app tabs")
+                        navigationOptions
+                    }
                     mapButton("location.fill", label: "Follow my location") { navigation.followLocation() }
                     if navigation.navigating {
                         mapButton("arrow.up.left.and.arrow.down.right", label: "Show full route") { navigation.showOverview() }
@@ -167,6 +173,21 @@ struct NavigationHome: View {
                 }
             }
         }
+    }
+    private var navigationOptions: some View {
+        Menu {
+            Button("Connection: " + connection.connectionLabel, systemImage: "antenna.radiowaves.left.and.right") { openSettings() }
+            Button("Copy diagnostic report", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = connection.app.connectionLog.report(model: connection.app)
+                navigation.notice = "Diagnostic report copied."
+            }
+            Button("Reset navigation", systemImage: "arrow.counterclockwise", role: .destructive) {
+                Task { await connection.app.navigationServices.resetNavigation() }
+            }
+        } label: {
+            Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
+                .background(.regularMaterial, in: Circle())
+        }.accessibilityLabel("Navigation options")
     }
     private var connectionTint: Color {
         connection.connected ? .green : bluetooth.connecting || bluetooth.isScanning ? .orange : .secondary
@@ -188,7 +209,7 @@ struct NavigationHome: View {
         .accessibilityIdentifier("bluetooth-connection-status")
     }
     private func mapButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(.title3.weight(.semibold)).frame(width: 48, height: 48) }
+        Button(action: action) { Image(systemName: symbol).font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 13))
             .shadow(color: .black.opacity(0.08), radius: 4, y: 2).accessibilityLabel(label)
     }

@@ -57,6 +57,9 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     private var stepIndex = 0
     private var commandRunning = false
     private var commandGeneration = UUID()
+#if targetEnvironment(simulator)
+    func refreshPreviewPosition() { lastCommaSample = Date(); locationMessage = "" }
+#endif
     var commaHeading: Double { commaBearing }
     var commaPositionSampleDate: Date { lastCommaSample }
     private let followCameraDistance: CLLocationDistance = 2800

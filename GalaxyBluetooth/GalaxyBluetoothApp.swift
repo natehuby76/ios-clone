@@ -1,5 +1,6 @@
 import SwiftUI
 import Network
+import MapKit
 
 @main
 struct GalaxyBluetoothApp: App {
@@ -511,6 +512,7 @@ struct GalaxyRootView: View {
     @ObservedObject var server: LoopbackServer
     @ObservedObject var discovery: LANDiscovery
     @ObservedObject var galaxyPage: GalaxyPageDiagnostics
+    @ObservedObject private var navigation: NavigationModel
     @State private var hasVisitedGalaxy = false
     @Environment(\.colorScheme) private var systemColorScheme
     private var chromeBackground: LinearGradient {
@@ -528,7 +530,7 @@ struct GalaxyRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
-        self.model = model; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery; galaxyPage = model.galaxyPage
+        self.model = model; navigation = model.navigationServices.navigation; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery; galaxyPage = model.galaxyPage
     }
     var body: some View {
         VStack(spacing: 0) {
@@ -604,7 +606,7 @@ struct GalaxyRootView: View {
                     }.padding(24)
                 }
                 if model.tab == .navigation {
-                    NavigationHome(connection: model.navigationServices.connection, navigation: model.navigationServices.navigation, saved: model.navigationServices.saved) { select(.connections) }
+                    NavigationHome(connection: model.navigationServices.connection, navigation: model.navigationServices.navigation, saved: model.navigationServices.saved, selectAppTab: select) { select(.connections) }
                 } else if model.developerMode && model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
                 } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
@@ -616,29 +618,17 @@ struct GalaxyRootView: View {
 
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if !editorFocused {
-                HStack(spacing: 5) {
-                    ForEach([CompanionTab.galaxy, .navigation, .connections]) { tab in
-                        Button { select(tab) } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: tab.icon).font(.system(size: 15, weight: .semibold))
-                                Text(tab.rawValue).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
-                            }
-                            .frame(maxWidth: .infinity).frame(height: 44)
-                            .foregroundStyle(model.tab == tab ? Color.white : Color.primary.opacity(0.7))
-                            .background {
-                                if model.tab == tab {
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .fill(LinearGradient(colors: [Color(red: 0.61, green: 0.39, blue: 0.91), Color(red: 0.40, green: 0.22, blue: 0.69)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                }
-                            }
-                        }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + tab.rawValue)
-                            .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+            if !editorFocused && !(model.tab == .navigation && navigation.navigating) {
+                CompanionNavigationBar(tab: model.tab, navigation: model.navigationServices.navigation, select: select)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .bottom) {
+                        if model.tab == .galaxy {
+                            chromeBackground.frame(height: 24)
+                                .mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .bottom))
+                                .offset(y: 24).allowsHitTesting(false).accessibilityHidden(true)
+                        }
                     }
-                }
-                .padding(5)
-                .modifier(FloatingGalaxyGlass())
-                .padding(.horizontal, 14).padding(.top, 5).padding(.bottom, 8)
+
             }
         }
         .background(chromeBackground.ignoresSafeArea())
@@ -656,6 +646,27 @@ struct GalaxyRootView: View {
             AudioPairingSheet(pairing: model.audioPairing) { model.showAudioPairing = false }
         }
         .task(id: scenePhase) {
+#if targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--preview-route") {
+                let nav = model.navigationServices.navigation
+                let points = [CLLocationCoordinate2D(latitude: 43.6412, longitude: -79.3894), CLLocationCoordinate2D(latitude: 43.6433, longitude: -79.3894), CLLocationCoordinate2D(latitude: 43.6433, longitude: -79.3850)]
+                nav.commaPolyline = MKPolyline(coordinates: points, count: points.count)
+                nav.commaPosition = points[0]
+                nav.usingComma = true; nav.commaFeedReady = true; nav.navigating = true
+                nav.instruction = "Turn right onto Bremner Boulevard"
+                nav.commaManeuverType = "turn"; nav.commaManeuverModifier = "right"
+                nav.distanceToTurn = 240; nav.remainingTime = 1920; nav.remainingDistance = 18200
+                let item = MKMapItem(placemark: MKPlacemark(coordinate: points[2])); item.name = "Preview destination"
+                nav.destination = NavigationPlace(item: item)
+                nav.refreshPreviewPosition()
+                model.tab = .navigation
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--preview-galaxy") {
+                model.opened = true; model.tab = .galaxy
+                return
+            }
+#endif
             model.setPhoneActive(scenePhase == .active)
             model.navigationServices.setPhoneActive(scenePhase == .active)
             if scenePhase == .active { model.recoverGalaxy(reload: false); await model.checkGalaxyUpdates() }
@@ -673,7 +684,58 @@ struct GalaxyRootView: View {
 
 }
 
-private struct FloatingGalaxyGlass: ViewModifier {
+private struct CompanionNavigationBar: View {
+    let tab: CompanionTab
+    @ObservedObject var navigation: NavigationModel
+    let select: (CompanionTab) -> Void
+    @State private var expanded = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    private var idleKey: String { "\(tab.rawValue)-\(expanded)-\(navigation.navigating)-\(voiceOver)" }
+    var body: some View {
+        Group {
+            if expanded {
+                HStack(spacing: 5) {
+                    ForEach([CompanionTab.galaxy, .navigation, .connections]) { item in
+                        Button { select(item) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: item.icon).font(.system(size: 15, weight: .semibold))
+                                Text(item.rawValue).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                            }.frame(maxWidth: .infinity).frame(height: 44)
+                                .foregroundStyle(tab == item ? Color.white : Color.primary.opacity(0.7))
+                                .background {
+                                    if tab == item {
+                                        Capsule().fill(LinearGradient(colors: [Color(red: 0.61, green: 0.39, blue: 0.91), Color(red: 0.40, green: 0.22, blue: 0.69)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    }
+                                }
+                        }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + item.rawValue)
+                            .accessibilityAddTraits(tab == item ? .isSelected : [])
+                    }
+                }.padding(5)
+            } else {
+                Button { expanded = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: tab.icon).foregroundStyle(StarPilotTheme.accent)
+                        Text(tab.rawValue).font(.system(size: 13, weight: .semibold))
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    }.padding(.horizontal, 16).frame(height: 44)
+                }.buttonStyle(.plain).accessibilityLabel("Show app tabs").accessibilityIdentifier("expand-app-tabs")
+            }
+        }
+        .modifier(FloatingGalaxyGlass())
+        .frame(maxWidth: expanded ? .infinity : nil)
+        .padding(.horizontal, 14).padding(.top, expanded ? 5 : 0).padding(.bottom, expanded ? 8 : 4)
+        .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.86), value: expanded)
+        .onChange(of: tab) { _, newTab in if newTab == .connections { expanded = true } }
+        .task(id: idleKey) {
+            guard expanded, !voiceOver, tab == .galaxy || tab == .navigation else { return }
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            expanded = false
+        }
+    }
+}
+
+struct FloatingGalaxyGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.glassEffect(.regular.tint(Color.purple.opacity(0.12)), in: .rect(cornerRadius: 24))

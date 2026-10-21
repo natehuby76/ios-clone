@@ -44,6 +44,9 @@ final class NavigationServices: ObservableObject {
     }
     func setPhoneActive(_ active: Bool) { phoneActive = active; sync() }
     private func sync() {
+#if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--preview-route") { return }
+#endif
         let active = phoneActive || navigation.navigating
         navigation.setActive(active)
         connection.app.setNavigationActive(navigation.navigating)
