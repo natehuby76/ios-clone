@@ -176,7 +176,6 @@ struct NavigationHome: View {
     }
     private var navigationOptions: some View {
         Menu {
-            Button("Connection: " + connection.connectionLabel, systemImage: "antenna.radiowaves.left.and.right") { openSettings() }
             Button("Copy diagnostic report", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = connection.app.connectionLog.report(model: connection.app)
                 navigation.notice = "Diagnostic report copied."
