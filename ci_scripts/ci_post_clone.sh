@@ -50,3 +50,7 @@ if command -v node >/dev/null 2>&1; then
 else
   echo "Node unavailable: run tests/ToggleSearchRegression.mjs locally for JavaScript search checks."
 fi
+
+# Integrated navigation uses the existing destination API and never replays writes.
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/Navigation/NavigationContract.swift GalaxyBluetooth/Navigation/CommaRoute.swift GalaxyBluetooth/Navigation/NativeNavigationAPI.swift tests/NativeNavigationRegression.swift -o "$test_dir/native-navigation-tests"
+"$test_dir/native-navigation-tests"

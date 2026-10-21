@@ -8,12 +8,13 @@ struct GalaxyBluetoothApp: App {
 }
 
 enum CompanionTab: String, CaseIterable, Identifiable {
-    case galaxy = "Galaxy", live = "Live View", diagnostics = "Diagnostics", logs = "Dev / Logs", connections = "Settings"
+    case galaxy = "Galaxy", navigation = "Navigation", live = "Live View", diagnostics = "Diagnostics", logs = "Dev / Logs", connections = "Settings"
     var id: String { rawValue }
     var isDeveloperPage: Bool { self == .live || self == .diagnostics || self == .logs }
     var icon: String {
         switch self {
         case .galaxy: "sparkles"
+        case .navigation: "location.fill"
         case .live: "play.rectangle"
         case .diagnostics: "chart.xyaxis.line"
         case .logs: "ladybug"
@@ -91,6 +92,9 @@ final class AppModel: ObservableObject {
             } else { self.galaxyPage.fail("Local server unavailable after recovery attempt") }
         }
     }
+    lazy var navigationServices = NavigationServices(app: self)
+    private var navigationActive = false
+    func setNavigationActive(_ active: Bool) { navigationActive = active; updateMonitoring() }
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
@@ -98,7 +102,7 @@ final class AppModel: ObservableObject {
     func setCarPlayActive(_ active: Bool) { carPlayActive = active; diagnostics.carPlayActive = active; updateMonitoring() }
     private func updateMonitoring() {
         // Sharing phone GPS keeps the app running in the background, so keep reconnecting too.
-        if phoneActive || carPlayActive || phoneLocation.sharing {
+        if phoneActive || carPlayActive || phoneLocation.sharing || navigationActive {
             if monitorTask == nil { monitorTask = Task { await monitor() } }
         } else { monitorTask?.cancel(); monitorTask = nil }
     }
@@ -508,6 +512,14 @@ struct GalaxyRootView: View {
     @ObservedObject var discovery: LANDiscovery
     @ObservedObject var galaxyPage: GalaxyPageDiagnostics
     @State private var hasVisitedGalaxy = false
+    @Environment(\.colorScheme) private var systemColorScheme
+    private var chromeBackground: LinearGradient {
+        let dark = (galaxyColorScheme ?? systemColorScheme) == .dark
+        return LinearGradient(colors: dark
+            ? [Color(red: 0.035, green: 0.035, blue: 0.078), Color(red: 0.13, green: 0.07, blue: 0.22)]
+            : [Color(red: 0.94, green: 0.91, blue: 0.99), Color(red: 0.87, green: 0.81, blue: 0.96)],
+            startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
     private var galaxyColorScheme: ColorScheme? {
         guard model.tab == .galaxy, let dark = galaxyPage.darkAppearance else { return nil }
         return dark ? .dark : .light
@@ -520,7 +532,7 @@ struct GalaxyRootView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            if !editorFocused && model.tab != .connections {
+            if !editorFocused && model.tab != .connections && model.tab != .navigation {
             VStack(spacing: 14) {
                 HStack {
                     if !model.developerMode && model.tab == .connections {
@@ -550,7 +562,7 @@ struct GalaxyRootView: View {
                 }
                 if model.developerMode {
                     HStack(spacing: 4) {
-                        ForEach(CompanionTab.allCases.filter { $0 != .connections }) { tab in
+                        ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { tab in
                             Button { select(tab) } label: {
                                 VStack(spacing: 5) {
                                     Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
@@ -572,7 +584,7 @@ struct GalaxyRootView: View {
                         }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
                     }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 }
-            }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
+            }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12).background(chromeBackground)
             }
             ZStack {
                 if model.opened, let url = server.url {
@@ -591,7 +603,9 @@ struct GalaxyRootView: View {
                         Button("Retry Galaxy") { model.recoverGalaxy(automatic: false) }.buttonStyle(.bordered)
                     }.padding(24)
                 }
-                if model.developerMode && model.tab == .logs {
+                if model.tab == .navigation {
+                    NavigationHome(connection: model.navigationServices.connection, navigation: model.navigationServices.navigation, saved: model.navigationServices.saved) { select(.connections) }
+                } else if model.developerMode && model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
                 } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
                     CompanionView(diagnostics: model.diagnostics)
@@ -599,9 +613,37 @@ struct GalaxyRootView: View {
                     ConnectionSettingsView(model: model, returningFromGalaxy: hasVisitedGalaxy, select: select)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !editorFocused {
+                HStack(spacing: 0) {
+                    ForEach([CompanionTab.galaxy, .navigation, .connections]) { tab in
+                        Button { select(tab) } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: tab.icon).font(.system(size: 20, weight: .semibold))
+                                Text(tab.rawValue).font(.caption.weight(.medium))
+                            }.frame(maxWidth: .infinity).frame(height: 54)
+                                .foregroundStyle(model.tab == tab ? Color(red: 0.79, green: 0.66, blue: 1) : Color.white.opacity(0.65))
+                                .background(model.tab == tab ? Color.white.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                        }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + tab.rawValue)
+                            .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+                    }
+                }.padding(.horizontal, 12).padding(.top, 7)
+                    .background {
+                        ZStack {
+                            LinearGradient(colors: [Color(red: 0.025, green: 0.025, blue: 0.08), Color(red: 0.16, green: 0.08, blue: 0.27), Color(red: 0.06, green: 0.04, blue: 0.15)], startPoint: .leading, endPoint: .trailing)
+                            Canvas { context, size in
+                                for index in 0..<32 {
+                                    let x = CGFloat((index * 73 + 19) % 997) / 997 * size.width
+                                    let y = CGFloat((index * 37 + 11) % 101) / 101 * size.height
+                                    let diameter: CGFloat = index % 7 == 0 ? 1.8 : 1
+                                    context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: diameter, height: diameter)), with: .color(.white.opacity(index % 3 == 0 ? 0.4 : 0.16)))
+                                }
+                            }.allowsHitTesting(false).accessibilityHidden(true)
+                        }.ignoresSafeArea(edges: .bottom)
+                    }
+                    .overlay(alignment: .top) { Rectangle().fill(Color.purple.opacity(0.24)).frame(height: 0.5) }
+            }
         }
-        .background(model.tab == .galaxy && galaxyPage.darkAppearance == true
-            ? Color(red: 0.06, green: 0.05, blue: 0.09) : Color(uiColor: .systemBackground))
+        .background(chromeBackground.ignoresSafeArea())
         .preferredColorScheme(galaxyColorScheme)
         .ignoresSafeArea(.container, edges: editorFocused ? .all : [])
         .statusBarHidden(editorFocused)
@@ -617,6 +659,7 @@ struct GalaxyRootView: View {
         }
         .task(id: scenePhase) {
             model.setPhoneActive(scenePhase == .active)
+            model.navigationServices.setPhoneActive(scenePhase == .active)
             if scenePhase == .active { model.recoverGalaxy(reload: false); await model.checkGalaxyUpdates() }
         }
     }

@@ -11,16 +11,17 @@ struct ConnectionSettingsView: View {
     @ObservedObject var audio: AudioPairing
     let returningFromGalaxy: Bool
     let select: (CompanionTab) -> Void
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @State private var advanced = false
     @State private var confirmForget = false
     @State private var checked = false
     @State private var openAfterReconnect = false
 
-    private let accent = Color(red: 0.68, green: 0.48, blue: 0.96)
-    private let background = Color(red: 0.035, green: 0.035, blue: 0.078)
-    private let panel = Color(red: 0.09, green: 0.065, blue: 0.145)
-    private let muted = Color(red: 0.70, green: 0.65, blue: 0.77)
+    private var accent: Color { colorScheme == .dark ? Color(red: 0.68, green: 0.48, blue: 0.96) : Color(red: 0.45, green: 0.26, blue: 0.73) }
+    private var background: Color { colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.93, green: 0.90, blue: 0.98) }
+    private var panel: Color { colorScheme == .dark ? Color(red: 0.09, green: 0.065, blue: 0.145) : Color(red: 0.88, green: 0.83, blue: 0.95) }
+    private var muted: Color { colorScheme == .dark ? Color(red: 0.70, green: 0.65, blue: 0.77) : Color(red: 0.36, green: 0.29, blue: 0.46) }
     private var connected: Bool { model.transport.connected }
     private var pairing: Bool { model.pairingInProgress }
     private var needsPairing: Bool { model.mode != .lan && model.pairingKey.isEmpty }
@@ -63,7 +64,7 @@ struct ConnectionSettingsView: View {
                 preferences
                 DisclosureGroup(isExpanded: $advanced) { advancedControls.padding(.top, 8) } label: {
                     Text("Advanced connection options").font(.system(size: 13)).frame(minHeight: 30)
-                }.tint(.white).padding(.horizontal, 14).padding(.vertical, 7).background(panel, in: RoundedRectangle(cornerRadius: 16))
+                }.tint(accent).padding(.horizontal, 14).padding(.vertical, 7).background(panel, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(accent.opacity(0.16)))
                 HStack(spacing: 18) {
                     Button(model.loadingLegacyURL ? "Getting link…" : "Legacy Galaxy") {
@@ -80,11 +81,11 @@ struct ConnectionSettingsView: View {
                     .font(.system(size: 11)).foregroundStyle(muted)
             }.padding(.horizontal, 18).padding(.top, 0).padding(.bottom, 12)
                 .frame(maxWidth: 460).frame(maxWidth: .infinity)
-        }.scrollBounceBehavior(.basedOnSize).background(background).foregroundStyle(Color.white)
+        }.scrollBounceBehavior(.basedOnSize).background(LinearGradient(colors: [background, panel.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).foregroundStyle(Color.primary)
             .onChange(of: connected) { _, _ in openReconnectedGalaxy() }
             .onChange(of: model.opened) { _, _ in openReconnectedGalaxy() }
             .onChange(of: model.wantsConnection) { _, value in if !value { openAfterReconnect = false } }
-            .tint(accent).preferredColorScheme(.dark)
+            .tint(accent)
             .confirmationDialog("Forget Bluetooth pairing?", isPresented: $confirmForget, titleVisibility: .visible) {
                 Button("Forget pairing", role: .destructive) {
                     model.disconnect(); bluetooth.forgetSavedDevice(); PairingKeyStore.remove(); model.pairingKey = ""
@@ -120,12 +121,12 @@ struct ConnectionSettingsView: View {
                         Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Wi-Fi")
                             .font(.system(size: 13, weight: .medium))
                             .frame(maxWidth: .infinity, minHeight: 36)
-                            .foregroundStyle(model.mode == mode ? background : Color.white)
+                            .foregroundStyle(model.mode == mode ? Color.white : Color.primary)
                             .background(model.mode == mode ? accent : Color.clear, in: Capsule())
                     }.buttonStyle(.plain)
                         .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
                 }
-            }.padding(3).background(Color.white.opacity(0.07), in: Capsule())
+            }.padding(3).background(accent.opacity(0.07), in: Capsule())
                 .accessibilityLabel("Connection mode").disabled(pairing)
             Text(pairing ? "Keep Pair phone open on comma." : model.mode == .automatic ? "Wi-Fi first, Bluetooth as backup." : model.mode == .bluetooth ? "Local controls over Bluetooth." : "Uses your local Wi-Fi network.")
                 .font(.system(size: 11)).foregroundStyle(muted)
