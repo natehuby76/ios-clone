@@ -517,6 +517,10 @@ struct GalaxyRootView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     private var chromeBackground: LinearGradient {
         let dark = (galaxyColorScheme ?? systemColorScheme) == .dark
+        if model.tab == .galaxy {
+            let edge = dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.94, green: 0.91, blue: 0.99)
+            return LinearGradient(colors: [edge, edge], startPoint: .top, endPoint: .bottom)
+        }
         return LinearGradient(colors: dark
             ? [Color(red: 0.035, green: 0.035, blue: 0.078), Color(red: 0.13, green: 0.07, blue: 0.22)]
             : [Color(red: 0.94, green: 0.91, blue: 0.99), Color(red: 0.87, green: 0.81, blue: 0.96)],
@@ -621,13 +625,7 @@ struct GalaxyRootView: View {
             if !editorFocused && !(model.tab == .navigation && navigation.navigating) {
                 CompanionNavigationBar(tab: model.tab, navigation: model.navigationServices.navigation, select: select)
                     .frame(maxWidth: .infinity)
-                    .overlay(alignment: .bottom) {
-                        if model.tab == .galaxy {
-                            chromeBackground.frame(height: 24)
-                                .mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .bottom))
-                                .offset(y: 24).allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
+
 
             }
         }
