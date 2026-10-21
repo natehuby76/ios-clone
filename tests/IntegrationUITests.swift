@@ -20,9 +20,11 @@ final class IntegrationUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["main-tab-Navigation"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["Your comma"].exists)
-        if app.buttons["expand-app-tabs"].exists { app.buttons["expand-app-tabs"].tap() }
+        if app.buttons["expand-app-tabs"].isHittable { app.buttons["expand-app-tabs"].tap() }
         app.buttons["main-tab-Navigation"].tap()
         XCTAssertTrue(app.buttons["bluetooth-connection-status"].waitForExistence(timeout: 10))
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: app.buttons["bluetooth-connection-status"])], timeout: 10) == .completed)
+        Thread.sleep(forTimeInterval: 0.7) // Capture the settled compact header, not its transition.
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Integrated navigation"; shot.lifetime = .keepAlways; add(shot)
         app.buttons["Navigation options"].tap()
         app.buttons["Reset navigation"].tap()
@@ -33,10 +35,10 @@ final class IntegrationUITests: XCTestCase {
         app.buttons["bluetooth-connection-status"].tap()
         XCTAssertTrue(app.staticTexts["Your comma"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Share phone location"].exists)
-        if app.buttons["expand-app-tabs"].exists { app.buttons["expand-app-tabs"].tap() }
+        if app.buttons["expand-app-tabs"].isHittable { app.buttons["expand-app-tabs"].tap() }
         app.buttons["main-tab-Navigation"].tap()
         XCTAssertTrue(app.buttons["bluetooth-connection-status"].exists)
-        if app.buttons["expand-app-tabs"].exists { app.buttons["expand-app-tabs"].tap() }
+        if app.buttons["expand-app-tabs"].isHittable { app.buttons["expand-app-tabs"].tap() }
         app.buttons["main-tab-Settings"].tap()
         XCTAssertTrue(app.staticTexts["Your comma"].exists)
         let settings = XCTAttachment(screenshot: app.screenshot()); settings.name = "Shared settings"; settings.lifetime = .keepAlways; add(settings)

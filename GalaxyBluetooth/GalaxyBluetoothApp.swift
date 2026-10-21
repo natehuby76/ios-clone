@@ -515,6 +515,7 @@ struct GalaxyRootView: View {
     @ObservedObject var galaxyPage: GalaxyPageDiagnostics
     @ObservedObject private var navigation: NavigationModel
     @State private var hasVisitedGalaxy = false
+    @State private var appTabsExpanded = true
     @Environment(\.colorScheme) private var systemColorScheme
     private var chromeBackground: LinearGradient {
         let dark = (galaxyColorScheme ?? systemColorScheme) == .dark
@@ -569,8 +570,9 @@ struct GalaxyRootView: View {
 
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if !editorFocused && !(model.tab == .navigation && navigation.navigating) {
-                CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode, navigation: model.navigationServices.navigation, select: select)
+            if !editorFocused && model.tab != .navigation {
+                CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode, navigation: model.navigationServices.navigation, expanded: $appTabsExpanded, select: select)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
                     .frame(maxWidth: .infinity)
 
 
@@ -619,6 +621,7 @@ struct GalaxyRootView: View {
     }
     private func select(_ requestedTab: CompanionTab) {
         let tab = requestedTab.isDeveloperPage && !model.developerMode ? (model.opened ? CompanionTab.galaxy : .connections) : requestedTab
+        if tab == .connections { appTabsExpanded = true }
         if tab != .connections { discovery.stop() }
         model.connectionLog.record("UI tab selected: \(model.tab.rawValue) → \(tab.rawValue)")
         model.tab = tab
@@ -630,18 +633,21 @@ struct GalaxyRootView: View {
 
 }
 
-private struct CompanionNavigationBar: View {
+struct CompanionNavigationBar: View {
     let tab: CompanionTab
     let developerMode: Bool
     @ObservedObject var navigation: NavigationModel
+    @Binding var expanded: Bool
+    var compactIconOnly = false
     let select: (CompanionTab) -> Void
-    @State private var expanded = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     private var idleKey: String { "\(tab.rawValue)-\(expanded)-\(navigation.navigating)-\(voiceOver)" }
     var body: some View {
-        Group {
-            if expanded {
+        GeometryReader { geometry in
+            // Keep both content trees alive at their natural sizes. Only the glass
+            // envelope and transforms animate; labels never squeeze and reflow.
+            ZStack(alignment: .leading) {
                 HStack(spacing: 5) {
                     ForEach([CompanionTab.galaxy, .navigation, .connections]) { item in
                         Button { select(item) } label: {
@@ -669,26 +675,36 @@ private struct CompanionNavigationBar: View {
                         }.accessibilityLabel("Developer options")
                     }
                 }.padding(5)
-            } else {
-                Button { expanded = true } label: {
+                    .frame(width: geometry.size.width)
+                    .scaleEffect(x: expanded ? 1 : 0.18, y: expanded ? 1 : 0.65, anchor: .leading)
+                    .opacity(expanded ? 1 : 0)
+                    .allowsHitTesting(expanded).accessibilityHidden(!expanded)
+                Button { setExpanded(true) } label: {
                     HStack(spacing: 8) {
                         Image(systemName: tab.icon).foregroundStyle(StarPilotTheme.accent)
-                        Text(tab.rawValue).font(.system(size: 13, weight: .semibold))
+                        if !compactIconOnly { Text(tab.rawValue).font(.system(size: 13, weight: .semibold)) }
                         Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                    }.padding(.horizontal, 16).frame(height: 44)
+                    }.frame(width: compactWidth, height: 54)
                 }.buttonStyle(.plain).accessibilityLabel("Show app tabs").accessibilityIdentifier("expand-app-tabs")
+                    .opacity(expanded ? 0 : 1)
+                    .scaleEffect(expanded ? 0.8 : 1, anchor: .leading)
+                    .allowsHitTesting(!expanded).accessibilityHidden(expanded)
             }
+            .frame(width: expanded ? geometry.size.width : compactWidth, height: 54, alignment: .leading)
+            .clipped()
+            .modifier(FloatingGalaxyGlass())
         }
-        .modifier(FloatingGalaxyGlass())
-        .frame(maxWidth: expanded ? .infinity : nil)
-        .padding(.horizontal, 14).padding(.top, expanded ? 5 : 0).padding(.bottom, expanded ? 8 : 4)
-        .animation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.86), value: expanded)
-        .onChange(of: tab) { _, newTab in if newTab == .connections { expanded = true } }
+        .frame(height: 54)
+        .onChange(of: tab) { _, newTab in if newTab == .connections { setExpanded(true) } }
         .task(id: idleKey) {
             guard expanded, !voiceOver, tab == .galaxy || tab == .navigation else { return }
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            expanded = false
+            setExpanded(false)
         }
+    }
+    private var compactWidth: CGFloat { compactIconOnly ? 56 : 168 }
+    private func setExpanded(_ value: Bool) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82)) { expanded = value }
     }
 }
 

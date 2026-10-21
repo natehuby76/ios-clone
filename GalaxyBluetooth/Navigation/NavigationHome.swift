@@ -6,6 +6,7 @@ struct NavigationHome: View {
     @ObservedObject var navigation: NavigationModel
     @ObservedObject var saved: SavedPlacesStore
     @ObservedObject private var bluetooth: BluetoothTransport
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     var openSettings: () -> Void
     var selectAppTab: (CompanionTab) -> Void
@@ -13,6 +14,7 @@ struct NavigationHome: View {
     @State private var showLibrary = false
     @State private var navigationPanelHeight: CGFloat = 0
     @State private var expanded = false
+    @State private var appTabsExpanded = true
     init(connection: CommaConnection, navigation: NavigationModel, saved: SavedPlacesStore, selectAppTab: @escaping (CompanionTab) -> Void, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
         self.selectAppTab = selectAppTab
@@ -132,11 +134,22 @@ struct NavigationHome: View {
     private var mapHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !navigation.navigating {
-                HStack {
-                    connectionStatus
-                    Spacer(minLength: 4)
-                    navigationOptions
-                }
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        CompanionNavigationBar(tab: .navigation, developerMode: connection.app.developerMode,
+                            navigation: navigation, expanded: $appTabsExpanded, compactIconOnly: true, select: selectAppTab)
+                        HStack(spacing: 8) {
+                            connectionStatus
+                            Spacer(minLength: 0)
+                            navigationOptions
+                        }
+                        .padding(.leading, 64)
+                        .opacity(appTabsExpanded ? 0 : 1)
+                        .offset(x: appTabsExpanded ? 20 : 0)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18).delay(appTabsExpanded ? 0 : 0.24), value: appTabsExpanded)
+                        .allowsHitTesting(!appTabsExpanded).accessibilityHidden(appTabsExpanded)
+                    }.frame(width: geometry.size.width, height: 54)
+                }.frame(height: 54)
             }
             HStack(alignment: .top, spacing: 12) {
                 if navigation.navigating {
