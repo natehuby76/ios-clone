@@ -3,6 +3,15 @@ import Foundation
 /// Adapter for the navigation API already installed on the newer StarPilot fork.
 /// It never changes configuration or GPS-source settings and never retries a write.
 enum NativeNavigationAPI {
+    // Native status provides a 3-second upper bound, not a sample timestamp.
+    // Allow a bounded Bluetooth delivery/poll interval for guidance only. GPS keeps
+    // its independent <=2.5-second expiry and is never extended by this policy.
+    static let guidanceDisplayMaxAge: TimeInterval = 12
+    static func guidanceRemaining(ageUpperBound: Double?, elapsed: Double) -> Double {
+        guard let ageUpperBound, ageUpperBound.isFinite, ageUpperBound >= 0,
+              elapsed.isFinite, elapsed >= 0 else { return 0 }
+        return max(0, guidanceDisplayMaxAge - ageUpperBound - elapsed)
+    }
     struct State: Decodable {
         let revision: String
         let enabled: Bool

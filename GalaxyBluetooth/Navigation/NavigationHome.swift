@@ -365,7 +365,7 @@ struct NavigationHome: View {
                 tripMetric(navigation.usingComma && !navigation.commaFeedReady ? "—" : minutes(navigation.remainingTime), label: "remaining")
                 tripMetric(navigation.usingComma && !navigation.commaFeedReady ? "—" : distance(navigation.remainingDistance), label: navigation.usingComma ? "distance" : "estimated")
                 Spacer(minLength: 0)
-                Button("End") { Task { await navigation.end(connection: connection) } }
+                Button(navigation.endingRoute ? "Ending…" : "End") { Task { await navigation.end(connection: connection) } }
                     .font(.headline).foregroundStyle(.white).padding(.horizontal, 18).padding(.vertical, 13)
                     .background(.red, in: Capsule()).disabled(navigation.busy)
             }

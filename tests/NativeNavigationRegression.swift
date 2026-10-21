@@ -31,6 +31,13 @@ import Foundation
 @main struct NativeNavigationRegression {
     static func tryPath(_ version: String?) -> String { try! NativeNavigationAPI.statusPath(version: version) }
     @MainActor static func main() async throws {
+        // Reproduce build 45: a 3s server upper bound plus 5.449s BLE transfer
+        // must leave time for another compact poll, without making old GPS live.
+        precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: 3, elapsed: 5.449) > 3)
+        precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: 3, elapsed: 0.795) > 8)
+        precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: 3, elapsed: 9) == 0)
+        precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: nil, elapsed: 0) == 0)
+        precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: 3, elapsed: .infinity) == 0)
         let comma = NativeComma()
         let destination = try NavigationDestination(name: "Test", latitude: 40, longitude: -110)
         let read = try await NativeNavigationAPI.command(.read, transport: comma, stillCurrent: { true })

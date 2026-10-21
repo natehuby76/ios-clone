@@ -31,6 +31,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     @Published var commaManeuverType = ""
     @Published var commaManeuverModifier = ""
     @Published var navigating = false
+    @Published var endingRoute = false
     @Published var busy = false
     @Published var searching = false
     @Published var error = "" { didSet { if oldValue != error { onEvent?(error.isEmpty ? "UI error cleared" : "UI error banner shown (see preceding action)") } } }
@@ -65,6 +66,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     private let followCameraDistance: CLLocationDistance = 2800
     private var commaBearing: Double = 0
     private var lastCommaSample = Date.distantPast
+    private var guidanceMaxAge: TimeInterval = 4
     private var cachedCommaPolyline: MKPolyline?
     private var commaRouteVersion: String?
     private var commaIdentity: String?
@@ -301,8 +303,9 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         onEvent?("End tapped; phone only: \(phoneOnly); busy: \(busy)")
         guard !busy else { onEvent?("End blocked: busy"); return }
         let generation = commandGeneration
+        endingRoute = true
         busy = true; commandRunning = true; connection.busy = true
-        defer { if generation == commandGeneration { busy = false; commandRunning = false; connection.busy = false } }
+        defer { if generation == commandGeneration { endingRoute = false; busy = false; commandRunning = false; connection.busy = false } }
         if !phoneOnly, let expected = commaDestination {
             guard commaIdentity == connection.deviceIdentity else { error = "A different comma is paired. Use End on phone only."; return }
             do {
@@ -327,7 +330,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
             }
         }
         directions?.cancel(); revision = UUID(); recalculating = false
-        usingComma = false; commaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
+        usingComma = false; commaPolyline = nil; cachedCommaPolyline = nil; commaPosition = nil; commaRouteVersion = nil; commaFeedReady = false
         navigating = false; routes = []; destination = nil; commaDestination = nil; commaIdentity = nil
         onEvent?("Navigation ended; phone only: \(phoneOnly)")
         error = ""; instruction = ""; notice = phoneOnly ? "Phone route ended. Comma was left unchanged." : "Route ended."
@@ -336,21 +339,26 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
 
     func monitorComma(connection: CommaConnection) async {
         while !Task.isCancelled, foreground, navigating, usingComma {
+            if commandRunning {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                continue
+            }
             do {
                 let revision = self.revision
                 let requestedAt = Date()
                 let snapshot = try await connection.navigationSnapshot(version: commaRouteVersion)
                 onEvent?("Guidance response; elapsed: \(String(format: "%.3f", Date().timeIntervalSince(requestedAt)))s; state: \(snapshot.status); instruction: \(snapshot.instruction != nil); route points: \(snapshot.routePoints?.count ?? 0); cached route: \(cachedCommaPolyline != nil); version matches: \(commaRouteVersion == snapshot.routeVersion)")
                 guard !Task.isCancelled, navigating, usingComma, self.revision == revision else { onEvent?("Guidance response ignored: navigation changed or cancelled"); return }
+                guard !commandRunning else { onEvent?("Guidance ignored: route command in progress"); continue }
                 guard commaIdentity == connection.deviceIdentity else {
-                    clearCommaDisplay("Paired comma changed. Check the connection.")
+                    clearCommaDisplay("Paired comma changed. Check the connection.", discardRoute: true)
                     try await Task.sleep(for: .seconds(2))
                     continue
                 }
                 guard let expected = commaDestination, let current = snapshot.destination,
                       abs(current.latitude - expected.latitude) < 0.000001,
                       abs(current.longitude - expected.longitude) < 0.000001 else {
-                    clearCommaDisplay(snapshot.status == "inactive" ? "Comma navigation has ended." : "Comma’s destination changed. Check its screen.")
+                    clearCommaDisplay(snapshot.status == "inactive" ? "Comma navigation has ended." : "Comma’s destination changed. Check its screen.", discardRoute: true)
                     try await Task.sleep(for: .seconds(2))
                     continue
                 }
@@ -377,19 +385,24 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                     commaRouteVersion = snapshot.routeVersion
                 }
                 guard cachedCommaPolyline != nil, commaRouteVersion == snapshot.routeVersion else {
-                    clearCommaDisplay("Waiting for comma’s updated route…")
+                    clearCommaDisplay("Waiting for comma’s updated route…", discardRoute: true)
                     do { try await Task.sleep(for: .seconds(2)) } catch { return }
                     continue
                 }
-                guard let age = snapshot.ageSeconds, age + Date().timeIntervalSince(requestedAt) <= 4 else {
-                    onEvent?("Guidance rejected: stale; server age: \(snapshot.ageSeconds ?? -1)s; request elapsed: \(String(format: "%.3f", Date().timeIntervalSince(requestedAt)))s; limit: 4s")
+                guidanceMaxAge = connection.nativeNavigation ? NativeNavigationAPI.guidanceDisplayMaxAge : 4
+                let elapsed = Date().timeIntervalSince(requestedAt)
+                let remaining = connection.nativeNavigation
+                    ? NativeNavigationAPI.guidanceRemaining(ageUpperBound: snapshot.ageSeconds, elapsed: elapsed)
+                    : max(0, guidanceMaxAge - (snapshot.ageSeconds ?? guidanceMaxAge) - elapsed)
+                guard let age = snapshot.ageSeconds, remaining > 0 else {
+                    onEvent?("Guidance rejected: stale; server age: \(snapshot.ageSeconds ?? -1)s; request elapsed: \(String(format: "%.3f", Date().timeIntervalSince(requestedAt)))s; limit: \(guidanceMaxAge)s")
                     commaFeedReady = false; commaPolyline = nil; commaPosition = nil
                     commaFeedMessage = "Waiting for fresh navigation from comma…"
                     instruction = "Navigation unavailable"; distanceToTurn = 0; remainingDistance = 0; remainingTime = 0
                     do { try await Task.sleep(for: .seconds(2)) } catch { return }
                     continue
                 }
-                onEvent?("Guidance accepted; remaining freshness: \(String(format: "%.3f", 4 - age - Date().timeIntervalSince(requestedAt)))s")
+                onEvent?("Guidance accepted; remaining freshness: \(String(format: "%.3f", guidanceMaxAge - age - Date().timeIntervalSince(requestedAt)))s")
                 commaPolyline = cachedCommaPolyline
                 lastCommaSample = requestedAt.addingTimeInterval(-age)
                 instruction = [instructions.primary, instructions.secondary].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -413,16 +426,20 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     private var commaPositionExpires: Date?
     func checkCommaFreshness() {
         if let expires = commaPositionExpires, Date() >= expires { commaPosition = nil }
-        if usingComma, commaFeedReady, Date().timeIntervalSince(lastCommaSample) > 4 {
+        if usingComma, commaFeedReady, Date().timeIntervalSince(lastCommaSample) >= guidanceMaxAge {
             clearCommaDisplay("Comma navigation is stale. Reconnecting…")
         }
     }
-    private func clearCommaDisplay(_ message: String) {
-        onEvent?("Guidance cleared; was ready: \(commaFeedReady); cached route: \(cachedCommaPolyline != nil); last sample age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample))s")
-        commaFeedReady = false; commaPolyline = nil; commaPosition = nil; commaRouteVersion = nil
-        cachedCommaPolyline = nil
+    private func clearCommaDisplay(_ message: String, discardRoute: Bool = false) {
+        onEvent?("Guidance cleared; discard route: \(discardRoute); was ready: \(commaFeedReady); cached route: \(cachedCommaPolyline != nil); last sample age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample))s")
+        commaFeedReady = false; commaPolyline = nil; commaPosition = nil
+        if discardRoute { commaRouteVersion = nil; cachedCommaPolyline = nil }
         commaFeedMessage = message
         instruction = "Navigation unavailable"; distanceToTurn = 0; remainingDistance = 0; remainingTime = 0
+    }
+
+    var diagnosticSummary: String {
+        "Navigating: \(navigating); comma: \(usingComma); busy: \(busy); foreground: \(foreground)\nGuidance ready: \(commaFeedReady); sample upper-bound age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample)); max age: \(guidanceMaxAge)s\nRoute cached: \(cachedCommaPolyline != nil); displayed: \(commaPolyline != nil); position displayed: \(commaPosition != nil); destination selected: \(destination != nil)\nUI error present: \(!error.isEmpty); follows location: \(followsUser)"
     }
 
     func followLocation() {
@@ -459,7 +476,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         commandGeneration = UUID(); revision = UUID(); searchRevision = UUID()
         directions?.cancel(); directions = nil
         searchRequest?.cancel(); searchRequest = nil
-        commandRunning = false; busy = false; searching = false; recalculating = false
+        commandRunning = false; endingRoute = false; busy = false; searching = false; recalculating = false
         navigating = false; usingComma = false
         results = []; routes = []; destination = nil; selectedRoute = 0
         commaDestination = nil; commaIdentity = nil; cachedCommaPolyline = nil

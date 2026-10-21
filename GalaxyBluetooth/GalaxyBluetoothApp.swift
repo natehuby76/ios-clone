@@ -53,6 +53,7 @@ final class AppModel: ObservableObject {
     lazy var audioPairing = AudioPairing(transport: { [weak self] in self?.transport })
     lazy var phoneLocation: PhoneLocation = {
         let value = PhoneLocation(transport: { [weak self] in self?.transport })
+        value.onEvent = { [weak self] in self?.connectionLog.record("GPS: " + $0) }
         value.onSharingChanged = { [weak self] _ in self?.updateMonitoring() }
         return value
     }()
@@ -99,7 +100,7 @@ final class AppModel: ObservableObject {
     private var phoneActive = false
     private var carPlayActive = false
     private var monitorTask: Task<Void, Never>?
-    func setPhoneActive(_ active: Bool) { phoneActive = active; if !active { automaticLAN?.cancel() }; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
+    func setPhoneActive(_ active: Bool) { connectionLog.record("Lifecycle: phone active=\(active); tab=\(tab.rawValue); navigation=\(navigationActive)"); phoneActive = active; if !active { automaticLAN?.cancel() }; diagnostics.phoneActive = active; if !active { discovery.stop() }; updateMonitoring() }
     func setCarPlayActive(_ active: Bool) { carPlayActive = active; diagnostics.carPlayActive = active; updateMonitoring() }
     private func updateMonitoring() {
         // Sharing phone GPS keeps the app running in the background, so keep reconnecting too.
@@ -673,6 +674,7 @@ struct GalaxyRootView: View {
     private func select(_ requestedTab: CompanionTab) {
         let tab = requestedTab.isDeveloperPage && !model.developerMode ? (model.opened ? CompanionTab.galaxy : .connections) : requestedTab
         if tab != .connections { discovery.stop() }
+        model.connectionLog.record("UI tab selected: \(model.tab.rawValue) → \(tab.rawValue)")
         model.tab = tab
         if tab == .galaxy { hasVisitedGalaxy = true; model.applyMatchedGalaxy() }
         model.diagnostics.live = tab == .live
@@ -752,13 +754,20 @@ final class ConnectionEventLog: ObservableObject {
     @Published var detail = ""
     @Published var copied = false
     private var lastEvent = ""
+    private let started = Date()
+    private var dropped = 0
+    private let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
     func record(_ event: String) {
         guard event != lastEvent else { return }
         lastEvent = event
-        events.append("\(ISO8601DateFormatter().string(from: Date())) \(event.prefix(300))")
-        if events.count > 100 { events.removeFirst(events.count - 100) }
+        events.append("\(formatter.string(from: Date())) \(event.prefix(1000))")
+        if events.count > 3000 { dropped += events.count - 3000; events.removeFirst(events.count - 3000) }
     }
-    func clear() { events.removeAll(); lastEvent = ""; detail = ""; copied = false }
+    func clear() { dropped = 0; events.removeAll(); lastEvent = ""; detail = ""; copied = false }
     func report(model: AppModel) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         return """
@@ -770,6 +779,10 @@ final class ConnectionEventLog: ObservableObject {
         Selected route: \(model.transport.label)
         LAN verified: \(model.lan.connected)
         Bluetooth verified: \(model.bluetooth.connected)
+        Log session started: \(formatter.string(from: started)); retained: \(events.count); older events dropped: \(dropped)
+        Current screen: \(model.tab.rawValue)
+        GPS sharing: \(model.phoneLocation.sharing); \(model.phoneLocation.diagnosticSummary)
+        \(model.navigationServices.navigation.diagnosticSummary)
         Recent connection events:
         \(events.joined(separator: "\n"))
         """

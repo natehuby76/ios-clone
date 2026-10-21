@@ -19,6 +19,7 @@ final class LoopbackServer: ObservableObject {
     }
     static func reportPath(_ target: String) -> String {
         let path = String(target.prefix(512)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
+        if ["/_bridge/health", "/data/runtime.json", "/api/navigation/status", "/api/navigation/action", "/api/companion/location", "/api/device/state"].contains(path) { return path }
         if ["/assets/", "/js/", "/css/", "/vendor/"].contains(where: { path.hasPrefix($0) }) { return String(path.prefix(200)) }
         if path.hasPrefix("/api/") { return "/api/" + (path.split(separator: "/").dropFirst().first.map(String.init) ?? "") + "/…" }
         return path == "/" ? "/" : "[other path]"

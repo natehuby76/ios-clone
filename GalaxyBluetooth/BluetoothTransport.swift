@@ -189,7 +189,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         else if lower.hasPrefix("bluetooth operation failed:") { reason = message }
         else { reason = "Bluetooth connection failed" }
         if let active {
-            onEvent?("\(reason): \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), sent=\(writeIndex)/\(outgoing.count), received packets=\(notificationCount), awaiting ack=\(awaitingAck)")
+            onEvent?("\(reason): [\(active.id.prefix(8))] \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), sent=\(writeIndex)/\(outgoing.count), received packets=\(notificationCount), awaiting ack=\(awaitingAck)")
         }
         disconnect(reason: reason)
         onEvent?(reason)
@@ -207,13 +207,16 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 guard rx != nil, tx != nil, !session.isEmpty else {
+                    onEvent?("Bluetooth request rejected: [\(id.prefix(8))] no ready session; \(method) \(LoopbackServer.reportPath(path))")
                     continuation.resume(throwing: BridgeError.message("Connect to your comma over Bluetooth first."))
                     return
                 }
                 guard queue.count < 32, body.count <= Wire.maxBody else {
+                    onEvent?("Bluetooth request rejected: [\(id.prefix(8))] queue=\(queue.count); body bytes=\(body.count)")
                     continuation.resume(throwing: BridgeError.message("Bluetooth queue is full or upload exceeds 1 MiB."))
                     return
                 }
+                onEvent?("Bluetooth request queued: [\(id.prefix(8))] \(method) \(LoopbackServer.reportPath(path)); waiting=\(queue.count); active=\(active != nil); upload bytes=\(body.count)")
                 queue.append(Pending(id: id, path: path, method: method, headers: headers, body: body, phone: phone, completion: continuation))
                 pump()
             }
@@ -223,6 +226,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     private func cancel(_ id: String) {
+        onEvent?("Bluetooth cancellation: [\(id.prefix(8))]; active=\(active?.id == id); queued=\(queue.contains { $0.id == id })")
         if let index = queue.firstIndex(where: { $0.id == id }) {
             queue.remove(at: index).completion.resume(throwing: CancellationError())
         } else if active?.id == id {
@@ -286,7 +290,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         notificationCount = 0
         notificationBuffer = []
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"
-        onEvent?("Bluetooth request started: \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), waited=\(String(format: "%.2f", requestStarted - active.enqueuedAt))s, response=\(activeNotifications ? "notifications" : activeReadStream ? "read stream" : "encrypted reads")")
+        onEvent?("Bluetooth request started: [\(active.id.prefix(8))] \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), waited=\(String(format: "%.2f", requestStarted - active.enqueuedAt))s, response=\(activeNotifications ? "notifications" : activeReadStream ? "read stream" : "encrypted reads")")
         do {
             notificationTag = try Wire.streamTag(session: session, counter: counter)
             let request = BridgeRequest(id: active.id, session: session, counter: counter, path: active.path,
@@ -329,7 +333,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             case .failure: outcome = "failed"
             }
             let elapsed = max(0.001, ProcessInfo.processInfo.systemUptime - requestStarted)
-            onEvent?("Bluetooth request finished: \(LoopbackServer.reportPath(previous.path)), \(outcome), packets=\(receivedPackets), wire=\(receivedWireBytes) bytes, rate=\(String(format: "%.1f", Double(receivedWireBytes) / elapsed / 1024)) KiB/s, transfer=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - requestStarted))s")
+            onEvent?("Bluetooth request finished: [\(previous.id.prefix(8))] \(previous.method) \(LoopbackServer.reportPath(previous.path)), \(outcome), packets=\(receivedPackets), wire=\(receivedWireBytes) bytes, rate=\(String(format: "%.1f", Double(receivedWireBytes) / elapsed / 1024)) KiB/s, transfer=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - requestStarted))s")
         }
         active = nil
         outgoing = []
