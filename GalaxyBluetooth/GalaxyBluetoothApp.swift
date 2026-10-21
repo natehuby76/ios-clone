@@ -532,7 +532,7 @@ struct GalaxyRootView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            if !editorFocused && model.tab != .connections && model.tab != .navigation {
+            if !editorFocused && model.developerMode && model.tab != .connections && model.tab != .navigation {
             VStack(spacing: 14) {
                 HStack {
                     if !model.developerMode && model.tab == .connections {
@@ -613,34 +613,32 @@ struct GalaxyRootView: View {
                     ConnectionSettingsView(model: model, returningFromGalaxy: hasVisitedGalaxy, select: select)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             if !editorFocused {
-                HStack(spacing: 0) {
+                HStack(spacing: 5) {
                     ForEach([CompanionTab.galaxy, .navigation, .connections]) { tab in
                         Button { select(tab) } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: tab.icon).font(.system(size: 20, weight: .semibold))
-                                Text(tab.rawValue).font(.caption.weight(.medium))
-                            }.frame(maxWidth: .infinity).frame(height: 54)
-                                .foregroundStyle(model.tab == tab ? Color(red: 0.79, green: 0.66, blue: 1) : Color.white.opacity(0.65))
-                                .background(model.tab == tab ? Color.white.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                            HStack(spacing: 6) {
+                                Image(systemName: tab.icon).font(.system(size: 15, weight: .semibold))
+                                Text(tab.rawValue).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                            }
+                            .frame(maxWidth: .infinity).frame(height: 44)
+                            .foregroundStyle(model.tab == tab ? Color.white : Color.primary.opacity(0.7))
+                            .background {
+                                if model.tab == tab {
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(LinearGradient(colors: [Color(red: 0.61, green: 0.39, blue: 0.91), Color(red: 0.40, green: 0.22, blue: 0.69)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                }
+                            }
                         }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + tab.rawValue)
                             .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
                     }
-                }.padding(.horizontal, 12).padding(.top, 7)
-                    .background {
-                        ZStack {
-                            LinearGradient(colors: [Color(red: 0.025, green: 0.025, blue: 0.08), Color(red: 0.16, green: 0.08, blue: 0.27), Color(red: 0.06, green: 0.04, blue: 0.15)], startPoint: .leading, endPoint: .trailing)
-                            Canvas { context, size in
-                                for index in 0..<32 {
-                                    let x = CGFloat((index * 73 + 19) % 997) / 997 * size.width
-                                    let y = CGFloat((index * 37 + 11) % 101) / 101 * size.height
-                                    let diameter: CGFloat = index % 7 == 0 ? 1.8 : 1
-                                    context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: diameter, height: diameter)), with: .color(.white.opacity(index % 3 == 0 ? 0.4 : 0.16)))
-                                }
-                            }.allowsHitTesting(false).accessibilityHidden(true)
-                        }.ignoresSafeArea(edges: .bottom)
-                    }
-                    .overlay(alignment: .top) { Rectangle().fill(Color.purple.opacity(0.24)).frame(height: 0.5) }
+                }
+                .padding(5)
+                .modifier(FloatingGalaxyGlass())
+                .padding(.horizontal, 14).padding(.top, 5).padding(.bottom, 8)
             }
         }
         .background(chromeBackground.ignoresSafeArea())
@@ -673,6 +671,18 @@ struct GalaxyRootView: View {
     private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
 
 
+}
+
+private struct FloatingGalaxyGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.tint(Color.purple.opacity(0.12)), in: .rect(cornerRadius: 24))
+        } else {
+            content
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+                .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(Color.purple.opacity(0.18), lineWidth: 0.5))
+        }
+    }
 }
 
 @MainActor

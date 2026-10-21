@@ -2,7 +2,7 @@
 
 This branch adds native iPhone navigation to the existing StarPilot BT app. Galaxy, Navigation and Settings share AppModel's Bluetooth/automatic-LAN connection, pairing and opt-in phone GPS uploader. No comma update is required. No comma files, driving code, bridge protocol, credentials, signing identity, official artwork or privacy manifest were changed. Existing CarPlay behavior is unchanged; native navigation is iPhone-only in this build.
 
-The bottom tabs use a purple star-field gradient. Settings follows light/dark appearance with lavender surfaces in light mode. Navigation retains Apple map appearance, route previews, favorites, recents, alternative routes, phone-only navigation and optional destination handoff. One-tap End, a reset action and diagnostic report copying are available in Navigation. Galaxy web polling pauses while another tab is active. Navigation results are invalidated on reset without tearing down the shared Bluetooth transport.
+The top tabs float in purple-tinted Liquid Glass with a violet gradient selection and a material fallback on older iOS. There is no bottom app tab bar. Settings follows light/dark appearance with lavender surfaces in light mode. Navigation retains Apple map appearance, route previews, favorites, recents, alternative routes, phone-only navigation and optional destination handoff. One-tap End, a reset action and diagnostic report copying are available in Navigation. Galaxy web polling pauses while another tab is active. Navigation results are invalidated on reset without tearing down the shared Bluetooth transport.
 
 Use Navigation inside this BT app during testing; do not keep the separate StarPilotNav app connected at the same time. This does not change the bridge's behavior for two separate apps.
 
