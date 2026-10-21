@@ -19,6 +19,7 @@ import Foundation
 enum ConnectionMode { case automatic, bluetooth, lan }
 @MainActor final class Bluetooth {
     var connected = false, connecting = false, isScanning = false
+    var reconnectDelay: TimeInterval { 3 }
     var attempts = 0
     func reconnectSaved(pairingKey: String) { attempts += 1 }
 }

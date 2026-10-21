@@ -11,6 +11,15 @@ import Foundation
 
 @main struct LoopbackRecoveryRegression {
     @MainActor static func main() async throws {
+        let snapshot = try String(contentsOfFile: "GalaxyBluetooth/Resources/Web/js/snapshot-feed.js", encoding: .utf8)
+        let adapted = LoopbackServer.nativeReadDeadlines(snapshot, asset: "js/snapshot-feed.js")
+        precondition(adapted.contains("? 20000 : 4000"), "Bluetooth snapshots must allow queue time")
+        precondition(adapted.contains("Math.max(15000, this.constructor.interval)"))
+        precondition(adapted.contains("this.constructor.subject !== 'device state'"), "Drive-state freshness must stay unchanged")
+        precondition(LoopbackServer.nativeReadDeadlines(snapshot, asset: "unrelated.js") == snapshot)
+        let settings = try String(contentsOfFile: "GalaxyBluetooth/Resources/Web/js/settings.js", encoding: .utf8)
+        let adaptedSettings = LoopbackServer.nativeReadDeadlines(settings, asset: "js/settings.js")
+        precondition(adaptedSettings.contains("&& !saving ? 20000 : 4000"), "Saving must retain its deadline")
         let transport = OfflineTransport()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

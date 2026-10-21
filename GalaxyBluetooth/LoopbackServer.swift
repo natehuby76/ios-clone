@@ -238,6 +238,24 @@ final class LoopbackServer: ObservableObject {
     }
     """#
 
+    // Adapt known read deadlines when serving verified files; never alter the saved bundle.
+    static func nativeReadDeadlines(_ source: String, asset: String) -> String {
+        let timeout: String
+        switch asset {
+        case "js/snapshot-feed.js" where source.contains("export class SnapshotFeed"):
+            timeout = "globalThis.__galaxyBluetooth && this.constructor.subject !== 'device state' ? 20000 : 4000"
+        case "js/settings.js" where source.contains("async run(operation,"):
+            timeout = "globalThis.__galaxyBluetooth && !saving ? 20000 : 4000"
+        default: return source
+        }
+        var adapted = source.replacingOccurrences(of: "    }, 4000)", with: "    }, \(timeout))")
+        if asset == "js/snapshot-feed.js" {
+            adapted = adapted.replacingOccurrences(of: "interval: this.constructor.interval,", with:
+                "interval: globalThis.__galaxyBluetooth && this.constructor.subject !== 'device state' ? Math.max(15000, this.constructor.interval) : this.constructor.interval,")
+        }
+        return adapted
+    }
+
     private func respond(_ request: LocalRequest) async -> LocalResponse {
         guard let base = url, let port = base.port, request.headers["host"] == "127.0.0.1:\(port)" else {
             return .error(403, "Invalid local host.")
@@ -271,6 +289,9 @@ final class LoopbackServer: ObservableObject {
         let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
         guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), var data = try? Data(contentsOf: file) else {
             return .error(404, "Bundled Galaxy asset was not found.")
+        }
+        if ["js/snapshot-feed.js", "js/settings.js"].contains(assetPath), let source = String(data: data, encoding: .utf8) {
+            data = Data(Self.nativeReadDeadlines(source, asset: assetPath).utf8)
         }
         if assetPath == "js/toggle-search.js", let source = String(data: data, encoding: .utf8),
            source.contains("export class SettingsSearchIndex"), source.contains("export const ToggleSearch") {

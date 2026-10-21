@@ -470,7 +470,7 @@ final class AppModel: ObservableObject {
         while !Task.isCancelled {
             if wantsConnection && !pairingInProgress {
                 if mode != .lan, !bluetooth.connected, !bluetooth.connecting, !bluetooth.isScanning,
-                   !pairingKey.isEmpty, Date().timeIntervalSince(lastReconnect) >= 25 {
+                   !pairingKey.isEmpty, Date().timeIntervalSince(lastReconnect) >= bluetooth.reconnectDelay {
                     lastReconnect = Date()
                     bluetooth.reconnectSaved(pairingKey: pairingKey)
                 }
@@ -577,7 +577,8 @@ struct GalaxyRootView: View {
             ZStack {
                 if model.opened, let url = server.url {
                     GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
-                                  isActive: model.tab == .galaxy && scenePhase == .active) {
+                                  isActive: model.tab == .galaxy && scenePhase == .active,
+                                  bluetooth: model.transport.label == "Bluetooth") {
                         model.galaxyPage.report(server: server, connection: model.transport.label)
                     }
                         .opacity(model.tab == .galaxy ? 1 : 0)

@@ -83,10 +83,11 @@ struct GalaxyWebView: View {
     let requestKey: String
     @ObservedObject var diagnostics: GalaxyPageDiagnostics
     var isActive = true
+    var bluetooth = false
     let report: () -> String
     var body: some View {
         ZStack {
-            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive)
+            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive, bluetooth: bluetooth)
                 .id(url.absoluteString + diagnostics.reloadID.uuidString)
             if diagnostics.stalled {
                 VStack(spacing: 16) {
@@ -133,6 +134,7 @@ private struct GalaxyPage: UIViewRepresentable {
 
     let diagnostics: GalaxyPageDiagnostics
     let isActive: Bool
+    let bluetooth: Bool
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(origin: url, diagnostics: diagnostics)
         coordinator.isVisible = isActive
@@ -149,6 +151,7 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          window.__galaxyBluetooth = \(bluetooth ? "true" : "false");
           const phoneAppearance = window.matchMedia('(prefers-color-scheme: dark)');
           const syncTheme = () => {
             const theme = phoneAppearance.matches ? 'dark' : 'light';
@@ -303,6 +306,7 @@ private struct GalaxyPage: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.evaluateJavaScript("window.__galaxyBluetooth = \(bluetooth ? "true" : "false")", completionHandler: nil)
         context.coordinator.isVisible = isActive
         context.coordinator.syncVisibility(uiView)
     }

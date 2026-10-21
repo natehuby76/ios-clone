@@ -29,6 +29,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
     }
 
+    private var failedConnections = 0
+    var reconnectDelay: TimeInterval { min(25, 3 * pow(2, Double(min(failedConnections, 3)))) }
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var peripheral: CBPeripheral?
@@ -170,6 +172,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     private func failConnection(_ message: String) {
+        failedConnections = min(failedConnections + 1, 4)
         if Self.shouldPauseFastReads(method: active?.method, notifications: activeNotifications,
                                      cancelled: message.lowercased().contains("cancelled")) {
             fastReadFallback = true
@@ -183,6 +186,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         else if lower.contains("timed out") { reason = "Bluetooth connection timed out" }
         else if lower.contains("pairing") { reason = "Bluetooth pairing or authentication failed" }
         else if lower.contains("encrypt") || lower.contains("verify bluetooth") { reason = "Bluetooth encrypted response failed" }
+        else if lower.hasPrefix("bluetooth operation failed:") { reason = message }
         else { reason = "Bluetooth connection failed" }
         if let active {
             onEvent?("\(reason): \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), sent=\(writeIndex)/\(outgoing.count), received packets=\(notificationCount), awaiting ack=\(awaitingAck)")
@@ -250,6 +254,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     static func nextRequestIndex(methods: [String], paths: [String], priorityStreak: Int) -> Int {
         guard methods.count == paths.count, !methods.isEmpty, methods[0] == "GET", priorityStreak < 3 else { return 0 }
+        // Keep the short-lived state badge from waiting behind large page snapshots.
+        for index in methods.indices {
+            if methods[index] != "GET" { break }
+            if URLComponents(string: paths[index])?.path == "/api/device/state" { return index }
+        }
         // A queued write is a barrier: never move a read from after it to before it.
         for index in methods.indices {
             if methods[index] != "GET" { break }
@@ -263,7 +272,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         let index = Self.nextRequestIndex(methods: queue.map(\.method), paths: queue.map(\.path), priorityStreak: priorityStreak)
         active = queue.remove(at: index)
         guard let active else { return }
-        priorityStreak = active.method == "GET" && !Self.backgroundRead(active.path) ? min(3, priorityStreak + 1) : 0
+        priorityStreak = index > 0 ? min(3, priorityStreak + 1) : 0
         requestStarted = ProcessInfo.processInfo.systemUptime
         receivedPackets = 0
         receivedWireBytes = 0
@@ -405,7 +414,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral, characteristic.uuid == CBUUID(string: Wire.rx), active != nil else { return }
-        if let error { failConnection(error.localizedDescription); return }
+        if let error { failConnection("Bluetooth operation failed: \(LANTransport.failureCode(error))"); return }
         if awaitingAck {
             if activeNotifications { onEvent?("Bluetooth notification window acknowledged: packets=\(notificationCount), complete=\(completedResponse != nil)") }
             awaitingAck = false
@@ -425,7 +434,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral else { return }
-        if let error { failConnection(error.localizedDescription); return }
+        if let error { failConnection("Bluetooth operation failed: \(LANTransport.failureCode(error))"); return }
         guard let data = characteristic.value else { failConnection("Empty Bluetooth response."); return }
         if characteristic.uuid == CBUUID(string: Wire.notify) {
             receiveNotification(data)
@@ -498,6 +507,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         try PairingKeyStore.save(keyText)
         connectionTimeout?.cancel()
         if let peripheral { UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: "galaxy.bluetooth.device") }
+        failedConnections = 0
         connected = true
         connecting = false
         status = supportsNotifications ? "Connected with fast Bluetooth transfers" : "Connected over Bluetooth"
