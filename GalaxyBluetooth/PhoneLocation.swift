@@ -10,6 +10,12 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
 
     @Published private(set) var sharing = UserDefaults.standard.bool(forKey: "galaxy.phoneGps")
     @Published private(set) var status = ""
+    var onEvent: ((String) -> Void)?
+    private var offered = 0
+    private var skipped = 0
+    private var accepted = 0
+    private var failed = 0
+    var diagnosticSummary: String { "offered=\(offered); skipped=\(skipped); accepted=\(accepted); failed=\(failed); in flight=\(sending); permission=\(manager?.authorizationStatus.rawValue ?? -1)" }
     var onSharingChanged: ((Bool) -> Void)?
     private let transport: () -> (any GalaxyRequestTransport)?
     private let manager: CLLocationManager?
@@ -34,6 +40,7 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
 
     func setSharing(_ value: Bool) {
         guard value != sharing else { return }
+        onEvent?("Sharing changed: \(value)")
         sharing = value
         UserDefaults.standard.set(value, forKey: "galaxy.phoneGps")
         if value { begin() } else { manager?.stopUpdatingLocation(); status = "" }
@@ -55,6 +62,7 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        onEvent?("Authorization changed: \(manager.authorizationStatus.rawValue)")
         if sharing { begin() }
     }
 
@@ -65,17 +73,22 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
 
     /// Sends one fix unless another is in flight or one went out under a second ago.
     func deliver(_ location: CLLocation, now: Date = Date()) async {
-        guard sharing, !sending, now.timeIntervalSince(lastSent) >= 0.9 else { return }
-        guard let body = Self.payload(location, now: now) else { status = "Waiting for GPS"; return }
-        guard let transport = transport(), transport.connected else { status = "Waiting for comma"; return }
+        offered += 1
+        guard sharing, !sending, now.timeIntervalSince(lastSent) >= 0.9 else { skipped += 1; return }
+        guard let body = Self.payload(location, now: now) else { skipped += 1; onEvent?("Fix rejected: age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)"); status = "Waiting for GPS"; return }
+        guard let transport = transport(), transport.connected else { skipped += 1; status = "Waiting for comma"; return }
+        let started = Date()
+        onEvent?("Upload started; fix age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)m")
         sending = true
         defer { sending = false }
         do {
             let response = try await transport.request(path: Self.path, method: "POST", headers: ["Content-Type": "application/json"], body: body)
+            if response.status == 200 { accepted += 1 } else { failed += 1 }
+            onEvent?("Upload finished: HTTP \(response.status); elapsed=\(Date().timeIntervalSince(started))s")
             lastSent = now
             status = response.status == 200 ? "Sharing GPS with comma"
                 : response.status == 405 ? "This comma doesn't take phone GPS yet." : "Comma didn't accept the location."
-        } catch { status = "Waiting for comma" }
+        } catch { failed += 1; onEvent?("Upload failed: \((error as NSError).domain) \((error as NSError).code)"); status = "Waiting for comma" }
     }
 
     /// iOS marks an unknown value with a negative number; those are left out.

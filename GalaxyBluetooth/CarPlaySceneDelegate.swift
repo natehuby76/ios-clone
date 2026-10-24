@@ -1,9 +1,11 @@
 import CarPlay
 import UIKit
 import CoreFoundation
+import MapKit
+import Combine
 
 @MainActor
-final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate, CPSessionConfigurationDelegate {
+final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate, CPSessionConfigurationDelegate, CPMapTemplateDelegate {
     private final class GridAction: NSObject {
         var perform: @MainActor () -> Void
         var signature: String
@@ -45,34 +47,155 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         init(title: String, kind: String) { self.title = title; self.kind = kind }
     }
 
+    private var window: CPWindow?
+    private var mapController: CompanionCarPlayMap?
+    private var mapTemplate: CPMapTemplate?
+    private var navigationSession: CPNavigationSession?
+    private var trip: CPTrip?
+    private var tripDestination = ""
+    private var maneuver: CPManeuver?
+    private var subscriptions = Set<AnyCancellable>()
+    private var alphaMode: Bool?
+
+    func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController, to window: CPWindow) {
+        self.window = window
+        connect(interfaceController)
+    }
+
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect interfaceController: CPInterfaceController) {
+        connect(interfaceController)
+    }
+
+    private func connect(_ interfaceController: CPInterfaceController) {
+        guard controller !== interfaceController else { return }
         controller = interfaceController
         sessionConfiguration = CPSessionConfiguration(delegate: self)
-        overview = nil; temperatures = nil; rates = nil; toggles = nil
         let model = AppModel.shared
         model.setCarPlayActive(true)
-        refreshTelemetry()
-        catalog = localCatalogue()
-        toggles = grid("Toggles", icon: "switch.2", buttons: categoryButtons())
-        guard let overview, let temperatures, let rates, let toggles else { return }
-        let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
-        tabs.delegate = self
-        interfaceController.setRootTemplate(tabs, animated: false, completion: nil)
-        showCategories()
+        model.$navigationAlpha.combineLatest(model.$developerMode)
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.configureMode() }
+            .store(in: &subscriptions)
+        configureMode()
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshTelemetry() }
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshTelemetry()
+                self?.refreshNavigation()
+            }
         }
     }
 
+    private func configureMode() {
+        guard let controller else { return }
+        let model = AppModel.shared
+        let alpha = model.navigationEnabled
+        guard alphaMode != alpha else { return }
+        alphaMode = alpha
+        stopGuidance()
+        model.navigationServices.setEnabled(alpha)
+        model.navigationServices.setCarPlayActive(alpha)
+        overview = nil; temperatures = nil; rates = nil; toggles = nil
+        navigating = false
+        refreshTelemetry()
+        if alpha {
+            let map = CompanionCarPlayMap()
+            mapController = map
+            window?.rootViewController = map
+            let template = CPMapTemplate()
+            template.mapDelegate = self
+            template.automaticallyHidesNavigationBar = false
+            template.trailingNavigationBarButtons = [CPBarButton(title: "Stats", handler: { [weak self] _ in
+                guard let self, let overview = self.overview else { return }
+                self.pushTemplate(overview, animated: true, completion: nil)
+            })]
+            mapTemplate = template
+            controller.setRootTemplate(template, animated: false, completion: nil)
+            refreshNavigation()
+        } else {
+            mapController = nil; mapTemplate = nil
+            window?.rootViewController = UIViewController()
+            catalog = localCatalogue()
+            toggles = grid("Toggles", icon: "switch.2", buttons: categoryButtons())
+            guard let overview, let temperatures, let rates, let toggles else { return }
+            let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
+            tabs.delegate = self
+            controller.setRootTemplate(tabs, animated: false, completion: nil)
+            showCategories()
+        }
+    }
+
+    private func stopGuidance() {
+        navigationSession?.cancelTrip()
+        navigationSession = nil; trip = nil; maneuver = nil; tripDestination = ""
+    }
+
+    private func refreshNavigation() {
+        guard AppModel.shared.navigationEnabled, let template = mapTemplate else { return }
+        let nav = AppModel.shared.navigationServices.navigation
+        nav.checkCommaFreshness()
+        mapController?.update(nav)
+        guard nav.navigating, let destination = nav.destination,
+              nav.usingComma ? nav.commaFeedReady : nav.goodLocation != nil else {
+            stopGuidance()
+            return
+        }
+        let key = "\(destination.coordinate.latitude),\(destination.coordinate.longitude)"
+        if tripDestination != key || navigationSession == nil {
+            stopGuidance()
+            let origin = nav.usingComma ? nav.commaPosition : nav.goodLocation?.coordinate
+            guard let origin else { return }
+            let choice = CPRouteChoice(summaryVariants: [destination.name], additionalInformationVariants: [], selectionSummaryVariants: [destination.name])
+            let newTrip = CPTrip(origin: MKMapItem(placemark: MKPlacemark(coordinate: origin)), destination: destination.item, routeChoices: [choice])
+            trip = newTrip; tripDestination = key
+            navigationSession = template.startNavigationSession(for: newTrip)
+        }
+        guard let trip, let navigationSession else { return }
+        let distance = max(0, nav.remainingDistance.isFinite ? nav.remainingDistance : 0)
+        let duration = max(0, nav.remainingTime.isFinite ? nav.remainingTime : 0)
+        template.updateEstimates(CPTravelEstimates(distanceRemaining: Measurement(value: distance, unit: .meters), timeRemaining: duration), for: trip)
+        if !nav.instruction.isEmpty {
+            if maneuver?.instructionVariants.first != nav.instruction {
+                let next = CPManeuver()
+                next.instructionVariants = [nav.instruction]
+                if #available(iOS 17.4, *) { navigationSession.add([next]) }
+                maneuver = next
+            }
+            if let maneuver {
+                navigationSession.upcomingManeuvers = [maneuver]
+                let turnDistance = max(0, nav.distanceToTurn.isFinite ? nav.distanceToTurn : 0)
+                navigationSession.updateEstimates(CPTravelEstimates(distanceRemaining: Measurement(value: turnDistance, unit: .meters), timeRemaining: 0), for: maneuver)
+            }
+        } else {
+            navigationSession.upcomingManeuvers = []
+            maneuver = nil
+        }
+    }
+
+    func mapTemplateDidCancelNavigation(_ mapTemplate: CPMapTemplate) {
+        let services = AppModel.shared.navigationServices
+        Task { await services.navigation.end(connection: services.connection) }
+    }
+
+    func templateApplicationScene(_ scene: CPTemplateApplicationScene, didDisconnectInterfaceController interfaceController: CPInterfaceController, from window: CPWindow) {
+        disconnect()
+    }
+
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didDisconnectInterfaceController interfaceController: CPInterfaceController) {
+        disconnect()
+    }
+
+    private func disconnect() {
         timer?.invalidate(); timer = nil
+        subscriptions.removeAll()
         work?.cancel(); work = nil
+        stopGuidance()
+        window?.rootViewController = nil; window = nil; mapController = nil; mapTemplate = nil; alphaMode = nil
         controller = nil
         sessionConfiguration?.delegate = nil; sessionConfiguration = nil
         overview = nil; temperatures = nil; rates = nil; toggles = nil
         catalog = []; values = [:]; busy = false; categoryPage = 0; valuesSession = ""; valuesAt = .distantPast
         gridActions.removeAllObjects(); gridSizes.removeAllObjects(); overflowParents.removeAllObjects(); settingsRefresh.removeAllObjects(); navigating = false
+        AppModel.shared.navigationServices.setCarPlayActive(false)
         AppModel.shared.setCarPlayActive(false)
     }
 
@@ -550,5 +673,44 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard controller?.presentedTemplate == nil else { return }
         let action = CPAlertAction(title: "OK", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
         controller?.presentTemplate(CPAlertTemplate(titleVariants: [String(message.prefix(240))], actions: [action]), animated: true, completion: nil)
+    }
+}
+
+@MainActor
+private final class CompanionCarPlayMap: UIViewController, MKMapViewDelegate {
+    private let map = MKMapView()
+    private let position = MKPointAnnotation()
+    private var line: MKPolyline?
+    override func loadView() {
+        view = map
+        map.delegate = self
+        map.pointOfInterestFilter = .excludingAll
+        map.isRotateEnabled = false
+    }
+    func update(_ navigation: NavigationModel) {
+        loadViewIfNeeded()
+        let next = navigation.usingComma ? navigation.commaPolyline : navigation.route?.polyline
+        if line !== next {
+            map.removeOverlays(map.overlays)
+            line = next
+            if let next { map.addOverlay(next) }
+        }
+        let coordinate = navigation.usingComma ? (navigation.commaFeedReady ? navigation.commaPosition : nil) : navigation.goodLocation?.coordinate
+        if let coordinate {
+            position.coordinate = coordinate
+            if !map.annotations.contains(where: { $0 === position }) { map.addAnnotation(position) }
+            map.setRegion(MKCoordinateRegion(center: coordinate, latitudinalMeters: 1500, longitudinalMeters: 1500), animated: false)
+        } else { map.removeAnnotation(position) }
+    }
+    func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        let renderer = MKPolylineRenderer(overlay: overlay)
+        renderer.strokeColor = .systemBlue
+        renderer.lineWidth = 7
+        return renderer
+    }
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        let marker = MKAnnotationView(annotation: annotation, reuseIdentifier: nil)
+        marker.image = UIImage(systemName: "location.circle.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
+        return marker
     }
 }

@@ -16,6 +16,10 @@ python3 tests/extract_carplay_navigation.py "$test_dir/NavigationProbe.swift"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/NavigationProbe.swift" -o "$test_dir/carplay-navigation-tests"
 "$test_dir/carplay-navigation-tests"
 
+python3 tests/extract_discovery_lifecycle.py "$test_dir/DiscoveryLifecycle.swift"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/DiscoveryLifecycle.swift" -o "$test_dir/discovery-lifecycle-tests"
+"$test_dir/discovery-lifecycle-tests"
+
 python3 tests/extract_connection_monitor.py "$test_dir/MonitorProbe.swift"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/MonitorProbe.swift" -o "$test_dir/monitor-tests"
 "$test_dir/monitor-tests"
@@ -31,10 +35,12 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 "$test_dir/audio-pairing-tests"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/PhoneLocation.swift tests/PhoneLocationRegression.swift -o "$test_dir/phone-location-tests"
 "$test_dir/phone-location-tests"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/GalaxyRequestTransport.swift tests/LANPairingRegression.swift -o "$test_dir/lan-pairing-tests"
+"$test_dir/lan-pairing-tests"
 
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/HTTP.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/NetworkTransport.swift GalaxyBluetooth/PrivateLANHTTP.swift tests/SecretGoodLANRegression.swift -o "$test_dir/secretgood-lan-tests"
 "$test_dir/secretgood-lan-tests"
-python3 tests/check_secretgood_bundle.py
+python3 tests/check_lan_contract.py
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/HTTP.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/NetworkTransport.swift GalaxyBluetooth/PrivateLANHTTP.swift GalaxyBluetooth/GalaxyAssetStore.swift tests/SecretGoodAssetsRegression.swift -o "$test_dir/secretgood-assets-tests"
 "$test_dir/secretgood-assets-tests"
 
@@ -50,3 +56,7 @@ if command -v node >/dev/null 2>&1; then
 else
   echo "Node unavailable: run tests/ToggleSearchRegression.mjs locally for JavaScript search checks."
 fi
+
+# Integrated navigation uses the existing destination API and never replays writes.
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library GalaxyBluetooth/Wire.swift GalaxyBluetooth/GalaxyRequestTransport.swift GalaxyBluetooth/Navigation/NavigationContract.swift GalaxyBluetooth/Navigation/CommaRoute.swift GalaxyBluetooth/Navigation/NativeNavigationAPI.swift tests/NativeNavigationRegression.swift -o "$test_dir/native-navigation-tests"
+"$test_dir/native-navigation-tests"

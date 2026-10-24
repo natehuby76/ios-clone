@@ -9,15 +9,29 @@ import Foundation
     }
 }
 
+@MainActor final class LiveTransport: GalaxyRequestTransport {
+    var connected = true
+    var pages: [String: Data] = ["/js/app.js": Data("live app".utf8), "/index.html": Data("live index".utf8)]
+    var requested: [String] = []
+    func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
+        throw URLError(.notConnectedToInternet)
+    }
+    func page(path: String) async throws -> BridgeResponse {
+        requested.append(path)
+        guard let data = pages[path] else { return BridgeResponse(id: "", session: "", counter: 0, status: 404, headers: [:], body: "") }
+        return BridgeResponse(id: "", session: "", counter: 0, status: 200, headers: [:], body: data.base64EncodedString())
+    }
+}
+
 @main struct LoopbackRecoveryRegression {
     @MainActor static func main() async throws {
-        let snapshot = try String(contentsOfFile: "GalaxyBluetooth/Resources/Web/js/snapshot-feed.js", encoding: .utf8)
+        let snapshot = try String(contentsOfFile: "tests/Fixtures/GalaxyWeb/js/snapshot-feed.js", encoding: .utf8)
         let adapted = LoopbackServer.nativeReadDeadlines(snapshot, asset: "js/snapshot-feed.js")
         precondition(adapted.contains("? 20000 : 4000"), "Bluetooth snapshots must allow queue time")
         precondition(adapted.contains("Math.max(15000, this.constructor.interval)"))
         precondition(adapted.contains("this.constructor.subject !== 'device state'"), "Drive-state freshness must stay unchanged")
         precondition(LoopbackServer.nativeReadDeadlines(snapshot, asset: "unrelated.js") == snapshot)
-        let settings = try String(contentsOfFile: "GalaxyBluetooth/Resources/Web/js/settings.js", encoding: .utf8)
+        let settings = try String(contentsOfFile: "tests/Fixtures/GalaxyWeb/js/settings.js", encoding: .utf8)
         let adaptedSettings = LoopbackServer.nativeReadDeadlines(settings, asset: "js/settings.js")
         precondition(adaptedSettings.contains("&& !saving ? 20000 : 4000"), "Saving must retain its deadline")
         let transport = OfflineTransport()
@@ -25,7 +39,7 @@ import Foundation
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("Galaxy test page".utf8).write(to: root.appendingPathComponent("index.html"))
-        let source = try Data(contentsOf: URL(fileURLWithPath: "GalaxyBluetooth/Resources/Web/js/toggle-search.js"))
+        let source = try Data(contentsOf: URL(fileURLWithPath: "tests/Fixtures/GalaxyWeb/js/toggle-search.js"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("js"), withIntermediateDirectories: true)
         let searchFile = root.appendingPathComponent("js/toggle-search.js")
         try source.write(to: searchFile)
@@ -69,6 +83,29 @@ import Foundation
         precondition(outcomes.allSatisfy { !$0 } && broken.url == nil && !broken.error.isEmpty)
         precondition(broken.lifecycleEvents.filter { $0.contains("restarting listener") }.count == 1,
                      "Simultaneous retries must share one bounded recovery")
+        // No saved copy: over Wi-Fi/LAN pages are read live from comma; otherwise the "not downloaded" message shows.
+        let live = LiveTransport()
+        let liveServer = LoopbackServer(transport: live, webRoot: nil)
+        defer { liveServer.stop() }
+        let liveStarted = await liveServer.ensureAvailable()
+        precondition(liveStarted)
+        let (app, appResponse) = try await BoundedHTTP.load(URLRequest(url: liveServer.url!.appendingPathComponent("js/app.js")), limit: 1_048_576)
+        precondition(appResponse.statusCode == 200 && app == Data("live app".utf8))
+        let (_, rootResponse) = try await BoundedHTTP.load(URLRequest(url: liveServer.url!), limit: 1_048_576)
+        precondition(rootResponse.statusCode == 200 && live.requested.contains("/index.html"))
+        let (_, missing) = try await BoundedHTTP.load(URLRequest(url: liveServer.url!.appendingPathComponent("js/missing.js")), limit: 1_048_576)
+        precondition(missing.statusCode == 404)
+        let (_, escaped) = try await BoundedHTTP.load(URLRequest(url: liveServer.url!.appendingPathComponent("other/secret.js")), limit: 1_048_576)
+        precondition(escaped.statusCode == 503 && !live.requested.contains("/other/secret.js"), "Only Galaxy page files are read live")
+        live.connected = false
+        let (_, offline) = try await BoundedHTTP.load(URLRequest(url: liveServer.url!.appendingPathComponent("js/app.js")), limit: 1_048_576)
+        precondition(offline.statusCode == 503)
+        let bluetoothOnly = LoopbackServer(transport: transport, webRoot: nil)
+        defer { bluetoothOnly.stop() }
+        _ = await bluetoothOnly.ensureAvailable()
+        transport.connected = true
+        let (_, notYet) = try await BoundedHTTP.load(URLRequest(url: bluetoothOnly.url!.appendingPathComponent("js/app.js")), limit: 1_048_576)
+        precondition(notYet.statusCode == 503, "Over Bluetooth with no saved copy there is nothing to serve")
         print("Loopback recovery: real HTTP health, origin preservation, restart, stale callbacks, bounded retries and transport isolation passed")
     }
 }

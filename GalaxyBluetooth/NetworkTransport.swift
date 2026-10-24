@@ -84,7 +84,11 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
 
     // An explicit private IPv4 address prevents cloud/loopback endpoints from being treated as the local comma.
     static func endpoint(_ address: String) throws -> URL {
-        let parts = address.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ".", omittingEmptySubsequences: false)
+        var input = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if input.hasPrefix("http://") { input = String(input.dropFirst(7)) }
+        if input.hasSuffix("/") { input.removeLast() }
+        if input.hasSuffix(":8082") { input = String(input.dropLast(5)) }
+        let parts = input.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 4, parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }),
               parts.allSatisfy({ String(Int($0) ?? -1) == $0 }),
               let a = Int(parts[0]), let b = Int(parts[1]), parts.allSatisfy({ (0...255).contains(Int($0) ?? -1) }),
@@ -138,12 +142,15 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             let changed = connected != available
             connected = available
             verifiedDeviceID = available ? identity : nil
-            status = available ? "Local comma verified." : "Local endpoint unavailable or does not match the paired comma."
-            if changed { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: HTTP \(response.statusCode), unavailable status or identity mismatch") }
+            if available { status = "Local comma verified." }
+            else if response.statusCode != 200 { status = "Galaxy answered HTTP \(response.statusCode)." }
+            else if identity == nil { status = "The address answered, but did not return a valid Galaxy identity." }
+            else { status = "This address belongs to a different comma than the saved pairing." }
+            if changed || !available { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: " + status) }
         } catch {
             if !Task.isCancelled, expectedGeneration == generation {
-                status = error.localizedDescription
-                invalidate(reason: "LAN probe failed: \(Self.failureCode(error))")
+                status = Self.failureCode(error)
+                invalidate(reason: "LAN probe failed: \(status)")
             }
         }
         return connected
@@ -206,7 +213,8 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             var request = URLRequest(url: URL(string: endpoint.absoluteString + path)!)
             request.httpMethod = method
             request.httpBody = body.isEmpty ? nil : body
-            request.timeoutInterval = LocalRequest.isPackageUpload(method: method, target: path) ? 120 : 8
+            request.timeoutInterval = LocalRequest.isPackageUpload(method: method, target: path) ? 120
+                : (method == "POST" && path == LANPairing.windowPath ? 35 : 8)
             for (name, value) in headers where ["accept", "range", "content-type"].contains(name.lowercased()) {
                 request.setValue(value, forHTTPHeaderField: name)
             }
@@ -230,6 +238,13 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         throw BridgeError.message("Galaxy session expired. Reconnect to comma.")
     }
 
+    func page(path: String) async throws -> BridgeResponse {
+        guard connected else { throw URLError(.notConnectedToInternet) }
+        guard SecretGoodGalaxy.validPage(path) else { throw BridgeError.message("Invalid Galaxy page request.") }
+        let (data, response) = try await authenticated(path: path, method: "GET", headers: [:], body: Data(), limit: 8 * Wire.maxBody)
+        return bridgeResponse(data, response)
+    }
+
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         guard connected else { throw URLError(.notConnectedToInternet) }
         guard SecretGoodGalaxy.validTarget(path),
@@ -237,6 +252,10 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             throw BridgeError.message("Invalid Galaxy request.")
         }
         let (data, response) = try await authenticated(path: path, method: method, headers: headers, body: body, limit: 8 * Wire.maxBody)
+        return bridgeResponse(data, response)
+    }
+
+    private func bridgeResponse(_ data: Data, _ response: HTTPURLResponse) -> BridgeResponse {
         var responseHeaders: [String: String] = [:]
         for (key, value) in response.allHeaderFields {
             if let name = key as? String, ["content-type", "content-range", "accept-ranges", "content-disposition"].contains(name.lowercased()) {
@@ -267,6 +286,11 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
     init(lan: any GalaxyRequestTransport, bluetooth: any GalaxyRequestTransport, invalidateLAN: @escaping (String) -> Void) {
         self.lan = lan; self.bluetooth = bluetooth; self.invalidateLAN = invalidateLAN
     }
+    func page(path: String) async throws -> BridgeResponse {
+        guard usesLAN else { throw BridgeError.message("Galaxy screens can only be downloaded from comma over Wi-Fi.") }
+        return try await lan.page(path: path)
+    }
+
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         try Task.checkCancellation()
         if usesLAN {

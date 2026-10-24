@@ -33,12 +33,22 @@ import Foundation
 
 @main struct LANRegression {
     @MainActor static func main() async throws {
+        for address in ["172.31.254.1", "172.31.254.1:8082", " http://172.31.254.1:8082/ ", "http://172.31.254.1/"] {
+            let endpoint = try LANTransport.endpoint(address)
+            precondition(endpoint.absoluteString == "http://172.31.254.1:8082")
+        }
+        for address in ["172.31.254.1:80", "https://172.31.254.1", "http://user@172.31.254.1", "172.31.254.1/path", "172.31.254.1?x=1", "8.8.8.8:8082", "127.0.0.1:8082"] {
+            do { _ = try LANTransport.endpoint(address); preconditionFailure("Invalid LAN address accepted: \(address)") } catch {}
+        }
         let server = Server()
         let lan = LANTransport(load: server.load)
         try lan.configure(address: "192.168.1.86")
         lan.bind(to: "0123456789abcdef")
         let verified = await lan.probe()
         precondition(verified && server.sessions == 1)
+        _ = try await lan.request(path: LANPairing.windowPath, method: "POST", headers: [:], body: LANPairing.windowBody)
+        precondition(server.calls.last?.timeoutInterval == 35, "Pairing must cover comma’s 25-second daemon window plus preparation")
+        server.calls.removeAll()
         server.expired = true
         let result = try await lan.request(path: "/api/settings/confirm", method: "POST", headers: ["Cookie": "forged", "Origin": "http://evil.invalid"], body: Data("{}".utf8))
         precondition(result.status == 200 && server.sessions == 2)
@@ -63,6 +73,19 @@ import Foundation
         }
         precondition(SecretGoodGalaxy.validTarget("/api/settings/pages/hub"))
         precondition(SecretGoodGalaxy.validTarget("/data/runtime.json"))
+        for invalid in ["/api/params", "/js/../x.js", "/js/a b.js", "/js/app.js?x=1", "/data/runtime.json", "/other/x.js", "//evil/js/a.js", "/js//a.js", "js/app.js", "/js/%2e%2e/a.js"] {
+            precondition(!SecretGoodGalaxy.validPage(invalid), invalid)
+        }
+        for valid in ["/index.html", "/js/app.js", "/vendor/vue/vue.esm-browser.js", "/data/catalog.json", "/manifest.webmanifest"] {
+            precondition(SecretGoodGalaxy.validPage(valid), valid)
+        }
+        server.corruptIdentity = false
+        _ = await lan.probe()
+        let pageCalls = server.calls.count
+        let page = try await lan.page(path: "/js/app.js")
+        precondition(page.status == 200 && server.calls.count == pageCalls + 1)
+        precondition(server.calls.last!.httpMethod == "GET" && server.calls.last!.url!.path == "/js/app.js")
+        do { _ = try await lan.page(path: "/api/params"); preconditionFailure("Pages are not API calls") } catch is BridgeError {}
         precondition(SecretGoodGalaxy.needsWiFi("/api/cameras/snapshot"))
         precondition(!SecretGoodGalaxy.needsWiFi("/api/settings/pages/hub"))
         let concurrent = Server()

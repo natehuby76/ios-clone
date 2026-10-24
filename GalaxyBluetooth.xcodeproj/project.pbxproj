@@ -6,6 +6,19 @@
 	objectVersion = 56;
 	objects = {
 
+CAFE00000000000000000040 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "tests/IntegrationUITests.swift"; sourceTree = "<group>"; };
+CAFE00000000000000000041 = {isa = PBXBuildFile; fileRef = CAFE00000000000000000040; };
+CAFE00000000000000000042 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = GalaxyBluetoothUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+CAFE00000000000000000043 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (CAFE00000000000000000041); runOnlyForDeploymentPostprocessing = 0; };
+CAFE00000000000000000044 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+CAFE00000000000000000045 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+CAFE00000000000000000046 = {isa = PBXNativeTarget; buildConfigurationList = CAFE00000000000000000047; buildPhases = (CAFE00000000000000000043,CAFE00000000000000000044,CAFE00000000000000000045); buildRules = (); dependencies = (CAFE0000000000000000004B); name = GalaxyBluetoothUITests; productName = GalaxyBluetoothUITests; productReference = CAFE00000000000000000042; productType = "com.apple.product-type.bundle.ui-testing"; };
+CAFE00000000000000000047 = {isa = XCConfigurationList; buildConfigurations = (CAFE00000000000000000048,CAFE00000000000000000049); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+CAFE00000000000000000048 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = "5P9DLC338G"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = link.galaxy.bluetooth.natehuby76.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 17.0; TEST_TARGET_NAME = GalaxyBluetooth; }; name = Debug; };
+CAFE00000000000000000049 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = "5P9DLC338G"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = link.galaxy.bluetooth.natehuby76.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 17.0; TEST_TARGET_NAME = GalaxyBluetooth; }; name = Release; };
+CAFE0000000000000000004A = {isa = PBXContainerItemProxy; containerPortal = 244210E48437B6556980A702; proxyType = 1; remoteGlobalIDString = 34A04005BCAF206EEC990BD9; remoteInfo = GalaxyBluetooth; };
+CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206EEC990BD9; targetProxy = CAFE0000000000000000004A; };
+
 /* Begin PBXBuildFile section */
 		C0AA00000000000000000007 /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000008 /* Lucide-LICENSE.txt */; };
 		C0AA00000000000000000005 /* Sora-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000006 /* Sora-OFL.txt */; };
@@ -16,7 +29,6 @@
 		1698566BBEF2185D9C80B6BB /* HTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34DE7063A67F0755E6E69BF7 /* HTTP.swift */; };
 		28D504D2BD92FF8A8AEB68A7 /* CompanionDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AD85D1A585138AF80FEADB9 /* CompanionDiagnostics.swift */; };
 		36EBF9BB2BE027F139572ADA /* GalaxyBluetoothApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3356A9DC86451A9D92F074F8 /* GalaxyBluetoothApp.swift */; };
-		4E7D2B65B79ACE4A91B667A2 /* Resources/Web in Resources */ = {isa = PBXBuildFile; fileRef = 4B5E57F6EB2F42B9039B3D1E /* Resources/Web */; };
 		5992DC6B04748581DE47AA02 /* LoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B07071562661895558F74EE6 /* LoopbackServer.swift */; };
 		606A672A792903E98EFFC2D9 /* Resources/Branding.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9F0B8B04FE0E80BA046C0042 /* Resources/Branding.xcassets */; };
 		754B6F8C853BDD47D7593948 /* NetworkTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114E3D37646B3A8626A8A232 /* NetworkTransport.swift */; };
@@ -33,6 +45,18 @@
 		D15C00000000000000000011 /* AudioPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C00000000000000000012 /* AudioPairing.swift */; };
 		D15C00000000000000000013 /* AudioPairingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C00000000000000000014 /* AudioPairingSheet.swift */; };
 		D15C00000000000000000015 /* PhoneLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C00000000000000000016 /* PhoneLocation.swift */; };
+		624BAB64182E73202878D515 /* CommaConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52FB3121E2A623BE4769FE63; };
+		6553464767FD86C99AECFF61 /* CommaRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8368316544FC8EE0CB7DD9E; };
+		C1EBCEDE2699F4C92C082243 /* NativeNavigationAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57FF1BA7ED448BEB17F20FF; };
+		9F51D8D745A80C4F3F7455CA /* NavigationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F962EF42C081AC9DB676EE93; };
+		80049B7930CCB4368B92E86E /* NavigationHome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1842FB43E7B0D2259DDFC3D3; };
+		6A11402700052D4172BD3940 /* NavigationMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA299A31EC81AEC0236FFF09; };
+		4994D0716059596B93F04DB7 /* NavigationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECDD51524FB27A32FE6286D0; };
+		24EED77FB94A76A9CEAB95FA /* NavigationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E45C5C9C0E3BB85F24EC135; };
+		CE0869EFD87FE76E6A08F5C1 /* PlaceSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87016C010CD9EEEBEF2028D7; };
+		C541996DA56F5F41AFB50056 /* SavedPlaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4B06AB4382FB0D4B5A4EE0F; };
+		3CE86370D27F0FA029E0DC0C /* SavedPlacesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7ED5F91C4E02363F3D2207A; };
+		1882F023E5B58799A2679C59 /* StarPilotTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 385C41072CAA8F49B7CFFE70; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,7 +69,6 @@
 		3356A9DC86451A9D92F074F8 /* GalaxyBluetoothApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalaxyBluetoothApp.swift; sourceTree = "<group>"; };
 		34DE7063A67F0755E6E69BF7 /* HTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTP.swift; sourceTree = "<group>"; };
 		43A1199899003FF3F5F30831 /* PairingKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingKeyStore.swift; sourceTree = "<group>"; };
-		4B5E57F6EB2F42B9039B3D1E /* Resources/Web */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/Web; sourceTree = "<group>"; };
 		5492C1BC71EB8D0DBF12896E /* PrivateLANHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateLANHTTP.swift; sourceTree = "<group>"; };
 		80D0F5CDB02B33E408C75D8C /* GalaxyRequestTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalaxyRequestTransport.swift; sourceTree = "<group>"; };
 		8AD85D1A585138AF80FEADB9 /* CompanionDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionDiagnostics.swift; sourceTree = "<group>"; };
@@ -64,6 +87,18 @@
 		D15C00000000000000000012 /* AudioPairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPairing.swift; sourceTree = "<group>"; };
 		D15C00000000000000000014 /* AudioPairingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPairingSheet.swift; sourceTree = "<group>"; };
 		D15C00000000000000000016 /* PhoneLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLocation.swift; sourceTree = "<group>"; };
+		52FB3121E2A623BE4769FE63 /* CommaConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/CommaConnection.swift; sourceTree = "<group>"; };
+		E8368316544FC8EE0CB7DD9E /* CommaRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/CommaRoute.swift; sourceTree = "<group>"; };
+		A57FF1BA7ED448BEB17F20FF /* NativeNavigationAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NativeNavigationAPI.swift; sourceTree = "<group>"; };
+		F962EF42C081AC9DB676EE93 /* NavigationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NavigationContract.swift; sourceTree = "<group>"; };
+		1842FB43E7B0D2259DDFC3D3 /* NavigationHome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NavigationHome.swift; sourceTree = "<group>"; };
+		FA299A31EC81AEC0236FFF09 /* NavigationMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NavigationMapView.swift; sourceTree = "<group>"; };
+		ECDD51524FB27A32FE6286D0 /* NavigationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NavigationModel.swift; sourceTree = "<group>"; };
+		6E45C5C9C0E3BB85F24EC135 /* NavigationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/NavigationServices.swift; sourceTree = "<group>"; };
+		87016C010CD9EEEBEF2028D7 /* PlaceSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/PlaceSearch.swift; sourceTree = "<group>"; };
+		E4B06AB4382FB0D4B5A4EE0F /* SavedPlaces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/SavedPlaces.swift; sourceTree = "<group>"; };
+		F7ED5F91C4E02363F3D2207A /* SavedPlacesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/SavedPlacesStore.swift; sourceTree = "<group>"; };
+		385C41072CAA8F49B7CFFE70 /* StarPilotTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation/StarPilotTheme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,6 +128,18 @@
 				D15C00000000000000000014 /* AudioPairingSheet.swift */,
 				D15C00000000000000000012 /* AudioPairing.swift */,
 				D15C00000000000000000016 /* PhoneLocation.swift */,
+                385C41072CAA8F49B7CFFE70 /* StarPilotTheme.swift */,
+                F7ED5F91C4E02363F3D2207A /* SavedPlacesStore.swift */,
+                E4B06AB4382FB0D4B5A4EE0F /* SavedPlaces.swift */,
+                87016C010CD9EEEBEF2028D7 /* PlaceSearch.swift */,
+                6E45C5C9C0E3BB85F24EC135 /* NavigationServices.swift */,
+                ECDD51524FB27A32FE6286D0 /* NavigationModel.swift */,
+                FA299A31EC81AEC0236FFF09 /* NavigationMapView.swift */,
+                1842FB43E7B0D2259DDFC3D3 /* NavigationHome.swift */,
+                F962EF42C081AC9DB676EE93 /* NavigationContract.swift */,
+                A57FF1BA7ED448BEB17F20FF /* NativeNavigationAPI.swift */,
+                E8368316544FC8EE0CB7DD9E /* CommaRoute.swift */,
+                52FB3121E2A623BE4769FE63 /* CommaConnection.swift */,
 				114E3D37646B3A8626A8A232 /* NetworkTransport.swift */,
 				D3BBE1488FD8A83E3983FEDE /* GalaxyAssetStore.swift */,
 				5492C1BC71EB8D0DBF12896E /* PrivateLANHTTP.swift */,
@@ -113,7 +160,6 @@
 				9CEEC13202AFBF12EE3ABB99 /* Info.plist */,
 				8AD85D1A585138AF80FEADB9 /* CompanionDiagnostics.swift */,
 				8F213860FC7A532DBD355109 /* CarPlaySceneDelegate.swift */,
-				4B5E57F6EB2F42B9039B3D1E /* Resources/Web */,
 				9F0B8B04FE0E80BA046C0042 /* Resources/Branding.xcassets */,
 			);
 			path = GalaxyBluetooth;
@@ -122,7 +168,8 @@
 		C69913C7EE4DFDD011BE172F = {
 			isa = PBXGroup;
 			children = (
-				9E61AFF607A3704A97803240 /* GalaxyBluetooth */,
+				CAFE00000000000000000040,
+                9E61AFF607A3704A97803240 /* GalaxyBluetooth */,
 				0A3E27B8CA818264D75C8D81 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -168,6 +215,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+                CAFE00000000000000000046,
 				34A04005BCAF206EEC990BD9 /* GalaxyBluetooth */,
 			);
 		};
@@ -179,7 +227,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				D92135C445C249E6A5DC0011 /* PrivacyInfo.xcprivacy in Resources */,
-				4E7D2B65B79ACE4A91B667A2 /* Resources/Web in Resources */,
 				606A672A792903E98EFFC2D9 /* Resources/Branding.xcassets in Resources */,
 				C0AA00000000000000000003 /* Sora.ttf in Resources */,
 				C0AA00000000000000000005 /* Sora-OFL.txt in Resources */,
@@ -198,6 +245,18 @@
 				D15C00000000000000000013 /* AudioPairingSheet.swift in Sources */,
 				D15C00000000000000000011 /* AudioPairing.swift in Sources */,
 				D15C00000000000000000015 /* PhoneLocation.swift in Sources */,
+                1882F023E5B58799A2679C59 /* StarPilotTheme.swift in Sources */,
+                3CE86370D27F0FA029E0DC0C /* SavedPlacesStore.swift in Sources */,
+                C541996DA56F5F41AFB50056 /* SavedPlaces.swift in Sources */,
+                CE0869EFD87FE76E6A08F5C1 /* PlaceSearch.swift in Sources */,
+                24EED77FB94A76A9CEAB95FA /* NavigationServices.swift in Sources */,
+                4994D0716059596B93F04DB7 /* NavigationModel.swift in Sources */,
+                6A11402700052D4172BD3940 /* NavigationMapView.swift in Sources */,
+                80049B7930CCB4368B92E86E /* NavigationHome.swift in Sources */,
+                9F51D8D745A80C4F3F7455CA /* NavigationContract.swift in Sources */,
+                C1EBCEDE2699F4C92C082243 /* NativeNavigationAPI.swift in Sources */,
+                6553464767FD86C99AECFF61 /* CommaRoute.swift in Sources */,
+                624BAB64182E73202878D515 /* CommaConnection.swift in Sources */,
 				754B6F8C853BDD47D7593948 /* NetworkTransport.swift in Sources */,
 				B2DE76B1CE686BDFB635FAAE /* GalaxyAssetStore.swift in Sources */,
 				887D84D1E3F00F0A5A8AD090 /* PrivateLANHTTP.swift in Sources */,

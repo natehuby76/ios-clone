@@ -194,6 +194,15 @@ private struct GalaxyPage: UIViewRepresentable {
           let editorFocused = false;
           const editorCSS = document.createElement('style');
           editorCSS.textContent = `
+            /* Blend only the decorative backdrop; never fade the Galaxy controls. */
+            :root { --native-galaxy-edge: rgb(3.5% 3.5% 7.8%); }
+            :root[data-theme="light"] { --native-galaxy-edge: rgb(94% 91% 99%); }
+            html, body { background: var(--native-galaxy-edge) !important; }
+            #galaxy-bg {
+              -webkit-mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);
+              mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);
+            }
+
             html.native-layout-editor .blur-nav,
             html.native-layout-editor .gx-appbar__pill,
             html.native-layout-editor .gx-appbar__menu,
@@ -299,7 +308,7 @@ private struct GalaxyPage: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.isOpaque = false
-        webView.backgroundColor = UIColor(red: 0.06, green: 0.05, blue: 0.09, alpha: 1)
+        webView.backgroundColor = UIColor(red: 0.035, green: 0.035, blue: 0.078, alpha: 1)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.load(URLRequest(url: url))
         return webView
@@ -336,7 +345,7 @@ private struct GalaxyPage: UIViewRepresentable {
             case "theme":
                 if message.frameInfo.isMainFrame, let dark = body["dark"] as? Bool {
                     diagnostics.darkAppearance = dark
-                    let background = dark ? UIColor(red: 0.06, green: 0.05, blue: 0.09, alpha: 1) : .systemBackground
+                    let background = dark ? UIColor(red: 0.035, green: 0.035, blue: 0.078, alpha: 1) : UIColor(red: 0.94, green: 0.91, blue: 0.99, alpha: 1)
                     message.webView?.backgroundColor = background
                     message.webView?.scrollView.backgroundColor = background
                 }

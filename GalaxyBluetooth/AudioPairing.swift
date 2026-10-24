@@ -28,6 +28,7 @@ final class AudioPairing: ObservableObject {
         var displayOnly: Bool
     }
 
+    var onEvent: ((String) -> Void)?
     @Published private(set) var phase: Phase = .idle
     private let transport: () -> (any GalaxyRequestTransport)?
     private let pause: () async -> Void
@@ -53,6 +54,16 @@ final class AudioPairing: ObservableObject {
 
     var active: Bool { phase != .idle }
 
+    var summary: String {
+        switch phase {
+        case .connected: return "Comma is the audio output"
+        case .done: return "Paired · choose comma as audio output"
+        case .opening, .waiting, .confirm: return "Music pairing in progress"
+        case .message: return "Music setup needs attention"
+        case .idle: return "Music output not checked"
+        }
+    }
+
     nonisolated static func validAddress(_ value: String) -> Bool {
         value.range(of: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", options: .regularExpression) != nil
     }
@@ -67,9 +78,10 @@ final class AudioPairing: ObservableObject {
                         code: (prompt?["value"] as? String) ?? "", displayOnly: (prompt?["displayOnly"] as? Bool) ?? false)
     }
 
-    /// `windowOpen`: comma's pairing window is already open because the person just paired the app from comma's Pair phone.
+    /// `windowOpen`: the app already opened comma’s pairing window over LAN.
     func start(windowOpen: Bool = false) {
         guard task == nil else { return }
+        onEvent?("Music setup started; reuse pairing window=\(windowOpen)")
         phase = .opening
         task = Task { [weak self] in
             await self?.run(windowOpen: windowOpen)
@@ -99,15 +111,36 @@ final class AudioPairing: ObservableObject {
     private func post(_ payload: [String: Any]) async throws -> BridgeResponse? {
         guard let transport = transport(), transport.connected else { return nil }
         let body = try JSONSerialization.data(withJSONObject: payload)
-        return try await transport.request(path: "/api/bluetooth/action", method: "POST",
-                                           headers: ["Content-Type": "application/json"], body: body)
+        let operation = payload["operation"] as? String ?? "unknown"
+        onEvent?("Music setup action started: " + operation)
+        do {
+            let response = try await transport.request(path: "/api/bluetooth/action", method: "POST",
+                                                       headers: ["Content-Type": "application/json"], body: body)
+            onEvent?("Music setup action finished: \(operation), HTTP \(response.status)")
+            return response
+        } catch {
+            onEvent?("Music setup action failed: \(operation), \(error.localizedDescription)")
+            throw error
+        }
     }
 
     private func status() async -> Snapshot? {
-        guard let transport = transport(), transport.connected,
-              let response = try? await transport.request(path: "/api/bluetooth/status", method: "GET", headers: [:], body: Data()),
-              response.status == 200 else { return nil }
-        return Self.parse(response.bodyData)
+        guard let transport = transport(), transport.connected else {
+            onEvent?("Music status unavailable: comma disconnected")
+            return nil
+        }
+        onEvent?("Music status request started")
+        do {
+            let response = try await transport.request(path: "/api/bluetooth/status", method: "GET", headers: [:], body: Data())
+            onEvent?("Music status request finished: HTTP \(response.status)")
+            guard response.status == 200 else { return nil }
+            let snapshot = Self.parse(response.bodyData)
+            onEvent?("Music status: window=\(snapshot?.state ?? "none"), valid adapter=\(snapshot.map { Self.validAddress($0.adapterAddress) } ?? false)")
+            return snapshot
+        } catch {
+            onEvent?("Music status request failed: " + error.localizedDescription)
+            return nil
+        }
     }
 
     private func run(windowOpen: Bool) async {

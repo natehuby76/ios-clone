@@ -5,10 +5,61 @@ protocol GalaxyRequestTransport: AnyObject {
     var connected: Bool { get }
     var catalogSHA256: String? { get }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse
+    /// GET one Galaxy page file (not an API call). Only the Wi-Fi/LAN transport can do this.
+    func page(path: String) async throws -> BridgeResponse
 }
 
 extension GalaxyRequestTransport {
     var catalogSHA256: String? { nil }
+    func page(path: String) async throws -> BridgeResponse {
+        throw BridgeError.message("Galaxy screens can only be downloaded from comma over Wi-Fi.")
+    }
+}
+
+/// When the phone already reaches comma over Wi-Fi/LAN it opens comma's two-minute pairing window itself, the same call
+/// as Pair phone on Galaxy's Bluetooth page, so nobody has to touch comma before the Bluetooth key claim.
+enum LANPairing {
+    static let windowPath = "/api/bluetooth/action"
+    static let windowBody = Data("{\"operation\":\"accept_pair\"}".utf8)
+    /// False means there is no verified LAN session for opening the window.
+    /// A refused or uncertain LAN request must not silently start a Bluetooth claim.
+    @MainActor static func openWindow(over lan: any GalaxyRequestTransport,
+        pause: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+        progress: (String) -> Void = { _ in }) async throws -> Bool {
+        guard lan.connected else { return false }
+        for attempt in 0...15 {
+            try Task.checkCancellation()
+            let response = try await lan.request(path: "/api/companion/bluetooth-ready", method: "GET", headers: [:], body: Data())
+            // Older comma versions do not expose readiness. The window POST remains authoritative.
+            guard response.status == 200,
+                  let json = try? JSONSerialization.jsonObject(with: response.bodyData) as? [String: Any],
+                  json["schema"] as? Int == 1, let ready = json["ready"] as? Bool else { break }
+            if ready { break }
+            let code = json["code"] as? String ?? ""
+            let message = json["message"] as? String ?? "Comma is not ready to pair."
+            guard ["starting", "bridge_starting"].contains(code), attempt < 15 else {
+                throw BridgeError.message(message)
+            }
+            progress(message)
+            try await pause(3_000_000_000)
+        }
+        for attempt in 0..<4 {
+            try Task.checkCancellation()
+            progress("Opening comma’s pairing window over Wi-Fi…")
+            let response = try await lan.request(path: windowPath, method: "POST", headers: [:], body: windowBody)
+            try Task.checkCancellation()
+            if response.status == 200 { return true }
+            let json = (try? JSONSerialization.jsonObject(with: response.bodyData)) as? [String: Any]
+            let code = json?["code"] as? String ?? ""
+            if response.status == 409 && code == "busy" && attempt < 3 {
+                progress("Comma’s Bluetooth is busy. Waiting to retry…")
+                try await pause(2_500_000_000)
+                continue
+            }
+            throw BridgeError.message("Couldn’t open comma’s pairing window (HTTP \(response.status)\(code.isEmpty ? "" : " · " + code)). Check your Wi-Fi connection to comma, then retry Bluetooth setup in this app.")
+        }
+        return false
+    }
 }
 
 enum SecretGoodGalaxy {
@@ -20,6 +71,15 @@ enum SecretGoodGalaxy {
               !decoded.unicodeScalars.contains(where: { $0.value < 32 }),
               !decoded.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) else { return false }
         return decoded.hasPrefix("/api/") || decoded == "/data/runtime.json"
+    }
+    /// A Galaxy page file under the same roots the app accepts when it saves comma's screens.
+    static func validPage(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), path.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45, 46, 47, 95].contains($0) }) else { return false }
+        let file = String(path.dropFirst())
+        let parts = file.split(separator: "/", omittingEmptySubsequences: false)
+        guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }), file != "data/runtime.json" else { return false }
+        return ["index.html", "manifest.webmanifest", "sentry-push-worker.js"].contains(file)
+            || ["assets/", "css/", "js/", "vendor/", "data/"].contains(where: { file.hasPrefix($0) })
     }
     static func needsWiFi(_ path: String) -> Bool {
         let path = URLComponents(string: path)?.path ?? path
@@ -51,6 +111,8 @@ final class GalaxyReadCache: GalaxyRequestTransport {
         // Already-sent reads still drain, but new reads cannot join an old one.
         pending.removeAll()
     }
+
+    func page(path: String) async throws -> BridgeResponse { try await transport.page(path: path) }
 
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         try Task.checkCancellation()

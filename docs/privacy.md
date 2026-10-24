@@ -16,9 +16,11 @@ Bluetooth permission is used to find and connect to comma. Local Network permiss
 
 The native app does not request access to the iPhone's contacts, microphone or photo library. Optional phone GPS sharing requests location permission only when you enable it. While enabled and connected, it sends recent location fixes, accuracy, timestamps and available altitude, speed and bearing to your comma, about once a second. Sharing may continue in the background with the iOS location indicator. You can turn sharing off in the app or revoke permission in iPhone Settings. This native feature does not upload GPS fixes to the app publisher; comma's navigation features and any providers configured there handle received location under their own settings and policies.
 
+Navigation alpha testing is optional and available under Developer mode. Its map, place search and phone route previews use Apple MapKit services. Search queries, route endpoints and the map area may be processed by Apple under its privacy policy. Sending a selected destination to comma uses the existing companion navigation API. CarPlay displays the same navigation state when alpha testing is enabled; regular mode displays companion controls and status.
+
 ## Network services
 
-Version 1.0.1 checks the StarPilot developer integration repository `dirwin31/openpilot`, branch `companion-ios-phone-music`, on GitHub for Galaxy interface updates and downloads those files. GitHub receives the network information needed to serve these requests, including the connecting IP address and requested resource. Its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement) describes its handling of service information.
+The app downloads Galaxy's interface files from your own comma over your local network (or its Wi-Fi hotspot) and saves them on the iPhone so Bluetooth can show them. It does not contact GitHub or any other server for these files.
 
 The native companion does not include advertising or an advertising-tracking SDK. Its diagnostics screen does not automatically upload reports to the publisher.
 
@@ -26,7 +28,7 @@ Opening the legacy Galaxy link opens your device-specific remote website in your
 
 ## Diagnostics and support
 
-The app keeps connection and page events for troubleshooting. Reports can contain app and operating-system versions, connection state, request-path categories, timings and errors. You choose whether to copy and share a report. Review it before sharing, and keep pairing keys, passwords, private device links and location information out of public reports.
+The app keeps connection and page events for troubleshooting. Reports can contain app and operating-system versions, connection state, request-path categories, timings and errors. You choose whether to copy, save as a text file, or share a report. Review it before sharing, and keep pairing keys, passwords, private device links and location information out of public reports.
 
 If you submit a StarPilot support ticket, the support team and the ticket-service provider can access the information you provide. Ticket history may remain with that service until removed by its operator. To request access to or deletion of a submitted report, use the same support ticket process and identify the ticket without posting additional private information publicly. A fixed deletion deadline is not promised by this policy.
 
