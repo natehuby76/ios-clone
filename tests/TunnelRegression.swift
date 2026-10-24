@@ -41,7 +41,10 @@ import Foundation
         precondition(request.value(forHTTPHeaderField: "Cookie") == "galaxy_session=opaque-token")
         precondition(request.value(forHTTPHeaderField: "Authorization") == nil)
         server.identity = "fedcba9876543210"
-        let wrong = await tunnel.probe(); precondition(!wrong && !tunnel.connected)
+        let restarted = await tunnel.probe(); precondition(restarted, "Saved authenticated tunnel survives a Galaxy restart")
+        tunnel.expectedDeviceID = "galaxy:another-comma"
+        let wrong = await tunnel.probe(); precondition(!wrong && !tunnel.connected, "Never fall back to another comma’s tunnel")
+        tunnel.expectedDeviceID = LANTransport.persistentIdentity(url: URL(string: url)!)
         server.identity = "0123456789abcdef"
         _ = await tunnel.probe()
         server.status = 302

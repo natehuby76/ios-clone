@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import CryptoKit
 
 /// Each request has an isolated, bounded buffer.
 final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
@@ -121,6 +122,21 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
               value.count == 16, value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
         return value
     }
+    // Galaxy's runtime instance changes on restart. Its paired tunnel URL persists.
+    // Store a digest so diagnostics never expose the private tunnel link.
+    static func persistentIdentity(_ data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["paired"] as? Bool == true, let text = json["url"] as? String,
+              let url = TunnelTransport.endpoint(text) else { return nil }
+        return persistentIdentity(url: url)
+    }
+    static func persistentIdentity(url: URL) -> String {
+        "galaxy:" + SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    static func matches(_ expected: String?, runtime: String, persistent: String?) -> Bool {
+        guard let expected else { return true }
+        return expected.hasPrefix("galaxy:") ? expected == persistent : expected == runtime
+    }
     func bind(to identity: String?) {
         if expectedDeviceID != identity { expectedDeviceID = identity; invalidate(reason: "Paired comma identity changed") }
     }
@@ -136,19 +152,32 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         do {
             let (data, response) = try await authenticated(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
-            let identity = Self.deviceID(data)
-            let available = response.statusCode == 200 && identity != nil
-                && (expectedDeviceID == nil || identity == expectedDeviceID)
+            let runtime = Self.deviceID(data)
+            var persistent: String?
+            if response.statusCode == 200, runtime != nil {
+                if let (statusData, statusResponse) = try? await authenticated(path: "/api/galaxy/status", method: "GET", headers: [:], body: Data(), limit: 8192), statusResponse.statusCode == 200 {
+                    persistent = Self.persistentIdentity(statusData)
+                }
+            }
+            let identity = persistent ?? runtime
+            let available = response.statusCode == 200 && runtime != nil
+                && Self.matches(expectedDeviceID, runtime: runtime ?? "", persistent: persistent)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
             let changed = connected != available
             connected = available
             verifiedDeviceID = available ? identity : nil
-            if available { status = "Local comma verified." }
+            if available {
+                if let persistent, expectedDeviceID != persistent {
+                    expectedDeviceID = persistent
+                    onEvent?("Saved persistent comma identity")
+                }
+                status = "Local comma verified."
+            }
             else if response.statusCode != 200 { status = "Galaxy answered HTTP \(response.statusCode)." }
             else if identity == nil { status = "The address answered, but did not return a valid Galaxy identity." }
             else {
-                status = "This address belongs to a different comma than the saved pairing."
-                onEvent?("Galaxy runtime instance mismatch: saved=\(expectedDeviceID ?? "none"); received=\(identity ?? "none"). Runtime instances may change when Galaxy restarts.")
+                status = "Couldn’t verify the saved comma. Reconnect Bluetooth or select your comma again."
+                onEvent?("Comma identity mismatch: saved=\(expectedDeviceID ?? "none"); received=\(identity ?? "none"). A legacy runtime pin needs Bluetooth verification or explicit local-only selection after a restart.")
             }
             if changed || !available { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: " + status) }
         } catch {
@@ -412,13 +441,17 @@ final class TunnelTransport: ObservableObject, GalaxyRequestTransport {
         do {
             let (data, response) = try await send(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, generation == original else { return false }
-            guard response.statusCode == 200, let id = LANTransport.deviceID(data),
-                  (credential.deviceID.isEmpty || id == credential.deviceID),
-                  (expectedDeviceID == nil || id == expectedDeviceID) else {
+            let persistent = LANTransport.persistentIdentity(url: Self.endpoint(credential.url)!)
+            guard response.statusCode == 200, let runtime = LANTransport.deviceID(data),
+                  // The authenticated, fixed tunnel URL identifies the saved tunnel across restarts.
+                  (!credential.deviceID.hasPrefix("galaxy:") || credential.deviceID == persistent),
+                  (LANTransport.matches(expectedDeviceID, runtime: runtime, persistent: persistent)
+                   || (expectedDeviceID == credential.deviceID && !credential.deviceID.isEmpty && !credential.deviceID.hasPrefix("galaxy:"))) else {
                 invalidate(response.statusCode == 401 || response.statusCode == 302 ? "Sign in to Tunnel again" : "Tunnel did not verify the saved comma")
                 return false
             }
-            self.credential = TunnelCredential(url: credential.url, cookie: credential.cookie, deviceID: id)
+            self.credential = TunnelCredential(url: credential.url, cookie: credential.cookie, deviceID: persistent)
+            expectedDeviceID = persistent
             connected = true; status = "Tunnel verified"
             return true
         } catch {

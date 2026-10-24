@@ -6,6 +6,7 @@ import Foundation
     var expired = false
     var failWrite = false
     var corruptIdentity = false
+    var tunnelURL: String?
     func load(_ request: URLRequest, _ limit: Int) async throws -> (Data, HTTPURLResponse) {
         calls.append(request)
         let path = request.url!.path
@@ -22,6 +23,8 @@ import Foundation
             precondition(request.value(forHTTPHeaderField: "Cookie")?.hasPrefix("galaxy_session=token") == true)
             if path == "/data/runtime.json" {
                 json = ["schemaVersion": 1, "monitor": "local", "instance": corruptIdentity ? "fedcba9876543210" : "0123456789abcdef"]
+            } else if path == "/api/galaxy/status" {
+                json = ["paired": tunnelURL != nil, "url": tunnelURL ?? ""]
             } else if expired {
                 expired = false; status = 401; json = ["error": "Refresh the local Galaxy session"]
             } else if failWrite { throw URLError(.networkConnectionLost) }
@@ -68,6 +71,23 @@ import Foundation
         server.corruptIdentity = true
         let mismatched = await lan.probe()
         precondition(!mismatched, "Reject LAN endpoint that differs from authenticated BLE identity")
+        server.corruptIdentity = false
+        server.tunnelURL = "https://galaxy.firestar.link/abcdefghijklmnop"
+        let migrated = await lan.probe()
+        precondition(migrated && lan.expectedDeviceID?.hasPrefix("galaxy:") == true, "Verified legacy runtime upgrades to a persistent pin")
+        server.corruptIdentity = true
+        let restarted = await lan.probe()
+        precondition(restarted, "Same comma remains connected after Galaxy restarts")
+        let saved = lan.expectedDeviceID
+        server.tunnelURL = "https://galaxy.firestar.link/ponmlkjihgfedcba"
+        let different = await lan.probe()
+        precondition(!different && lan.expectedDeviceID == saved, "Another comma at the same IP must not replace the selected comma")
+        server.tunnelURL = nil
+        let missing = await lan.probe()
+        precondition(!missing, "Missing stable identity must not downgrade a saved pin to runtime matching")
+        server.tunnelURL = "https://galaxy.firestar.link/abcdefghijklmnop"
+        let returned = await lan.probe()
+        precondition(returned, "The selected comma reconnects after another device was rejected")
         for invalid in ["http://evil.invalid/api/x", "//evil.invalid/api/x", "/api/../x", "/api/%2e%2e/x", "/api/%252e/x", "/api/x#fragment", "/data/system-monitor.sample.json"] {
             precondition(!SecretGoodGalaxy.validTarget(invalid), invalid)
         }

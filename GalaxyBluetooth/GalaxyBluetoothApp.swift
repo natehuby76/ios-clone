@@ -159,20 +159,19 @@ final class AppModel: ObservableObject {
     }
     func acceptTunnel(url: URL, cookie: String) async throws {
         let candidate = TunnelTransport()
-        candidate.expectedDeviceID = lan.expectedDeviceID
+        let previousIdentity = lan.expectedDeviceID
+        candidate.expectedDeviceID = previousIdentity
         try candidate.configure(TunnelCredential(url: url.absoluteString, cookie: cookie, deviceID: ""))
         guard await candidate.probe(), let credential = candidate.credential else { throw BridgeError.message(candidate.status) }
         try Task.checkCancellation()
-        guard lan.expectedDeviceID == nil || lan.expectedDeviceID == credential.deviceID else {
+        guard lan.expectedDeviceID == previousIdentity else {
             throw BridgeError.message("This tunnel belongs to a different comma.")
         }
         try TunnelKeyStore.save(credential)
         tunnelProbeTask?.cancel()
         try tunnel.configure(credential)
-        if lan.expectedDeviceID == nil {
-            lan.bind(to: credential.deviceID)
-            UserDefaults.standard.set(credential.deviceID, forKey: "galaxy.comma.identity")
-        }
+        lan.bind(to: credential.deviceID)
+        UserDefaults.standard.set(credential.deviceID, forKey: "galaxy.comma.identity")
         tunnel.expectedDeviceID = lan.expectedDeviceID
         wantsConnection = true
         mode = .automatic
@@ -190,7 +189,14 @@ final class AppModel: ObservableObject {
         tunnelProbeTask = Task { [weak self] in
             guard let self else { return }
             defer { self.tunnelProbeTask = nil }
-            _ = await self.tunnel.probe()
+            let previousIdentity = self.tunnel.expectedDeviceID
+            if await self.tunnel.probe(), let credential = self.tunnel.credential {
+                try? TunnelKeyStore.save(credential)
+                if self.lan.expectedDeviceID == previousIdentity {
+                    self.lan.bind(to: credential.deviceID)
+                    UserDefaults.standard.set(credential.deviceID, forKey: "galaxy.comma.identity")
+                }
+            }
             self.objectWillChange.send()
         }
     }
@@ -324,6 +330,9 @@ final class AppModel: ObservableObject {
         tunnel.onEvent = { [weak self] reason in self?.objectWillChange.send(); self?.logConnection(reason) }
         lan.onEvent = { [weak self] reason in
             guard let self else { return }
+            if self.lan.connected, let identity = self.lan.verifiedDeviceID {
+                UserDefaults.standard.set(identity, forKey: "galaxy.comma.identity")
+            }
             if self.tunnel.expectedDeviceID != self.lan.expectedDeviceID {
                 self.tunnel.expectedDeviceID = self.lan.expectedDeviceID
                 self.tunnel.invalidate("Comma identity changed")
@@ -516,7 +525,7 @@ final class AppModel: ObservableObject {
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
         connectionMessage = "Disconnected."
     }
-    func selectDiscoveredComma(_ device: DiscoveredComma) async -> Bool {
+    func selectDiscoveredComma(_ device: DiscoveredComma, userSelected: Bool = true) async -> Bool {
         guard !selectingDiscoveredComma, mode != .bluetooth else { return false }
         selectingDiscoveredComma = true
         automaticLAN?.cancel()
@@ -529,7 +538,11 @@ final class AppModel: ObservableObject {
             self?.connectionLog.record("Selected comma \(device.address): \(event)")
         }
         connectionLog.record("Checking selected comma at \(device.address):8082")
-        candidate.bind(to: lan.expectedDeviceID)
+        // Explicit local-only selection can recover an old runtime pin or choose another comma.
+        // Never apply that permission to background discovery or another saved transport.
+        if !userSelected || !pairingKey.isEmpty || tunnel.credential != nil {
+            candidate.bind(to: lan.expectedDeviceID)
+        }
         let originalGeneration = lan.generation
         let originalMode = mode
         do {
@@ -603,7 +616,7 @@ final class AppModel: ObservableObject {
         let networkPath = lastNetworkPath
         addressCheckSession = session
         do {
-            if identitySession != session {
+            if identitySession != session || !lan.connected {
                 let identity = try await bluetooth.request(path: "/data/runtime.json", method: "GET", headers: [:], body: Data())
                 guard !Task.isCancelled, wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
@@ -611,8 +624,12 @@ final class AppModel: ObservableObject {
                     networkDetails = "Automatic local discovery needs a registered device identifier. Bluetooth still works; enter comma’s IP manually for Local Wi-Fi."
                     return
                 }
-                lan.bind(to: value)
-                UserDefaults.standard.set(value, forKey: "galaxy.comma.identity")
+                let status = try? await bluetooth.request(path: "/api/galaxy/status", method: "GET", headers: [:], body: Data())
+                guard !Task.isCancelled, wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
+                let persistent = status.flatMap { $0.status == 200 ? LANTransport.persistentIdentity($0.bodyData) : nil }
+                let verified = persistent ?? value
+                lan.bind(to: verified)
+                UserDefaults.standard.set(verified, forKey: "galaxy.comma.identity")
 
                 identitySession = session
             }
@@ -655,7 +672,7 @@ final class AppModel: ObservableObject {
                       self.discovery.devices[0].id == candidate.id else { return }
                 self.connectionLog.record("First setup: verifying the only discovered comma")
                 self.openAfterFirstConnection = true
-                if !(await self.selectDiscoveredComma(candidate)) { self.openAfterFirstConnection = false }
+                if !(await self.selectDiscoveredComma(candidate, userSelected: false)) { self.openAfterFirstConnection = false }
             }
             return
         }
@@ -1065,7 +1082,7 @@ final class ConnectionEventLog: ObservableObject {
         Tunnel status: \(model.tunnel.status)
         Connection order: \(model.connectionPriority.map(\.title).joined(separator: " → "))
         \(model.commaSoftwareDiagnostics)
-        Saved Galaxy runtime instance: \(model.lan.expectedDeviceID ?? "none")
+        Saved comma identity: \(model.lan.expectedDeviceID ?? "none")
         LAN verified: \(model.lan.connected)
         Bluetooth verified: \(model.bluetooth.connected)
         Log session started: \(formatter.string(from: started)); retained: \(events.count); older events dropped: \(dropped)
