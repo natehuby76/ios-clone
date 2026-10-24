@@ -340,7 +340,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
 
     func monitorComma(connection: CommaConnection) async {
         while !Task.isCancelled, foreground, navigating, usingComma {
-            if commandRunning {
+            if commandRunning || connection.setupInProgress {
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
                 continue
             }

@@ -10,6 +10,8 @@ final class NavigationServices: ObservableObject {
     private var freshnessTask: Task<Void, Never>?
     private var subscription: AnyCancellable?
     private var phoneActive = false
+    private var enabled = false
+    private var carPlayActive = false
     private var resetting = false
     init(app: AppModel) {
         connection = CommaConnection(app: app)
@@ -42,14 +44,25 @@ final class NavigationServices: ObservableObject {
             connection.recordAction("Reset: comma clear not confirmed")
         }
     }
+    func setEnabled(_ value: Bool) {
+        guard enabled != value else { return }
+        enabled = value
+        if !value {
+            routeTask?.cancel(); routeTask = nil
+            connection.invalidateNavigationRequests()
+            navigation.resetLocalNavigation()
+        }
+        sync()
+    }
+    func setCarPlayActive(_ active: Bool) { carPlayActive = active; sync() }
     func setPhoneActive(_ active: Bool) { phoneActive = active; sync() }
     private func sync() {
 #if targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains("--preview-route") { return }
 #endif
-        let active = phoneActive || navigation.navigating
+        let active = enabled && (phoneActive || carPlayActive || navigation.navigating)
         navigation.setActive(active)
-        connection.app.setNavigationActive(navigation.navigating)
+        connection.app.setNavigationActive(enabled && navigation.navigating)
         if active && freshnessTask == nil {
             freshnessTask = Task { [weak self] in
                 while !Task.isCancelled {
@@ -58,7 +71,7 @@ final class NavigationServices: ObservableObject {
                 }
             }
         } else if !active { freshnessTask?.cancel(); freshnessTask = nil }
-        if active && navigation.navigating && navigation.usingComma {
+        if enabled && active && navigation.navigating && navigation.usingComma {
             if routeTask == nil { routeTask = Task { [weak self] in
                 guard let self else { return }
                 await navigation.monitorComma(connection: connection)

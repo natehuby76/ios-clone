@@ -8,7 +8,8 @@ final class CommaConnection: ObservableObject {
     unowned let app: AppModel
     var bluetooth: BluetoothTransport { app.bluetooth }
     var transport: PreferredTransport { app.transport }
-    var connected: Bool { transport.connected }
+    var connected: Bool { app.navigationEnabled && transport.connected }
+    var setupInProgress: Bool { app.connectionSetupBusy }
     var connectionLabel: String { connected ? transport.label + " connected" : bluetooth.connecting || bluetooth.isScanning ? "Connecting…" : "Comma not connected" }
     var nativeNavigation: Bool { true }
     @Published var busy = false
@@ -28,6 +29,7 @@ final class CommaConnection: ObservableObject {
     func record(_ value: String) { app.connectionLog.record("Navigation: " + value) }
     func recordAction(_ value: String) { record(value) }
     func ensureDeviceIdentity() async throws -> String {
+        guard connected, !setupInProgress else { throw BridgeError.message("Finish connection setup before using navigation.") }
         if let identity = deviceIdentity { return identity }
         let before = session
         let response = try await transport.request(path: nativeNavigation ? "/data/runtime.json" : "/api/params?key=DongleId", method: "GET", headers: [:], body: Data())
@@ -40,7 +42,7 @@ final class CommaConnection: ObservableObject {
     }
     // Navigation commands never use the general settings or params write endpoints.
     func navigation(_ command: NavigationCommand) async throws -> Data {
-        guard connected else { throw BridgeError.message("Connect to comma before sending navigation.") }
+        guard connected, !setupInProgress else { throw BridgeError.message("Finish connection setup before sending navigation.") }
         if nativeNavigation {
             let before = session
             let data = try await NativeNavigationAPI.command(command, transport: transport,
@@ -89,6 +91,7 @@ final class CommaConnection: ObservableObject {
         } catch { return nil }
     }
     func navigationSnapshot(version: String? = nil) async throws -> CommaRouteSnapshot {
+        guard connected, !setupInProgress else { throw BridgeError.message("Waiting for connection setup.") }
         if nativeNavigation {
             snapshotSequence += 1
             let requestID = snapshotSequence

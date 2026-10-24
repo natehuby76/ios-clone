@@ -12,10 +12,11 @@ final class LoopbackServer: ObservableObject {
     private(set) var listenerState = "stopped"
     private var availabilityTask: Task<Bool, Never>?
     private(set) var recentRequests: [String] = []
+    private var recentFailures: [String] = []
     var diagnosticSummary: String {
-        let mobile = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("index.html").path)
-        let script = FileManager.default.fileExists(atPath: webRoot.appendingPathComponent("js/app.js").path)
-        return "Local server ready: \(url != nil)\nLocal listener state: \(listenerState)\nRecent local server events:\n\(lifecycleEvents.joined(separator: "\n"))\nAsset source: \(webRoot.lastPathComponent == "Web" ? "bundled" : "saved update")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nLocal server error present: \(!error.isEmpty)"
+        let mobile = webRoot.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) } ?? false
+        let script = webRoot.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("js/app.js").path) } ?? false
+        return "Local server ready: \(url != nil)\nLocal listener state: \(listenerState)\nRecent local server events:\n\(lifecycleEvents.joined(separator: "\n"))\nAsset source: \(webRoot == nil ? "not downloaded" : "saved from comma")\nMobile HTML exists: \(mobile)\nGalaxy script exists: \(script)\nRetained failed requests (no bodies or credentials):\n\(recentFailures.joined(separator: "\n"))\nLocal server error present: \(!error.isEmpty)"
     }
     static func reportPath(_ target: String) -> String {
         let path = String(target.prefix(512)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
@@ -27,7 +28,7 @@ final class LoopbackServer: ObservableObject {
     let localSecret = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
     private var connections: [UUID: LocalConnection] = [:]
-    private var webRoot: URL
+    private var webRoot: URL?
     private let transport: any GalaxyRequestTransport
     private let probe: (URL) async -> Bool
     private var catalog: Data?
@@ -42,8 +43,7 @@ final class LoopbackServer: ObservableObject {
          }) {
         self.transport = transport
         self.probe = probe
-        let root = webRoot ?? Bundle.main.resourceURL!.appendingPathComponent("Web", isDirectory: true)
-        self.webRoot = root
+        self.webRoot = webRoot
 
     }
 
@@ -161,6 +161,10 @@ final class LoopbackServer: ObservableObject {
         let start = Date()
         let response = await respond(request)
         recentRequests.append("\(ISO8601DateFormatter().string(from: Date())) \(request.method) \(Self.reportPath(request.target)) → \(response.status), \(response.body.count) bytes, \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
+        if response.status >= 400, let failure = recentRequests.last {
+            recentFailures.append(failure)
+            if recentFailures.count > 40 { recentFailures.removeFirst(recentFailures.count - 40) }
+        }
         if recentRequests.count > 60 { recentRequests.removeFirst(recentRequests.count - 60) }
         return response
     }
@@ -283,30 +287,46 @@ final class LoopbackServer: ObservableObject {
                 let response = try await transport.request(path: request.target, method: request.method,
                                                           headers: request.headers, body: request.body)
                 return LocalResponse(status: response.status, headers: response.headers, body: response.bodyData)
-            } catch { return .error(502, error.localizedDescription) }
+            } catch {
+                let failure = error as NSError
+                record("Request failed: \(request.method) \(Self.reportPath(request.target)); domain=\(failure.domain), code=\(failure.code)")
+                return .error(502, error.localizedDescription)
+            }
         }
-        guard ["GET", "HEAD"].contains(request.method) else { return .error(405, "Method is not supported for bundled files.") }
+        guard ["GET", "HEAD"].contains(request.method) else { return .error(405, "Method is not supported for Galaxy files.") }
         let assetPath = path == "/" ? "index.html" : String(path.dropFirst())
-        let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
-        guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), var data = try? Data(contentsOf: file) else {
-            return .error(404, "Bundled Galaxy asset was not found.")
+        var data: Data
+        if let webRoot {
+            let file = webRoot.appendingPathComponent(assetPath).standardizedFileURL
+            guard file.path.hasPrefix(webRoot.standardizedFileURL.path + "/"), let saved = try? Data(contentsOf: file) else {
+                return .error(404, "Galaxy asset was not found.")
+            }
+            data = saved
+        } else {
+            // No saved copy yet (an older comma that cannot share its screens): over Wi-Fi/LAN read the pages live from comma.
+            let notYet = "Galaxy screens aren’t downloaded yet. Connect to comma over Wi-Fi once."
+            guard transport.connected, SecretGoodGalaxy.validPage("/" + assetPath) else { return .error(503, notYet) }
+            guard let live = try? await transport.page(path: "/" + assetPath) else { return .error(503, notYet) }
+            guard live.status == 200 else { return .error(live.status, "Comma could not serve this Galaxy asset.") }
+            data = live.bodyData
         }
         if ["js/snapshot-feed.js", "js/settings.js"].contains(assetPath), let source = String(data: data, encoding: .utf8) {
             data = Data(Self.nativeReadDeadlines(source, asset: assetPath).utf8)
         }
+        let pathExtension = (assetPath as NSString).pathExtension
         if assetPath == "js/toggle-search.js", let source = String(data: data, encoding: .utf8),
            source.contains("export class SettingsSearchIndex"), source.contains("export const ToggleSearch") {
             data.append(Data(("\n" + Self.nativeSearchScript).utf8))
             record("Native incremental toggle search enabled")
         }
         let mime: String
-        switch file.pathExtension {
+        switch pathExtension {
         case "js", "mjs": mime = "text/javascript"
         case "css": mime = "text/css"
         case "html": mime = "text/html; charset=utf-8"
         case "json", "webmanifest": mime = "application/json"
         case "svg": mime = "image/svg+xml"
-        default: mime = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        default: mime = UTType(filenameExtension: pathExtension)?.preferredMIMEType ?? "application/octet-stream"
         }
         return LocalResponse(status: 200, headers: ["content-type": mime], body: data)
     }

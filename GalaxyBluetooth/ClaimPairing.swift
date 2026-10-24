@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 import CoreBluetooth
 
-/// What comma hands a phone when its pairing window is open (Settings → Bluetooth → Pair phone on comma).
+/// The app opens comma’s pairing window over verified LAN before claiming a key.
 struct ClaimResult: Equatable {
     let key: String
     let id: String?
@@ -95,7 +95,7 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
             timeout = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard !Task.isCancelled else { return }
-                self?.fail("comma didn’t answer. On comma open Settings → Bluetooth → Pair phone, then try again.")
+                self?.fail("Comma didn’t respond. Keep your iPhone nearby and reconnect to comma over Wi-Fi.\nThen try Bluetooth setup again in this app.")
             }
         }
     }
@@ -104,6 +104,12 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
         guard continuation != nil else { return }
         onEvent?("Phone pairing cancelled")
         finish(.failure(CancellationError()))
+    }
+
+    private func failBluetooth(_ error: Error, stage: String) {
+        let failure = error as NSError
+        onEvent?("Pairing \(stage) failed: domain=\(failure.domain), code=\(failure.code)")
+        fail(error.localizedDescription)
     }
 
     private func fail(_ message: String) {
@@ -184,7 +190,7 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral, characteristic.uuid == CBUUID(string: Wire.rx) else { return }
-        if let error { fail(error.localizedDescription); return }
+        if let error { failBluetooth(error, stage: "write"); return }
         if claimed != nil {
             // Release this connection before the normal transport connects to the same comma.
             handingOff = true
@@ -199,7 +205,7 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral else { return }
-        if let error { fail(error.localizedDescription); return }
+        if let error { failBluetooth(error, stage: "read"); return }
         guard let data = characteristic.value else { fail("Empty Bluetooth response."); return }
         if characteristic.uuid == CBUUID(string: Wire.info) {
             guard data.count == 17, data.first == 1, let rx else { fail("Unsupported bridge protocol."); return }

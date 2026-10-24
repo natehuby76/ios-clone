@@ -11,12 +11,12 @@ to build it yourself, open `openpilot/starpilot/companion/ios/GalaxyBluetooth.xc
 ## pair
 
 1. Leave the comma powered and Offroad for setup. it needs internet for the first bridge installation.
-2. on comma open Settings → Bluetooth → **Pair phone**. the window stays open for two minutes.
-3. on the iPhone, open the app and tap **Pair with comma**. allow Bluetooth and Local Network access when asked.
+2. Join the same Wi-Fi network as comma, or join comma’s hotspot. In the app, select comma and wait for the Wi-Fi connection to be verified.
+3. Tap **Pair Bluetooth with comma** in the app’s Advanced connection options. The app opens comma’s pairing window automatically. Allow Bluetooth and Local Network access when asked.
 4. when the app says so, open iPhone Settings → Bluetooth and tap your comma once. that pairs phone music; iOS does not let an app do it.
 5. open Galaxy and check that settings load.
 
-the app and phone music pair in the same window. **Forget** on a Bluetooth device in comma Settings also removes its app key; it does not remove the car's Bluetooth pairing. tap **Pair with comma** again to reconnect afterwards.
+the app and phone music pair in the same window. **Forget** on a Bluetooth device in comma Settings also removes its app key; it does not remove the car's Bluetooth pairing. connect over Wi-Fi and start Bluetooth setup in the app again afterwards.
 
 ## choose a connection
 
@@ -28,7 +28,7 @@ bluetooth cannot carry every Galaxy feature. Recordings, replay, cameras, map ti
 
 ## updates and reports
 
-install native app updates through TestFlight. Galaxy's web UI updates separately from official `SecretGoodStarPilot`; failed downloads keep the saved UI.
+install native app updates through TestFlight. Galaxy's web UI is downloaded from your comma over Wi-Fi/LAN (connect once before using Bluetooth) and refreshed whenever you reconnect; failed downloads keep the saved UI.
 
 for a problem, enable **Developer Mode** in app Settings, reproduce it, then use **Dev / Logs → Copy all reports**. send the report with your phone model, comma version and what you tried. do not share pairing codes or credentials.
 

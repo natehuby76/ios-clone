@@ -15,8 +15,11 @@ struct ConnectionSettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var advanced = false
     @State private var confirmForget = false
+    @State private var showPairingHelp = false
     @State private var checked = false
     @State private var openAfterReconnect = false
+    @State private var connectingCommaID: String?
+    @State private var showHotspotJoin = false
 
     private var accent: Color { colorScheme == .dark ? Color(red: 0.68, green: 0.48, blue: 0.96) : Color(red: 0.45, green: 0.26, blue: 0.73) }
     private var background: Color { colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.93, green: 0.90, blue: 0.98) }
@@ -24,14 +27,23 @@ struct ConnectionSettingsView: View {
     private var muted: Color { colorScheme == .dark ? Color(red: 0.70, green: 0.65, blue: 0.77) : Color(red: 0.36, green: 0.29, blue: 0.46) }
     private var connected: Bool { model.transport.connected }
     private var pairing: Bool { model.pairingInProgress }
-    private var needsPairing: Bool { model.mode != .lan && model.pairingKey.isEmpty }
+    private var needsPairing: Bool { model.mode == .bluetooth && model.pairingKey.isEmpty }
     private var connecting: Bool { !connected && (bluetooth.connecting || bluetooth.isScanning) }
     private var primaryTitle: String {
         if pairing { return "Pairing…" }
         if connected { return model.opened ? "Open Galaxy" : "Preparing Galaxy…" }
         if connecting { return "Connecting…" }
-        return needsPairing ? "Pair with comma" : "Reconnect"
+        return needsPairing ? (model.hasLANPairingSetup ? "Pair with comma" : "Connect over Wi-Fi first") : "Connect"
     }
+    private var connectionCandidates: [DiscoveredComma] {
+        var devices = discovery.devices
+        if let host = try? LANTransport.endpoint(model.address).host,
+           !devices.contains(where: { $0.address == host }) {
+            devices.append(DiscoveredComma(id: "manual-" + host, name: "Comma", address: host))
+        }
+        return devices
+    }
+
     private var checking: Bool { model.matchingGalaxy || assets.checking }
     private var status: String { pairing ? "Pairing with comma…" : connected ? "Connected via \(model.transport.label)" : connecting ? "Connecting to comma…" : "Not connected" }
 
@@ -81,11 +93,25 @@ struct ConnectionSettingsView: View {
                     .font(.system(size: 11)).foregroundStyle(muted)
             }.padding(.horizontal, 18).padding(.top, 0).padding(.bottom, 12)
                 .frame(maxWidth: 460).frame(maxWidth: .infinity)
-        }.scrollBounceBehavior(.basedOnSize).background(LinearGradient(colors: [background, panel.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).foregroundStyle(Color.primary)
+        }.scrollBounceBehavior(.basedOnSize).background {
+            if model.navigationEnabled { LinearGradient(colors: [background, panel.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea() }
+            else { background.ignoresSafeArea() }
+        }.foregroundStyle(Color.primary).preferredColorScheme(model.navigationEnabled ? nil : .dark)
             .onChange(of: connected) { _, _ in openReconnectedGalaxy() }
+            .onChange(of: pairing) { _, value in if value { openAfterReconnect = false } }
             .onChange(of: model.opened) { _, _ in openReconnectedGalaxy() }
             .onChange(of: model.wantsConnection) { _, value in if !value { openAfterReconnect = false } }
             .tint(accent)
+            .alert("Join comma’s hotspot", isPresented: $showHotspotJoin) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("This hotspot address is available in the device list, but your iPhone couldn’t reach and verify comma there. In iPhone Settings → Wi-Fi, join comma’s TheGalaxy-… network using the hotspot password shown on comma. Then return here and tap the comma row again.")
+            }
+            .alert("Reset Bluetooth pairing", isPresented: $showPairingHelp) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("If Bluetooth still won’t connect, try a fresh pairing:\n\n1. In this app, open Advanced → Forget Bluetooth pairing.\n2. On comma, open Bluetooth settings and forget this iPhone. Remove its app pairing too if it is listed separately.\n3. On iPhone, open Settings → Bluetooth → ⓘ beside comma → Forget This Device, if listed.\n4. Connect to comma over Wi-Fi, then start Bluetooth setup in this app. The app opens pairing on comma automatically.\n\nThis resets device pairing, not the app’s Bluetooth permission.")
+            }
             .confirmationDialog("Forget Bluetooth pairing?", isPresented: $confirmForget, titleVisibility: .visible) {
                 Button("Forget pairing", role: .destructive) {
                     model.disconnect(); bluetooth.forgetSavedDevice(); PairingKeyStore.remove(); model.pairingKey = ""
@@ -95,7 +121,7 @@ struct ConnectionSettingsView: View {
     }
 
     private func openReconnectedGalaxy() {
-        guard openAfterReconnect, connected, model.opened else { return }
+        guard openAfterReconnect, !pairing, connected, model.opened else { return }
         openAfterReconnect = false
         select(.galaxy)
     }
@@ -128,33 +154,137 @@ struct ConnectionSettingsView: View {
                 }
             }.padding(3).background(accent.opacity(0.07), in: Capsule())
                 .accessibilityLabel("Connection mode").disabled(pairing)
-            Text(pairing ? "Keep Pair phone open on comma." : model.mode == .automatic ? "Wi-Fi first, Bluetooth as backup." : model.mode == .bluetooth ? "Local controls over Bluetooth." : "Uses your local Wi-Fi network.")
-                .font(.system(size: 11)).foregroundStyle(muted)
+            if !pairing {
+                if model.pairingKey.isEmpty && !model.hasLANPairingSetup {
+                    Text("Allow Local Network and Bluetooth when iPhone asks. We’ll find comma on your Wi-Fi or hotspot first.").font(.system(size: 11)).foregroundStyle(muted)
+                }
+                Text(model.mode == .automatic ? "Connect over Wi-Fi\nBluetooth takes over when needed" : model.mode == .bluetooth ? "Connect directly to comma\nControl Galaxy without Wi-Fi" : "Connect over your local network\nJoin the same Wi-Fi or comma’s hotspot")
+                    .font(.system(size: 11)).foregroundStyle(muted).lineSpacing(3)
+                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                    .fixedSize(horizontal: false, vertical: true).padding(.vertical, 3)
+            }
+            if model.mode != .bluetooth && !connected && !pairing && (discovery.searching || !connectionCandidates.isEmpty) {
+                discoveredCommas
+            } else {
             Button {
                 if connected && model.opened { select(.galaxy) }
-                else if needsPairing { model.pairWithComma() }
-                else { openAfterReconnect = true; model.connect(); openReconnectedGalaxy() }
+                else if needsPairing {
+                    if model.hasLANPairingSetup { model.pairWithComma() }
+                    else { model.mode = .automatic; model.connect() }
+                }
+                else {
+                    openAfterReconnect = true
+                    model.connect()
+                    openReconnectedGalaxy()
+                }
             } label: {
                 HStack(spacing: 7) {
                     if pairing { PairingSignal() }
                     else if connecting || (connected && !model.opened) { ProgressView().controlSize(.small) }
-                    Text(primaryTitle)
-                }.font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity, minHeight: 44)
+                    Text(pairing ? model.connectionMessage : primaryTitle)
+                        .lineLimit(2).minimumScaleFactor(0.85).multilineTextAlignment(.center)
+                }.font(.system(size: 12, weight: .medium)).padding(.horizontal, 18)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .background(LinearGradient(colors: [Color(red: 0.73, green: 0.55, blue: 1), accent], startPoint: .leading, endPoint: .trailing), in: Capsule())
                     .foregroundStyle(Color(red: 0.12, green: 0.06, blue: 0.19))
             }.buttonStyle(.plain).disabled(pairing || connecting || (connected && !model.opened))
+            }
             if pairing {
                 Button("Cancel pairing") { model.cancelPairing() }.font(.system(size: 12)).frame(maxWidth: .infinity, minHeight: 30)
+            } else if !model.pairingFailure.isEmpty {
+                connectionMessage(model.pairingFailure)
             } else if model.connectionMessage != "Connected over \(model.transport.label)." && !connected {
-                message(model.connectionMessage)
+                connectionMessage(model.connectionMessage)
+            }
+            if !pairing && (!model.pairingFailure.isEmpty || (bluetooth.connectionFailed && model.mode != .lan)) {
+                Button("Bluetooth trouble? Try resetting pairing") { showPairingHelp = true }
+                    .font(.system(size: 11)).foregroundStyle(accent).frame(minHeight: 30)
             }
         }.padding(14).background(LinearGradient(colors: [panel, background], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 22))
             .overlay(RoundedRectangle(cornerRadius: 22).stroke(accent.opacity(0.25)))
     }
 
+    private func connectionMessage(_ text: String) -> some View {
+        let copy = text
+        let split = copy.range(of: ". ")
+        let title = split.map { String(copy[..<$0.lowerBound]) } ?? copy
+        let detail = split.map { String(copy[$0.upperBound...]) }
+        return VStack(spacing: 4) {
+            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.primary.opacity(0.9))
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 11)).foregroundStyle(muted).lineSpacing(3)
+            }
+        }.multilineTextAlignment(.center).frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8).padding(.top, 3)
+    }
+
+    private var discoveredCommas: some View {
+        VStack(spacing: 8) {
+            ForEach(connectionCandidates) { device in
+                Button {
+                    connectingCommaID = device.id
+                    openAfterReconnect = true
+                    Task { @MainActor in
+                        defer { connectingCommaID = nil }
+                        let selected = await model.selectDiscoveredComma(device)
+                        if !selected && device.address == "172.31.254.1" {
+                            openAfterReconnect = false
+                            showHotspotJoin = true
+                        } else if selected { openReconnectedGalaxy() }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        HStack(alignment: .bottom, spacing: 3) {
+                            ForEach(0..<4) { bar in
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(accent.opacity(0.45 + Double(bar) * 0.18))
+                                    .frame(width: 4, height: CGFloat(7 + bar * 5))
+                            }
+                        }.frame(width: 28, height: 26).accessibilityHidden(true)
+                        Text(device.name).font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        Text(device.address).font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(muted).lineLimit(1)
+                        if connectingCommaID == device.id {
+                            ProgressView().controlSize(.small).tint(accent)
+                        } else {
+                            Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
+                        }
+                    }.padding(.horizontal, 14).frame(minHeight: 58)
+                        .background(LinearGradient(colors: [accent.opacity(0.18), panel], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 16))
+                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(accent.opacity(0.35)))
+                        .overlay(alignment: .bottomLeading) {
+                            if device.address == "172.31.254.1" {
+                                Label("Comma Hotspot", systemImage: "wifi")
+                                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(accent)
+                                    .padding(.horizontal, 7).padding(.vertical, 2)
+                                    .background(panel, in: Capsule())
+                                    .padding(.leading, 14).offset(y: 7)
+                            }
+                        }
+                        .padding(.bottom, device.address == "172.31.254.1" ? 7 : 0)
+                        .contentShape(RoundedRectangle(cornerRadius: 16))
+                }.buttonStyle(.plain).disabled(model.selectingDiscoveredComma)
+                    .accessibilityLabel("Connect to \(device.name), \(device.address)")
+            }
+            HStack(spacing: 8) {
+                if discovery.searching { ProgressView().controlSize(.mini).tint(accent) }
+                Text(discovery.searching ? "Finding comma on Wi-Fi…" : "Select your comma")
+                    .font(.system(size: 11)).foregroundStyle(muted)
+                Spacer()
+                Button(discovery.searching ? "Stop" : "Search again") {
+                    if discovery.searching { discovery.stop() } else { discovery.start() }
+                }.font(.system(size: 11, weight: .medium)).foregroundStyle(accent)
+                    .frame(minHeight: 44).disabled(model.selectingDiscoveredComma)
+            }
+        }
+    }
+
     private var preferences: some View {
         VStack(spacing: 0) {
-            row("music.note", title: "Phone music", subtitle: audio.phase == .connected ? "Comma is the audio output" : pairing ? "Waiting for app pairing" : "Audio not verified") {
+            row("music.note", title: "Phone music", subtitle: pairing ? "Waiting for app pairing" : audio.summary) {
                 Button("Set up") { model.startAudioPairing() }.disabled(!connected || pairing).font(.system(size: 12)).frame(minHeight: 44)
             }
             separator
@@ -162,18 +292,25 @@ struct ConnectionSettingsView: View {
                 Toggle("Share phone location", isOn: Binding(get: { location.sharing }, set: { location.setSharing($0) })).labelsHidden()
             }
             separator
-            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : checked && assets.readyRoot != nil ? "Up to date · just checked" : assets.readyRoot != nil && connected ? "Matched to your comma" : "Bundled screens") {
+            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : checked && assets.readyRoot != nil ? "Up to date · just checked" : assets.readyRoot != nil ? "Saved from your comma" : "Not downloaded · needs Wi-Fi") {
                 Button {
                     Task { await model.checkGalaxyUpdates(); checked = true }
                 } label: {
                     if checking { ProgressView().controlSize(.small).accessibilityLabel("Checking Galaxy") }
                     else { Text(checked ? assets.readyRoot != nil ? "✓ Checked" : "Retry" : "Check") }
-                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || pairing)
+                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || !model.transport.usesLAN || pairing)
             }
-            if checked && !checking && assets.readyRoot == nil { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
+            if checked && !checking { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
             separator
             row("chevron.left.forwardslash.chevron.right", title: "Developer mode", subtitle: "Diagnostics and logs") {
-                Toggle("Developer mode", isOn: $model.developerMode).labelsHidden()
+                Toggle("Developer mode", isOn: $model.developerMode).labelsHidden().accessibilityIdentifier("developer-mode-toggle")
+            }
+            if model.developerMode {
+                Divider().overlay(accent.opacity(0.12)).padding(.leading, 42)
+                row("location.fill", title: "Navigation alpha testing", subtitle: "Navigation UI and CarPlay maps · experimental") {
+                    Toggle("Navigation alpha testing", isOn: $model.navigationAlpha).labelsHidden()
+                        .accessibilityIdentifier("navigation-alpha-toggle")
+                }
             }
         }.background(panel, in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(accent.opacity(0.23)))
@@ -194,20 +331,22 @@ struct ConnectionSettingsView: View {
                     }.disabled(model.selectingDiscoveredComma || pairing)
                 }
                 message(discovery.status)
-                ForEach(discovery.devices) { device in
-                    Button { Task { await model.selectDiscoveredComma(device) } } label: {
-                        VStack(alignment: .leading) { Text(device.name); Text(device.address).font(.caption) }
-                    }.disabled(model.selectingDiscoveredComma || pairing)
-                }
                 Toggle("Find address over Bluetooth", isOn: $model.findAddressAutomatically)
-                TextField("Comma IP address", text: $model.address).keyboardType(.numbersAndPunctuation)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
+                TextField("Comma IP address", text: $model.address, prompt: Text("172.31.254.1 or IP:8082").foregroundColor(muted)).keyboardType(.numbersAndPunctuation)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.plain)
+                    .foregroundStyle(Color.white).tint(accent).padding(12)
+                    .background(background, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.3)))
                 message(lan.status)
             }
             if model.mode != .lan {
-                Button("Pair again") { model.pairWithComma() }.disabled(pairing)
-                SecureField("64-character pairing key", text: $model.pairingKey)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
+                Button(model.pairingKey.isEmpty ? "Pair Bluetooth with comma" : "Pair Bluetooth again") { model.pairWithComma() }.disabled(pairing || !model.hasLANPairingSetup)
+                if !model.hasLANPairingSetup { message("Connect to comma over Wi-Fi before setting up Bluetooth.") }
+                SecureField("64-character pairing key", text: $model.pairingKey, prompt: Text("64-character pairing key").foregroundColor(muted))
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.plain)
+                    .foregroundStyle(Color.white).tint(accent).padding(12)
+                    .background(background, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.3)))
                 Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }
                     .disabled(bluetooth.isScanning || bluetooth.connecting || pairing)
                 message(bluetooth.status)

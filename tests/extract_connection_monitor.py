@@ -27,7 +27,7 @@ enum ConnectionMode { case automatic, bluetooth, lan }
     var endpoint: URL?
     var connected = false
     var probes = 0
-    func configure(address: String) throws {}
+    func configure(address: String) throws { endpoint = URL(string: "http://\(address):8082") }
     func probe() async -> Bool {
         probes += 1
         try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -36,11 +36,22 @@ enum ConnectionMode { case automatic, bluetooth, lan }
 }
 @MainActor final class Transport {
     let label = "Reconnecting…"
-    let connected = false
+    var connected = false
 }
-@MainActor final class Discovery { func stop() {} }
+@MainActor final class Discovery { var searching = false; var status = "Find comma on Wi-Fi"; func start() { searching = true }; func stop() {} }
+@MainActor final class Audio { func refreshAudioRoute() {} }
+@MainActor final class Assets { var readyRoot: URL?; var status = "" }
 @MainActor final class MonitorProbe {
     let bluetooth = Bluetooth(), lan = LAN(), transport = Transport(), discovery = Discovery()
+    let assets = Assets()
+    let audioPairing = Audio()
+    var legacyURL: URL?
+    var lastAddressCheck = Date.distantPast
+    var localAddressNetwork = ""
+    var opened = false
+    var showAudioPairing = false
+    var galaxyOpens = 0, galaxyChecks = 0, musicStarts = 0
+    var selectingDiscoveredComma = false
     var wantsConnection = true, pairingInProgress = false, openingGalaxy = false, offerAudioPairing = false
     var mode = ConnectionMode.automatic
     var pairingKey = "saved", address = "", connectionMessage = "", lastRoute = ""
@@ -49,14 +60,44 @@ enum ConnectionMode { case automatic, bluetooth, lan }
     func learnAddress() async {}
     func discoverAutomaticLAN() {}
     func logConnection(_ reason: String) {}
-    func openIfReady() {}
-    func checkGalaxyUpdates() async {}
-    func startAudioPairing() {}
+    func openIfReady() { galaxyOpens += 1 }
+    func checkGalaxyUpdates() async { galaxyChecks += 1 }
+    func startAudioPairing() { musicStarts += 1; showAudioPairing = true }
 '''
 tests = r'''
 }
 @main struct MonitorRegression {
     @MainActor static func main() async throws {
+        for mode in [ConnectionMode.automatic, .lan, .bluetooth] {
+            let fresh = MonitorProbe()
+            fresh.mode = mode
+            fresh.wantsConnection = false
+            fresh.connect()
+            precondition(fresh.wantsConnection)
+            precondition(fresh.discovery.searching == (mode != .bluetooth), "First connection must browse LAN unless Bluetooth-only")
+        }
+        let saved = MonitorProbe()
+        saved.address = "192.168.1.20"
+        saved.connect()
+        precondition(saved.lan.endpoint != nil && !saved.discovery.searching)
+        let selecting = MonitorProbe()
+        selecting.selectingDiscoveredComma = true
+        let selectionMonitor = Task { await selecting.monitor() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        precondition(selecting.lan.probes == 0 && selecting.bluetooth.attempts == 0, "Background connections must not race a tapped comma")
+        selectionMonitor.cancel()
+        await selectionMonitor.value
+        let music = MonitorProbe()
+        music.mode = .bluetooth
+        music.bluetooth.connected = true
+        music.transport.connected = true
+        music.offerAudioPairing = true
+        let musicMonitor = Task { await music.monitor() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        precondition(music.musicStarts == 1 && music.galaxyOpens == 0 && music.galaxyChecks == 0,
+                     "Music setup must start before Galaxy can occupy the Bluetooth request queue")
+        musicMonitor.cancel()
+        await musicMonitor.value
         let model = MonitorProbe()
         let monitor = Task { await model.monitor() }
         for _ in 0..<100 where model.lan.probes == 0 {
@@ -74,4 +115,4 @@ tests = r'''
     }
 }
 '''
-Path(sys.argv[1]).write_text(stubs + '\n' + method('    private func probeLocalConnection()') + '\n' + method('    func monitor() async') + tests)
+Path(sys.argv[1]).write_text(stubs + '\n' + method('    func connect()') + '\n' + method('    private func probeLocalConnection()') + '\n' + method('    func monitor() async') + tests)
