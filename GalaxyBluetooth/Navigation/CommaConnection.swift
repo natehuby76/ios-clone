@@ -21,7 +21,7 @@ final class CommaConnection: ObservableObject {
     private var lastFeedState = ""
     private var requestGeneration = 0
     private var snapshotSequence = 0
-    private var networkSession: String { transport.usesLAN ? "lan-" + app.lan.generation : "ble-" + bluetooth.sessionIdentifier }
+    private var networkSession: String { app.connectionSession }
     var session: String { networkSession + ":" + String(requestGeneration) }
     func invalidateNavigationRequests() { requestGeneration += 1; nativeReadRevision = nil; nativeRouteVersion = nil }
     var deviceIdentity: String? { connected && networkSession == identitySession ? verifiedIdentity : nil }

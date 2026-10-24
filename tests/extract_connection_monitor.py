@@ -46,6 +46,8 @@ enum ConnectionMode { case automatic, bluetooth, lan }
     let assets = Assets()
     let audioPairing = Audio()
     var legacyURL: URL?
+    var lastTunnelProbe = Date.distantPast
+    func probeTunnelConnection() {}
     var lastAddressCheck = Date.distantPast
     var localAddressNetwork = ""
     var opened = false

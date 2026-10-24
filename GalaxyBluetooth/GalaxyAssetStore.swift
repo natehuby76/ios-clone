@@ -38,13 +38,13 @@ struct GalaxyListing: Decodable {
     let files: [GalaxyAssetManifest.File]
 }
 
-/// One GET to comma over Wi-Fi/LAN: the HTTP status and body.
+/// One GET to comma over Local Wi-Fi/LAN: the HTTP status and body.
 typealias GalaxyPageFetch = @Sendable (_ path: String, _ limit: Int) async throws -> (status: Int, data: Data)
 
-/// Keeps the Bluetooth copy of Galaxy matched to the pages comma serves, downloaded over Wi-Fi/LAN.
+/// Keeps the Bluetooth copy of Galaxy matched to the pages comma serves, downloaded over Local Wi-Fi/LAN.
 @MainActor
 final class GalaxyAssetStore: ObservableObject {
-    static let notDownloaded = "Galaxy screens aren’t downloaded yet. Connect to comma over Wi-Fi once."
+    static let notDownloaded = "Galaxy screens aren’t downloaded yet. Connect to comma over Local Wi-Fi or Tunnel once."
     static let tooOld = "Comma’s software is too old to share Galaxy screens; update comma."
     @Published private(set) var status = GalaxyAssetStore.notDownloaded
     @Published private(set) var checking = false
@@ -79,7 +79,7 @@ final class GalaxyAssetStore: ObservableObject {
     }
     /// Over Bluetooth nothing can be downloaded; tell the user when the saved screens are behind comma.
     func noteCommaBuild(commit: String?) {
-        if olderThan(commit: commit) { status = "Galaxy screens are from an older comma build. Connect over Wi-Fi to refresh." }
+        if olderThan(commit: commit) { status = "Galaxy screens are from an older comma build. Connect over Local Wi-Fi or Tunnel to refresh." }
     }
     /// Compares comma's inventory with the saved copy and downloads only what changed. Never skips on an unchanged commit.
     func check(fetch: @escaping GalaxyPageFetch, stillCurrent: () -> Bool = { true }) async {

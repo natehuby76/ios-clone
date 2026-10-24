@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Security
 
 /// Each request has an isolated, bounded buffer.
 final class BoundedHTTP: NSObject, URLSessionDataDelegate, @unchecked Sendable {
@@ -270,49 +271,197 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
 enum ConnectionMode: String, CaseIterable, Identifiable {
     case automatic, lan, bluetooth
     var id: String { rawValue }
-    var title: String { switch self { case .automatic: "Automatic"; case .lan: "Wi-Fi only"; case .bluetooth: "Bluetooth only" } }
+    var title: String { switch self { case .automatic: "Automatic"; case .lan: "Local Wi-Fi only"; case .bluetooth: "Bluetooth only" } }
+}
+
+enum ConnectionRoute: String, CaseIterable, Identifiable, Codable {
+    case lan, tunnel, bluetooth
+    var id: String { rawValue }
+    var title: String { switch self { case .lan: "Local Wi-Fi"; case .tunnel: "Tunnel"; case .bluetooth: "Bluetooth" } }
+    static func normalized(_ values: [String]) -> [Self] {
+        var result: [Self] = []
+        for value in values { if let route = Self(rawValue: value), !result.contains(route) { result.append(route) } }
+        return result + allCases.filter { !result.contains($0) }
+    }
 }
 
 @MainActor
 final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
     let lan: any GalaxyRequestTransport
     let bluetooth: any GalaxyRequestTransport
+    let tunnel: (any GalaxyRequestTransport)?
     var invalidateLAN: (String) -> Void
+    var invalidateTunnel: (String) -> Void
     @Published var mode: ConnectionMode = .automatic
-    var connected: Bool { (mode != .bluetooth && lan.connected) || (mode != .lan && bluetooth.connected) }
-    var usesLAN: Bool { mode != .bluetooth && lan.connected }
-    var label: String { usesLAN ? "Wi-Fi" : bluetooth.connected && mode != .lan ? "Bluetooth" : "Reconnecting…" }
-    var catalogSHA256: String? { usesLAN ? lan.catalogSHA256 : bluetooth.catalogSHA256 }
-    init(lan: any GalaxyRequestTransport, bluetooth: any GalaxyRequestTransport, invalidateLAN: @escaping (String) -> Void) {
-        self.lan = lan; self.bluetooth = bluetooth; self.invalidateLAN = invalidateLAN
+    var priority: [ConnectionRoute] = ConnectionRoute.allCases
+    private var routes: [ConnectionRoute] {
+        switch mode {
+        case .automatic: ConnectionRoute.normalized(priority.map(\.rawValue))
+        case .lan: [.lan]
+        case .bluetooth: [.bluetooth]
+        }
+    }
+    private func transport(_ route: ConnectionRoute) -> (any GalaxyRequestTransport)? {
+        switch route { case .lan: lan; case .tunnel: tunnel; case .bluetooth: bluetooth }
+    }
+    var selectedRoute: ConnectionRoute? { routes.first { transport($0)?.connected == true } }
+    var connected: Bool { selectedRoute != nil }
+    var usesLAN: Bool { selectedRoute == .lan }
+    var usesNetwork: Bool { selectedRoute == .lan || selectedRoute == .tunnel }
+    var label: String { selectedRoute?.title ?? "Reconnecting…" }
+    var catalogSHA256: String? { selectedRoute.flatMap { transport($0)?.catalogSHA256 } }
+    init(lan: any GalaxyRequestTransport, bluetooth: any GalaxyRequestTransport,
+         tunnel: (any GalaxyRequestTransport)? = nil, invalidateTunnel: @escaping (String) -> Void = { _ in },
+         invalidateLAN: @escaping (String) -> Void) {
+        self.lan = lan; self.bluetooth = bluetooth; self.tunnel = tunnel
+        self.invalidateLAN = invalidateLAN; self.invalidateTunnel = invalidateTunnel
     }
     func page(path: String) async throws -> BridgeResponse {
-        guard usesLAN else { throw BridgeError.message("Galaxy screens can only be downloaded from comma over Wi-Fi.") }
-        return try await lan.page(path: path)
+        guard let route = selectedRoute, route != .bluetooth, let chosen = transport(route) else {
+            throw BridgeError.message("Connect over Local Wi-Fi or Tunnel to download Galaxy screens.")
+        }
+        return try await chosen.page(path: path)
     }
-
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
-        try Task.checkCancellation()
-        if usesLAN {
-            do { return try await lan.request(path: path, method: method, headers: headers, body: body) }
+        var lastError: Error = URLError(.notConnectedToInternet)
+        for route in routes {
+            try Task.checkCancellation()
+            guard let chosen = transport(route), chosen.connected else { continue }
+            if route == .bluetooth && SecretGoodGalaxy.needsWiFi(path) {
+                return BridgeResponse(id: UUID().uuidString, session: "network-required", counter: 0, status: 501,
+                    headers: ["content-type": "application/json"],
+                    body: Data("{\"error\":\"Connect over Local Wi-Fi or Tunnel to use this feature.\"}".utf8).base64EncodedString())
+            }
+            do { return try await chosen.request(path: path, method: method, headers: headers, body: body) }
             catch {
                 try Task.checkCancellation()
-                guard error is URLError else { throw error }
-                invalidateLAN("LAN request failed: \(LANTransport.failureCode(error))")
-                // Retry reads only; never replay a setting change.
-                if !["GET", "HEAD"].contains(method) {
-                    throw BridgeError.message("Wi-Fi disconnected. This change may have saved; reload the setting to confirm before trying again.")
+                guard error is URLError, route != .bluetooth else { throw error }
+                if route == .lan { invalidateLAN("LAN request failed: " + LANTransport.failureCode(error)) }
+                else { invalidateTunnel("Tunnel request failed: " + LANTransport.failureCode(error)) }
+                // An uncertain write must never be replayed on another connection.
+                guard ["GET", "HEAD"].contains(method) else {
+                    throw BridgeError.message("Connection interrupted. This change may have saved; reload to confirm before trying again.")
                 }
-                guard mode == .automatic, bluetooth.connected else { throw error }
+                lastError = error
             }
         }
-        if SecretGoodGalaxy.needsWiFi(path) {
-            return BridgeResponse(id: UUID().uuidString, session: "wifi-required", counter: 0, status: 501,
-                                  headers: ["content-type": "application/json"],
-                                  body: Data("{\"error\":\"Connect to comma over local Wi-Fi to use this feature.\"}".utf8).base64EncodedString())
+        throw lastError
+    }
+}
+
+/// The gateway owns login. Only its session cookie is retained; never the password.
+struct TunnelCredential: Codable {
+    let url: String
+    let cookie: String
+    let deviceID: String
+}
+enum TunnelKeyStore {
+    private static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "link.galaxy.tunnel", kSecAttrAccount as String: "comma"] }
+    static func load() -> TunnelCredential? {
+        var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return try? JSONDecoder().decode(TunnelCredential.self, from: data)
+    }
+    static func save(_ value: TunnelCredential) throws {
+        let data = try JSONEncoder().encode(value)
+        let attributes: [String: Any] = [kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var q = query; attributes.forEach { q[$0.key] = $0.value }
+            guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw BridgeError.message("Could not save Tunnel login.") }
+        } else if status != errSecSuccess { throw BridgeError.message("Could not save Tunnel login.") }
+    }
+    static func remove() { SecItemDelete(query as CFDictionary) }
+}
+
+@MainActor
+final class TunnelTransport: ObservableObject, GalaxyRequestTransport {
+    @Published private(set) var connected = false
+    @Published private(set) var status = "Not configured"
+    private(set) var generation = UUID().uuidString
+    private(set) var credential: TunnelCredential?
+    var expectedDeviceID: String?
+    var onEvent: ((String) -> Void)?
+    private let load: (URLRequest, Int) async throws -> (Data, HTTPURLResponse)
+    init(load: @escaping (URLRequest, Int) async throws -> (Data, HTTPURLResponse) = { try await BoundedHTTP.load($0, limit: $1) }) { self.load = load }
+    static func endpoint(_ text: String) -> URL? {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme == "https", url.host == "galaxy.firestar.link", url.port == nil,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              url.path.range(of: "^/[A-Za-z0-9]{16}/?$", options: .regularExpression) != nil else { return nil }
+        return URL(string: "https://galaxy.firestar.link/" + url.path.split(separator: "/")[0])
+    }
+    func configure(_ value: TunnelCredential) throws {
+        guard Self.endpoint(value.url) != nil, !value.cookie.isEmpty, value.cookie.utf8.count <= 4096,
+              value.cookie.utf8.allSatisfy({ $0 > 32 && $0 < 127 && $0 != 59 }) else {
+            throw BridgeError.message("Invalid Galaxy tunnel login.")
         }
-        guard mode != .lan, bluetooth.connected else { throw BridgeError.message("Your comma is disconnected. Open Connections to reconnect.") }
-        return try await bluetooth.request(path: path, method: method, headers: headers, body: body)
+        credential = value; invalidate("Tunnel configured")
+    }
+    func invalidate(_ reason: String) { connected = false; generation = UUID().uuidString; status = reason; onEvent?(reason) }
+    func forget() { credential = nil; invalidate("Not configured") }
+    func probe() async -> Bool {
+        guard let credential else { return false }
+        let original = generation
+        do {
+            let (data, response) = try await send(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
+            guard !Task.isCancelled, generation == original else { return false }
+            guard response.statusCode == 200, let id = LANTransport.deviceID(data),
+                  (credential.deviceID.isEmpty || id == credential.deviceID),
+                  (expectedDeviceID == nil || id == expectedDeviceID) else {
+                invalidate(response.statusCode == 401 || response.statusCode == 302 ? "Sign in to Tunnel again" : "Tunnel did not verify the saved comma")
+                return false
+            }
+            self.credential = TunnelCredential(url: credential.url, cookie: credential.cookie, deviceID: id)
+            connected = true; status = "Tunnel verified"
+            return true
+        } catch {
+            if !Task.isCancelled, generation == original { invalidate("Tunnel unavailable: " + LANTransport.failureCode(error)) }
+            return false
+        }
+    }
+    private func send(path: String, method: String, headers: [String: String], body: Data, limit: Int) async throws -> (Data, HTTPURLResponse) {
+        guard let credential, let endpoint = Self.endpoint(credential.url),
+              let url = URL(string: endpoint.absoluteString + path) else { throw URLError(.notConnectedToInternet) }
+        let original = generation
+        var request = URLRequest(url: url)
+        request.httpMethod = method; request.httpBody = body.isEmpty ? nil : body
+        request.timeoutInterval = LocalRequest.isPackageUpload(method: method, target: path) ? 120 : 8
+        request.setValue("galaxy_session=" + credential.cookie, forHTTPHeaderField: "Cookie")
+        for (name, value) in headers where ["accept", "range", "content-type"].contains(name.lowercased()) { request.setValue(value, forHTTPHeaderField: name) }
+        if !["GET", "HEAD"].contains(method) {
+            request.setValue("https://galaxy.firestar.link", forHTTPHeaderField: "Origin")
+            if request.value(forHTTPHeaderField: "Content-Type") == nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        }
+        let result = try await load(request, limit)
+        try Task.checkCancellation()
+        guard generation == original else { throw CancellationError() }
+        return result
+    }
+    private func perform(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
+        guard connected else { throw URLError(.notConnectedToInternet) }
+        let (data, response) = try await send(path: path, method: method, headers: headers, body: body, limit: 8 * Wire.maxBody)
+        if response.statusCode == 401 || (300..<400).contains(response.statusCode) {
+            invalidate("Sign in to Tunnel again")
+            throw URLError(.userAuthenticationRequired)
+        }
+        var filtered: [String: String] = [:]
+        for (key, value) in response.allHeaderFields {
+            if let key = key as? String, ["content-type", "content-range", "accept-ranges", "content-disposition"].contains(key.lowercased()) { filtered[key.lowercased()] = String(describing: value) }
+        }
+        return BridgeResponse(id: UUID().uuidString, session: generation, counter: 0, status: response.statusCode, headers: filtered, body: data.base64EncodedString())
+    }
+    func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
+        guard SecretGoodGalaxy.validTarget(path), ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method),
+              body.count <= LocalRequest.bodyLimit(method: method, target: path) else { throw BridgeError.message("Invalid Galaxy request.") }
+        return try await perform(path: path, method: method, headers: headers, body: body)
+    }
+    func page(path: String) async throws -> BridgeResponse {
+        guard SecretGoodGalaxy.validPage(path) else { throw BridgeError.message("Invalid Galaxy page request.") }
+        return try await perform(path: path, method: "GET", headers: [:], body: Data())
     }
 }
 

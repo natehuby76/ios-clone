@@ -5,18 +5,18 @@ protocol GalaxyRequestTransport: AnyObject {
     var connected: Bool { get }
     var catalogSHA256: String? { get }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse
-    /// GET one Galaxy page file (not an API call). Only the Wi-Fi/LAN transport can do this.
+    /// GET one Galaxy page file (not an API call). Only the Local Wi-Fi/LAN transport can do this.
     func page(path: String) async throws -> BridgeResponse
 }
 
 extension GalaxyRequestTransport {
     var catalogSHA256: String? { nil }
     func page(path: String) async throws -> BridgeResponse {
-        throw BridgeError.message("Galaxy screens can only be downloaded from comma over Wi-Fi.")
+        throw BridgeError.message("Galaxy screens can only be downloaded from comma over Local Wi-Fi or Tunnel.")
     }
 }
 
-/// When the phone already reaches comma over Wi-Fi/LAN it opens comma's two-minute pairing window itself, the same call
+/// When the phone already reaches comma over Local Wi-Fi/LAN it opens comma's two-minute pairing window itself, the same call
 /// as Pair phone on Galaxy's Bluetooth page, so nobody has to touch comma before the Bluetooth key claim.
 enum LANPairing {
     static let windowPath = "/api/bluetooth/action"
@@ -45,7 +45,7 @@ enum LANPairing {
         }
         for attempt in 0..<4 {
             try Task.checkCancellation()
-            progress("Opening comma’s pairing window over Wi-Fi…")
+            progress("Opening comma’s pairing window over Local Wi-Fi…")
             let response = try await lan.request(path: windowPath, method: "POST", headers: [:], body: windowBody)
             try Task.checkCancellation()
             if response.status == 200 { return true }
@@ -56,7 +56,7 @@ enum LANPairing {
                 try await pause(2_500_000_000)
                 continue
             }
-            throw BridgeError.message("Couldn’t open comma’s pairing window (HTTP \(response.status)\(code.isEmpty ? "" : " · " + code)). Check your Wi-Fi connection to comma, then retry Bluetooth setup in this app.")
+            throw BridgeError.message("Couldn’t open comma’s pairing window (HTTP \(response.status)\(code.isEmpty ? "" : " · " + code)). Check your Local Wi-Fi connection to comma, then retry Bluetooth setup in this app.")
         }
         return false
     }

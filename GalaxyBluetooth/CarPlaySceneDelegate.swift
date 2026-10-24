@@ -499,7 +499,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
     private var session: String {
         let model = AppModel.shared
-        return model.transport.usesLAN ? "lan-" + model.lan.generation : "ble-" + model.bluetooth.sessionIdentifier
+        return model.connectionSession
     }
     private func request(_ path: String, payload: [String: Any]? = nil) async throws -> [String: Any] {
         let original = session

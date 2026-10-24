@@ -118,7 +118,7 @@ final class AppModel: ObservableObject {
         // Sharing phone GPS keeps the app running in the background, so keep reconnecting too.
         if phoneActive || carPlayActive || phoneLocation.sharing || navigationActive {
             if monitorTask == nil { monitorTask = Task { await monitor() } }
-        } else { monitorTask?.cancel(); monitorTask = nil }
+        } else { monitorTask?.cancel(); monitorTask = nil; tunnelProbeTask?.cancel() }
     }
     @Published var pairingKey = PairingKeyStore.load()
     @Published var address = UserDefaults.standard.string(forKey: "galaxy.lan.address") ?? ""
@@ -133,7 +133,66 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(mode.rawValue, forKey: "galaxy.connection.mode")
             if mode == .lan { bluetooth.disconnect() }
             if mode == .bluetooth { discovery.stop(); lan.invalidate(reason: "Bluetooth-only mode selected") }
+            if mode != .automatic { tunnelProbeTask?.cancel(); tunnel.invalidate("Tunnel paused in " + mode.title) }
             logConnection("Connection mode selected: \(mode.title)")
+        }
+    }
+    @Published var connectionPriority = ConnectionRoute.normalized(UserDefaults.standard.stringArray(forKey: "galaxy.connection.priority") ?? []) {
+        didSet {
+            transport.priority = connectionPriority
+            UserDefaults.standard.set(connectionPriority.map(\.rawValue), forKey: "galaxy.connection.priority")
+            logConnection("Connection order changed")
+        }
+    }
+    var connectionSession: String {
+        switch transport.selectedRoute {
+        case .lan: "lan-" + lan.generation
+        case .tunnel: "tunnel-" + tunnel.generation
+        case .bluetooth: "ble-" + bluetooth.sessionIdentifier
+        case nil: "disconnected"
+        }
+    }
+    private var tunnelProbeTask: Task<Void, Never>?
+    private var lastTunnelProbe = Date.distantPast
+    func forgetTunnel() {
+        tunnelProbeTask?.cancel()
+        tunnel.forget(); TunnelKeyStore.remove()
+    }
+    func acceptTunnel(url: URL, cookie: String) async throws {
+        let candidate = TunnelTransport()
+        candidate.expectedDeviceID = lan.expectedDeviceID
+        try candidate.configure(TunnelCredential(url: url.absoluteString, cookie: cookie, deviceID: ""))
+        guard await candidate.probe(), let credential = candidate.credential else { throw BridgeError.message(candidate.status) }
+        try Task.checkCancellation()
+        guard lan.expectedDeviceID == nil || lan.expectedDeviceID == credential.deviceID else {
+            throw BridgeError.message("This tunnel belongs to a different comma.")
+        }
+        try TunnelKeyStore.save(credential)
+        tunnelProbeTask?.cancel()
+        try tunnel.configure(credential)
+        if lan.expectedDeviceID == nil {
+            lan.bind(to: credential.deviceID)
+            UserDefaults.standard.set(credential.deviceID, forKey: "galaxy.comma.identity")
+        }
+        tunnel.expectedDeviceID = lan.expectedDeviceID
+        wantsConnection = true
+        mode = .automatic
+        lastTunnelProbe = .distantPast
+        probeTunnelConnection()
+    }
+    private func probeTunnelConnection() {
+        guard mode == .automatic, (phoneActive || carPlayActive || navigationActive || phoneLocation.sharing), wantsConnection, tunnel.credential != nil,
+              tunnelProbeTask == nil, Date().timeIntervalSince(lastTunnelProbe) >= 30 else { return }
+        lastTunnelProbe = Date()
+        if tunnel.expectedDeviceID != lan.expectedDeviceID {
+            tunnel.expectedDeviceID = lan.expectedDeviceID
+            tunnel.invalidate("Comma identity changed")
+        }
+        tunnelProbeTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.tunnelProbeTask = nil }
+            _ = await self.tunnel.probe()
+            self.objectWillChange.send()
         }
     }
     @Published var showConnections = false
@@ -141,13 +200,14 @@ final class AppModel: ObservableObject {
     @Published var pairingFailure = ""
     @Published var showBluetoothPermission = false
     @Published var opened = false
-    @Published var connectionMessage = "Choose a connection, or use Automatic for Wi-Fi with Bluetooth fallback."
+    @Published var connectionMessage = "Choose a connection, or use Automatic to follow your connection priority."
     @Published var wantsConnection = true
     @Published var loadingLegacyURL = false
     @Published var legacyMessage = ""
     @Published var legacyURL: URL?
     let bluetooth: BluetoothTransport
     let lan: LANTransport
+    let tunnel: TunnelTransport
     let transport: PreferredTransport
     let assets: GalaxyAssetStore
     let server: LoopbackServer
@@ -173,7 +233,7 @@ final class AppModel: ObservableObject {
     func pairWithComma() {
         guard !pairingInProgress else { return }
         guard hasLANPairingSetup else {
-            pairingFailure = "Connect to your comma over Wi-Fi first, then set up Bluetooth."
+            pairingFailure = "Connect to your comma over Local Wi-Fi first, then set up Bluetooth."
             connectionMessage = pairingFailure
             return
         }
@@ -182,7 +242,7 @@ final class AppModel: ObservableObject {
         offerAudioPairing = false
         showAudioPairing = false
         bluetooth.disconnect(reason: "Starting new phone pairing")
-        connectionMessage = "Preparing Bluetooth setup over Wi-Fi…"
+        connectionMessage = "Preparing Bluetooth setup over Local Wi-Fi…"
         pairingTask = Task { @MainActor in
             defer { pairingInProgress = false; pairingTask = nil }
             do {
@@ -191,20 +251,20 @@ final class AppModel: ObservableObject {
                 let pairingLAN = LANTransport()
                 pairingLAN.bind(to: lan.expectedDeviceID)
                 if !lan.connected, !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    connectionMessage = "Checking comma over Wi-Fi before Bluetooth pairing…"
+                    connectionMessage = "Checking comma over Local Wi-Fi before Bluetooth pairing…"
                     try pairingLAN.configure(address: address)
                     _ = await pairingLAN.probe()
                 }
                 try Task.checkCancellation()
                 let windowLAN = lan.connected ? lan : pairingLAN
                 guard windowLAN.connected else {
-                    throw BridgeError.message("Connect to your comma over Wi-Fi first. Its saved LAN address could not be verified.")
+                    throw BridgeError.message("Connect to your comma over Local Wi-Fi first. Its saved LAN address could not be verified.")
                 }
                 connectionLog.record("Opening phone pairing window over verified LAN")
                 guard try await LANPairing.openWindow(over: windowLAN, progress: { self.connectionMessage = $0 }) else {
-                    throw BridgeError.message("Wi-Fi disconnected before Bluetooth setup. Reconnect to comma over Wi-Fi and try again.")
+                    throw BridgeError.message("Local Wi-Fi disconnected before Bluetooth setup. Reconnect to comma over Local Wi-Fi and try again.")
                 }
-                connectionMessage = "Opened comma’s pairing window over Wi-Fi. Looking for comma…"
+                connectionMessage = "Opened comma’s pairing window over Local Wi-Fi. Looking for comma…"
                 connectionLog.record("Phone pairing window opened over verified LAN")
                 try Task.checkCancellation()
                 importClaim(try await claimer.claim(name: UIDevice.current.name))
@@ -244,21 +304,33 @@ final class AppModel: ObservableObject {
     init() {
         let bluetooth = BluetoothTransport()
         let lan = LANTransport()
-        let transport = PreferredTransport(lan: lan, bluetooth: bluetooth, invalidateLAN: { lan.invalidate(reason: $0) })
+        let tunnel = TunnelTransport()
+        let transport = PreferredTransport(lan: lan, bluetooth: bluetooth, tunnel: tunnel, invalidateTunnel: { tunnel.invalidate($0) }, invalidateLAN: { lan.invalidate(reason: $0) })
         let assets = GalaxyAssetStore()
-        self.bluetooth = bluetooth; self.lan = lan; self.transport = transport; self.assets = assets
+        self.bluetooth = bluetooth; self.lan = lan; self.tunnel = tunnel; self.transport = transport; self.assets = assets
         lan.bind(to: UserDefaults.standard.string(forKey: "galaxy.comma.identity"))
+        if let credential = TunnelKeyStore.load() { try? tunnel.configure(credential) }
+        tunnel.expectedDeviceID = lan.expectedDeviceID
         let cache = GalaxyReadCache(transport: transport, sessionID: {
-            transport.usesLAN ? "lan-" + lan.generation : "ble-" + bluetooth.sessionIdentifier
+            transport.selectedRoute == .tunnel ? "tunnel-" + tunnel.generation : transport.usesLAN ? "lan-" + lan.generation : "ble-" + bluetooth.sessionIdentifier
         })
         server = LoopbackServer(transport: cache, webRoot: assets.readyRoot)
         transport.mode = mode
+        transport.priority = connectionPriority
         diagnostics.transport = transport; diagnostics.lan = lan
         galaxyPage.recover = { [weak self] automatic in self?.recoverGalaxy(automatic: automatic) }
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         discovery.onDevicesChanged = { [weak self] in self?.discoverAutomaticLAN() }
-        lan.onEvent = { [weak self] reason in self?.logConnection(reason) }
+        tunnel.onEvent = { [weak self] reason in self?.objectWillChange.send(); self?.logConnection(reason) }
+        lan.onEvent = { [weak self] reason in
+            guard let self else { return }
+            if self.tunnel.expectedDeviceID != self.lan.expectedDeviceID {
+                self.tunnel.expectedDeviceID = self.lan.expectedDeviceID
+                self.tunnel.invalidate("Comma identity changed")
+            }
+            self.logConnection(reason)
+        }
         bluetooth.onEvent = { [weak self] reason in self?.logConnection(reason) }
         claimer.onEvent = { [weak self] reason in
             guard let self else { return }
@@ -288,6 +360,9 @@ final class AppModel: ObservableObject {
                 self.triedLANAddresses.removeAll()
                 self.lastLANDiscovery = .distantPast
                 self.lan.invalidate(reason: reason)
+                self.tunnelProbeTask?.cancel()
+                self.tunnel.invalidate("Network changed")
+                self.lastTunnelProbe = .distantPast
                 self.lastAddressCheck = .distantPast
                 self.discoverAutomaticLAN()
             }
@@ -314,6 +389,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(address.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "galaxy.lan.address")
             wantsConnection = true
             lastReconnect = .distantPast
+            lastTunnelProbe = .distantPast
             lastAddressCheck = .distantPast
             localAddressNetwork = ""
             connectionMessage = "Checking your comma…"
@@ -344,12 +420,11 @@ final class AppModel: ObservableObject {
         matchingGalaxy = true
         lastGalaxyMatch = Date()
         defer { matchingGalaxy = false }
-        let bleSession = bluetooth.sessionIdentifier
-        let lanSession = lan.generation
-        let stillCurrent = { self.wantsConnection && self.transport.connected && self.bluetooth.sessionIdentifier == bleSession && self.lan.generation == lanSession }
-        if transport.usesLAN {
+        let session = connectionSession
+        let stillCurrent = { self.wantsConnection && self.transport.connected && self.connectionSession == session }
+        if transport.usesNetwork {
             // Pages come straight from comma, never through the Bluetooth bridge or the read cache.
-            let lan = self.lan
+            let lan = self.transport
             await assets.check(fetch: { path, _ in
                 let response = path.hasPrefix("/api/") ? try await lan.request(path: path, method: "GET", headers: [:], body: Data()) : try await lan.page(path: path)
                 return (response.status, response.bodyData)
@@ -368,14 +443,14 @@ final class AppModel: ObservableObject {
         openingGalaxy = true
         Task { @MainActor in
             defer { openingGalaxy = false }
-            if transport.usesLAN ? Date().timeIntervalSince(lastGalaxyMatch) > 15 : assets.readyRoot != nil && !matchingGalaxy {
+            if transport.usesNetwork ? Date().timeIntervalSince(lastGalaxyMatch) > 15 : assets.readyRoot != nil && !matchingGalaxy {
                 await checkGalaxyUpdates()
             }
             guard wantsConnection, !pairingInProgress, !offerAudioPairing, !showAudioPairing, transport.connected, !opened else { return }
             // Bluetooth Galaxy runs from screens saved from comma; the first download needs Wi-Fi/LAN.
             // Over Wi-Fi/LAN an older comma that cannot share its screens still opens, read live.
             guard let root = assets.readyRoot else {
-                guard transport.usesLAN else { return }
+                guard transport.usesNetwork else { return }
                 assets.inUseRoot = nil
                 opened = true
                 finishFirstConnection()
@@ -397,6 +472,7 @@ final class AppModel: ObservableObject {
         automaticLAN?.cancel(); lanProbeTask?.cancel()
         discovery.stop()
         firstConnection?.cancel(); firstConnection = nil; openAfterFirstConnection = false
+        tunnelProbeTask?.cancel(); tunnel.invalidate("Disconnected")
         wantsConnection = false; opened = false
         bluetooth.disconnect(reason: "User selected Disconnect"); lan.invalidate(reason: "User selected Disconnect")
         connectionMessage = "Disconnected."
@@ -493,7 +569,7 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled, wantsConnection, mode != .bluetooth, bluetooth.sessionIdentifier == session else { return }
                 // Only the authenticated BLE peer may establish the automatic LAN identity.
                 guard identity.status == 200, let value = LANTransport.deviceID(identity.bodyData) else {
-                    networkDetails = "Automatic local discovery needs a registered device identifier. Bluetooth still works; enter comma’s IP manually for Wi-Fi."
+                    networkDetails = "Automatic local discovery needs a registered device identifier. Bluetooth still works; enter comma’s IP manually for Local Wi-Fi."
                     return
                 }
                 lan.bind(to: value)
@@ -576,7 +652,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(address, forKey: "galaxy.lan.address")
             if await self.lan.probe() {
                 self.discovery.stop()
-                self.connectionLog.record("Automatic Wi-Fi discovery verified the paired comma")
+                self.connectionLog.record("Automatic Local Wi-Fi discovery verified the paired comma")
             }
         }
     }
@@ -607,6 +683,7 @@ final class AppModel: ObservableObject {
                 if mode != .bluetooth && !offerAudioPairing && !showAudioPairing {
                     discoverAutomaticLAN()
                     probeLocalConnection()
+                    probeTunnelConnection()
                 }
                 guard !pairingInProgress else { continue }
                 if transport.label != lastRoute { logConnection("Connection availability changed") }
@@ -620,7 +697,7 @@ final class AppModel: ObservableObject {
                     }
                     connectionMessage = "Connected over \(transport.label)." + (opened || assets.readyRoot != nil ? "" : " " + assets.status)
                 } else if mode == .bluetooth {
-                    connectionMessage = "Reconnecting over Bluetooth. If you removed this phone’s pairing, connect over Wi-Fi.\nThen set up Bluetooth again in this app."
+                    connectionMessage = "Reconnecting over Bluetooth. If you removed this phone’s pairing, connect over Local Wi-Fi.\nThen set up Bluetooth again in this app."
                 } else {
                     connectionMessage = discovery.searching || lan.endpoint == nil
                         ? discovery.status
@@ -945,6 +1022,9 @@ final class ConnectionEventLog: ObservableObject {
         iOS: \(UIDevice.current.systemVersion)
         Mode: \(model.mode.title)
         Selected route: \(model.transport.label)
+        Tunnel verified: \(model.tunnel.connected)
+        Tunnel status: \(model.tunnel.status)
+        Connection order: \(model.connectionPriority.map(\.title).joined(separator: " → "))
         LAN verified: \(model.lan.connected)
         Bluetooth verified: \(model.bluetooth.connected)
         Log session started: \(formatter.string(from: started)); retained: \(events.count); older events dropped: \(dropped)

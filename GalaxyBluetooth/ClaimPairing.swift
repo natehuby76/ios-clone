@@ -95,7 +95,7 @@ final class ClaimTransport: NSObject, @preconcurrency CBCentralManagerDelegate, 
             timeout = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard !Task.isCancelled else { return }
-                self?.fail("Comma didn’t respond. Keep your iPhone nearby and reconnect to comma over Wi-Fi.\nThen try Bluetooth setup again in this app.")
+                self?.fail("Comma didn’t respond. Keep your iPhone nearby and reconnect to comma over Local Wi-Fi.\nThen try Bluetooth setup again in this app.")
             }
         }
     }

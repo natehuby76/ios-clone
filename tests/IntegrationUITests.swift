@@ -1,6 +1,28 @@
 import XCTest
 
 final class IntegrationUITests: XCTestCase {
+    func testConnectionOrderSheet() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-galaxy.app.developerMode", "NO", "-galaxy.app.navigationAlpha", "NO", "-galaxy.connection.mode", "automatic"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Set order"].waitForExistence(timeout: 15))
+        app.buttons["Set order"].tap()
+        XCTAssertTrue(app.navigationBars["Connection order"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Tunnel"].exists)
+        app.buttons["Reset order"].tap()
+        let drag = app.buttons["Reorder Tunnel"]
+        XCTAssertTrue(drag.exists)
+        drag.press(forDuration: 0.7, thenDragTo: app.buttons["Reorder Local Wi-Fi"])
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["Tunnel → Local Wi-Fi → Bluetooth"].waitForExistence(timeout: 5))
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["Tunnel → Local Wi-Fi → Bluetooth"].waitForExistence(timeout: 10))
+        app.buttons["Set order"].tap()
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Connection priority"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["Reset order"].tap()
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["Local Wi-Fi → Tunnel → Bluetooth"].exists)
+    }
     func testDiagnosticsExport() {
         let app = XCUIApplication()
         app.launchArguments = ["-galaxy.app.developerMode", "YES", "-galaxy.app.navigationAlpha", "YES"]

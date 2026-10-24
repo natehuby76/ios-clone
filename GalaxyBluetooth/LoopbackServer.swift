@@ -303,8 +303,8 @@ final class LoopbackServer: ObservableObject {
             }
             data = saved
         } else {
-            // No saved copy yet (an older comma that cannot share its screens): over Wi-Fi/LAN read the pages live from comma.
-            let notYet = "Galaxy screens aren’t downloaded yet. Connect to comma over Wi-Fi once."
+            // No saved copy yet (an older comma that cannot share its screens): over Local Wi-Fi/LAN read the pages live from comma.
+            let notYet = "Galaxy screens aren’t downloaded yet. Connect to comma over Local Wi-Fi or Tunnel once."
             guard transport.connected, SecretGoodGalaxy.validPage("/" + assetPath) else { return .error(503, notYet) }
             guard let live = try? await transport.page(path: "/" + assetPath) else { return .error(503, notYet) }
             guard live.status == 200 else { return .error(live.status, "Comma could not serve this Galaxy asset.") }

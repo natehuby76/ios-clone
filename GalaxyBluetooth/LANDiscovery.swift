@@ -39,7 +39,7 @@ final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetService
         devices = []
         searching = true
         status = "Looking for comma on your local network…"
-        onEvent?("Wi-Fi discovery started")
+        onEvent?("Local Wi-Fi discovery started")
         let browser = NetServiceBrowser()
         self.browser = browser
         browser.delegate = self
@@ -48,7 +48,7 @@ final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetService
             try? await Task.sleep(nanoseconds: 12_000_000_000)
             guard !Task.isCancelled, let self else { return }
             if self.devices.isEmpty && retryEmpty && self.appActive {
-                self.onEvent?("Wi-Fi discovery found no addresses; retrying once")
+                self.onEvent?("Local Wi-Fi discovery found no addresses; retrying once")
                 self.start(retryEmpty: false)
                 return
             }
@@ -56,7 +56,7 @@ final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetService
             self.status = self.devices.isEmpty
                 ? "No comma found. Use the same Wi-Fi, allow Local Network access, and update comma for discovery. You can still enter its IP."
                 : "Select your comma below."
-            self.onEvent?("Wi-Fi discovery finished: \(self.devices.count) result(s)")
+            self.onEvent?("Local Wi-Fi discovery finished: \(self.devices.count) result(s)")
         }
     }
 
@@ -107,15 +107,15 @@ final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetService
         let denied = errorDict[NetService.errorCode]?.intValue == -72008
         pauseAfterSearchFailure()
         status = denied ? "Allow Local Network access for this app in iPhone Settings, then search again."
-            : "Wi-Fi discovery couldn’t start. Check Local Network permission or enter comma’s IP."
-        onEvent?("Wi-Fi discovery failed: code \(errorDict[NetService.errorCode]?.intValue ?? 0)")
+            : "Local Wi-Fi discovery couldn’t start. Check Local Network permission or enter comma’s IP."
+        onEvent?("Local Wi-Fi discovery failed: code \(errorDict[NetService.errorCode]?.intValue ?? 0)")
     }
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         let id = key(sender)
         guard searching, services[id] === sender else { return }
-        onEvent?("Wi-Fi service address lookup failed: code \(errorDict[NetService.errorCode]?.intValue ?? 0)")
+        onEvent?("Local Wi-Fi service address lookup failed: code \(errorDict[NetService.errorCode]?.intValue ?? 0)")
         guard retriedServices.insert(id).inserted else { return }
-        onEvent?("Retrying Wi-Fi service address lookup")
+        onEvent?("Retrying Local Wi-Fi service address lookup")
         sender.resolve(withTimeout: 5)
     }
     func netServiceDidResolveAddress(_ sender: NetService) {
@@ -130,7 +130,7 @@ final class LANDiscovery: NSObject, ObservableObject, @preconcurrency NetService
         devices.append(device)
         devices.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         status = "Found \(devices.count) comma device(s). Select one below."
-        onEvent?("Wi-Fi discovery found Galaxy at \(address):8082")
+        onEvent?("Local Wi-Fi discovery found Galaxy at \(address):8082")
         onDevicesChanged?()
     }
     static func networkSignature() -> String {

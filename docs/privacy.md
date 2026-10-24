@@ -1,6 +1,6 @@
 # StarPilot BT privacy policy
 
-Updated October 18, 2026. Changes for version 1.0.1.
+Updated October 24, 2026. Changes for version 1.0.2.
 
 This policy covers the StarPilot BT iPhone companion. The publisher responsible for this release is the seller identified on its App Store listing. Public support and privacy requests use the [StarPilot support ticket process](https://wiki.firestar.link/ticketsystem/). Ask for your request to be directed to the StarPilot BT app publisher. Do not post private information in a public channel.
 
@@ -20,9 +20,11 @@ Navigation alpha testing is optional and available under Developer mode. Its map
 
 ## Network services
 
-The app downloads Galaxy's interface files from your own comma over your local network (or its Wi-Fi hotspot) and saves them on the iPhone so Bluetooth can show them. It does not contact GitHub or any other server for these files.
+The app downloads Galaxy's interface files from your own comma over your local network (or its Wi-Fi hotspot), or through your authenticated Galaxy tunnel and saves them on the iPhone so Bluetooth can show them. It does not download these files from GitHub. Tunnel traffic passes through the Galaxy remote service.
 
 The native companion does not include advertising or an advertising-tracking SDK. Its diagnostics screen does not automatically upload reports to the publisher.
+
+Optional Tunnel access uses HTTPS through galaxy.firestar.link. You sign in on the Galaxy website inside the app; the app saves the resulting session cookie, private link and verified comma identity in the iOS Keychain. It does not save your password. Requests, responses and optional GPS sharing sent over Tunnel pass through the Galaxy remote service; its operator’s handling and retention apply. We do not claim that service keeps no logs.
 
 Opening the legacy Galaxy link opens your device-specific remote website in your browser. That website handles its own login and service requests. Optional services configured through Galaxy, such as maps or a cloud provider, may send information from comma to the selected provider. Their policies apply to their services. This policy does not promise that those separately operated services keep no logs or collect no information.
 
@@ -33,6 +35,8 @@ The app keeps connection and page events for troubleshooting. Reports can contai
 If you submit a StarPilot support ticket, the support team and the ticket-service provider can access the information you provide. Ticket history may remain with that service until removed by its operator. To request access to or deletion of a submitted report, use the same support ticket process and identify the ticket without posting additional private information publicly. A fixed deletion deadline is not promised by this policy.
 
 ## Removing stored information
+
+Use Forget saved tunnel in Galaxy tunnel to remove its saved session from this iPhone. This does not revoke other sessions at the remote service.
 
 Use Forget Bluetooth pairing in the app to remove its saved pairing credential. Revoke app links on comma separately if you want to invalidate the device's pairing key. Deleting the app removes its local app container; iOS Keychain entries may persist until removed through the app. Changes and information stored on comma, in remote Galaxy or with another provider must be managed with that device or service.
 

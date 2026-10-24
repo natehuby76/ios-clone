@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 struct ConnectionSettingsView: View {
     @ObservedObject var model: AppModel
@@ -13,6 +14,8 @@ struct ConnectionSettingsView: View {
     let select: (CompanionTab) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
+    @State private var showOrder = false
+    @State private var showTunnel = false
     @State private var advanced = false
     @State private var confirmForget = false
     @State private var showPairingHelp = false
@@ -33,7 +36,7 @@ struct ConnectionSettingsView: View {
         if pairing { return "Pairing…" }
         if connected { return model.opened ? "Open Galaxy" : "Preparing Galaxy…" }
         if connecting { return "Connecting…" }
-        return needsPairing ? (model.hasLANPairingSetup ? "Pair with comma" : "Connect over Wi-Fi first") : "Connect"
+        return needsPairing ? (model.hasLANPairingSetup ? "Pair with comma" : "Connect over Local Wi-Fi first") : "Connect"
     }
     private var connectionCandidates: [DiscoveredComma] {
         var devices = discovery.devices
@@ -74,6 +77,9 @@ struct ConnectionSettingsView: View {
                 Text("PREFERENCES").font(.system(size: 11, weight: .medium)).tracking(1.2)
                     .foregroundStyle(muted).frame(maxWidth: .infinity, alignment: .leading)
                 preferences
+                row("network", title: "Galaxy tunnel", subtitle: model.tunnel.status) {
+                    Button(model.tunnel.credential == nil ? "Set up" : "Manage") { showTunnel = true }
+                }.padding(14).background(panel, in: RoundedRectangle(cornerRadius: 16))
                 DisclosureGroup(isExpanded: $advanced) { advancedControls.padding(.top, 8) } label: {
                     Text("Advanced connection options").font(.system(size: 13)).frame(minHeight: 30)
                 }.tint(accent).padding(.horizontal, 14).padding(.vertical, 7).background(panel, in: RoundedRectangle(cornerRadius: 16))
@@ -101,6 +107,24 @@ struct ConnectionSettingsView: View {
             .onChange(of: pairing) { _, value in if value { openAfterReconnect = false } }
             .onChange(of: model.opened) { _, _ in openReconnectedGalaxy() }
             .onChange(of: model.wantsConnection) { _, value in if !value { openAfterReconnect = false } }
+            .sheet(isPresented: $showOrder) {
+                NavigationStack {
+                    List {
+                        Section {
+                            ForEach(model.connectionPriority) { route in
+                                Label { Text(route.title) } icon: {
+                                    if route == .tunnel { Image(systemName: "network") }
+                                    else { Image(route == .lan ? "ConnectionWiFi" : "ConnectionBluetooth").renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22) }
+                                }
+                            }.onMove { from, to in model.connectionPriority.move(fromOffsets: from, toOffset: to) }
+                        } footer: { Text("Automatic uses the first available connection. Drag to change the order. Local Wi-Fi-only and Bluetooth-only ignore this order.") }
+                        Button("Reset order") { model.connectionPriority = ConnectionRoute.allCases }
+                    }.environment(\.editMode, .constant(.active))
+                        .navigationTitle("Connection order").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showOrder = false } } }
+                }.presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showTunnel) { TunnelSetupView(model: model) }
             .tint(accent)
             .alert("Join comma’s hotspot", isPresented: $showHotspotJoin) {
                 Button("OK", role: .cancel) {}
@@ -110,7 +134,7 @@ struct ConnectionSettingsView: View {
             .alert("Reset Bluetooth pairing", isPresented: $showPairingHelp) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("If Bluetooth still won’t connect, try a fresh pairing:\n\n1. In this app, open Advanced → Forget Bluetooth pairing.\n2. On comma, open Bluetooth settings and forget this iPhone. Remove its app pairing too if it is listed separately.\n3. On iPhone, open Settings → Bluetooth → ⓘ beside comma → Forget This Device, if listed.\n4. Connect to comma over Wi-Fi, then start Bluetooth setup in this app. The app opens pairing on comma automatically.\n\nThis resets device pairing, not the app’s Bluetooth permission.")
+                Text("If Bluetooth still won’t connect, try a fresh pairing:\n\n1. In this app, open Advanced → Forget Bluetooth pairing.\n2. On comma, open Bluetooth settings and forget this iPhone. Remove its app pairing too if it is listed separately.\n3. On iPhone, open Settings → Bluetooth → ⓘ beside comma → Forget This Device, if listed.\n4. Connect to comma over Local Wi-Fi, then start Bluetooth setup in this app. The app opens pairing on comma automatically.\n\nThis resets device pairing, not the app’s Bluetooth permission.")
             }
             .confirmationDialog("Forget Bluetooth pairing?", isPresented: $confirmForget, titleVisibility: .visible) {
                 Button("Forget pairing", role: .destructive) {
@@ -129,7 +153,7 @@ struct ConnectionSettingsView: View {
     private var connectionPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(model.transport.label == "Wi-Fi" ? "ConnectionWiFi" : "ConnectionBluetooth").renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20).foregroundStyle(accent)
+                Image(model.transport.label == "Tunnel" ? "ConnectionNetwork" : model.transport.label == "Local Wi-Fi" ? "ConnectionWiFi" : "ConnectionBluetooth").renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20).foregroundStyle(accent)
                     .frame(width: 38, height: 38).background(accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Your comma").font(.system(size: 17, weight: .medium))
@@ -144,7 +168,7 @@ struct ConnectionSettingsView: View {
             HStack(spacing: 3) {
                 ForEach([ConnectionMode.automatic, .bluetooth, .lan], id: \.self) { mode in
                     Button { model.mode = mode } label: {
-                        Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Wi-Fi")
+                        Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Local Wi-Fi")
                             .font(.system(size: 13, weight: .medium))
                             .frame(maxWidth: .infinity, minHeight: 36)
                             .foregroundStyle(model.mode == mode ? Color.white : Color.primary)
@@ -154,11 +178,18 @@ struct ConnectionSettingsView: View {
                 }
             }.padding(3).background(accent.opacity(0.07), in: Capsule())
                 .accessibilityLabel("Connection mode").disabled(pairing)
+            if model.mode == .automatic {
+                HStack {
+                    Text(model.connectionPriority.map(\.title).joined(separator: " → ")).font(.system(size: 11)).foregroundStyle(muted)
+                    Spacer()
+                    Button("Set order") { showOrder = true }.font(.system(size: 12)).frame(minHeight: 32)
+                }.disabled(pairing)
+            }
             if !pairing {
                 if model.pairingKey.isEmpty && !model.hasLANPairingSetup {
                     Text("Allow Local Network and Bluetooth when iPhone asks. We’ll find comma on your Wi-Fi or hotspot first.").font(.system(size: 11)).foregroundStyle(muted)
                 }
-                Text(model.mode == .automatic ? "Connect over Wi-Fi\nBluetooth takes over when needed" : model.mode == .bluetooth ? "Connect directly to comma\nControl Galaxy without Wi-Fi" : "Connect over your local network\nJoin the same Wi-Fi or comma’s hotspot")
+                Text(model.mode == .automatic ? "Uses your first available connection" : model.mode == .bluetooth ? "Connect directly to comma\nControl Galaxy without Local Wi-Fi" : "Connect over your local network\nJoin the same Wi-Fi or comma’s hotspot")
                     .font(.system(size: 11)).foregroundStyle(muted).lineSpacing(3)
                     .multilineTextAlignment(.center).frame(maxWidth: .infinity)
                     .fixedSize(horizontal: false, vertical: true).padding(.vertical, 3)
@@ -271,7 +302,7 @@ struct ConnectionSettingsView: View {
             }
             HStack(spacing: 8) {
                 if discovery.searching { ProgressView().controlSize(.mini).tint(accent) }
-                Text(discovery.searching ? "Finding comma on Wi-Fi…" : "Select your comma")
+                Text(discovery.searching ? "Finding comma on Local Wi-Fi…" : "Select your comma")
                     .font(.system(size: 11)).foregroundStyle(muted)
                 Spacer()
                 Button(discovery.searching ? "Stop" : "Search again") {
@@ -292,13 +323,13 @@ struct ConnectionSettingsView: View {
                 Toggle("Share phone location", isOn: Binding(get: { location.sharing }, set: { location.setSharing($0) })).labelsHidden()
             }
             separator
-            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : checked && assets.readyRoot != nil ? "Up to date · just checked" : assets.readyRoot != nil ? "Saved from your comma" : "Not downloaded · needs Wi-Fi") {
+            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : checked && assets.readyRoot != nil ? "Up to date · just checked" : assets.readyRoot != nil ? "Saved from your comma" : "Not downloaded · needs Local Wi-Fi or Tunnel") {
                 Button {
                     Task { await model.checkGalaxyUpdates(); checked = true }
                 } label: {
                     if checking { ProgressView().controlSize(.small).accessibilityLabel("Checking Galaxy") }
                     else { Text(checked ? assets.readyRoot != nil ? "✓ Checked" : "Retry" : "Check") }
-                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || !model.transport.usesLAN || pairing)
+                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || !model.transport.usesNetwork || pairing)
             }
             if checked && !checking { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
             separator
@@ -326,7 +357,7 @@ struct ConnectionSettingsView: View {
             }
             if model.mode != .bluetooth {
                 HStack {
-                    Button(discovery.searching ? "Stop discovery" : "Find comma on Wi-Fi") {
+                    Button(discovery.searching ? "Stop discovery" : "Find comma on Local Wi-Fi") {
                         if discovery.searching { discovery.stop() } else { discovery.start() }
                     }.disabled(model.selectingDiscoveredComma || pairing)
                 }
@@ -341,7 +372,7 @@ struct ConnectionSettingsView: View {
             }
             if model.mode != .lan {
                 Button(model.pairingKey.isEmpty ? "Pair Bluetooth with comma" : "Pair Bluetooth again") { model.pairWithComma() }.disabled(pairing || !model.hasLANPairingSetup)
-                if !model.hasLANPairingSetup { message("Connect to comma over Wi-Fi before setting up Bluetooth.") }
+                if !model.hasLANPairingSetup { message("Connect to comma over Local Wi-Fi before setting up Bluetooth.") }
                 SecureField("64-character pairing key", text: $model.pairingKey, prompt: Text("64-character pairing key").foregroundColor(muted))
                     .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.plain)
                     .foregroundStyle(Color.white).tint(accent).padding(12)
@@ -411,9 +442,9 @@ private struct ConnectionOrbit: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.6)))
                 .shadow(color: purple.opacity(0.5), radius: 16).frame(width: 60, height: 60).position(x: 132, y: 43)
-            node("ConnectionWiFi", angle: 155, active: route == "Wi-Fi")
+            node("ConnectionWiFi", angle: 155, active: route == "Local Wi-Fi")
             node("ConnectionBluetooth", angle: 110, active: route == "Bluetooth" || pairing)
-            node("ConnectionNetwork", angle: -25, active: false)
+            node("ConnectionNetwork", angle: -25, active: route == "Tunnel")
         }.frame(width: 264, height: 88).accessibilityHidden(true)
     }
     private func node(_ symbol: String, angle: Double, active: Bool) -> some View {
@@ -424,5 +455,93 @@ private struct ConnectionOrbit: View {
             .frame(width: 30, height: 30).background(Color(red: 0.09, green: 0.075, blue: 0.15), in: Circle())
             .overlay(Circle().stroke(Color.white.opacity(active ? 0.75 : 0.4)))
             .shadow(color: purple.opacity(active ? 0.35 : 0), radius: 7).position(x: x, y: y)
+    }
+}
+
+
+private struct TunnelSetupView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var loginURL: URL?
+    @State private var error = ""
+    @State private var saving = false
+    @State private var loginTask: Task<Void, Never>?
+    @State private var store = WKWebsiteDataStore.nonPersistent()
+    private static func validCookie(_ cookie: HTTPCookie) -> Bool {
+        guard cookie.name == "galaxy_session", cookie.isSecure else { return false }
+        guard cookie.domain == "galaxy.firestar.link" || cookie.domain == ".galaxy.firestar.link" else { return false }
+        return cookie.expiresDate.map { $0 > Date() } ?? true
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                if let loginURL {
+                    TunnelLoginView(url: loginURL, store: store)
+                    Text("Sign in above, then tap Use tunnel. Your password stays in Galaxy’s sign-in page.").font(.footnote).padding(.horizontal)
+                    Button(saving ? "Verifying…" : "Use tunnel") {
+                        saving = true; error = ""
+                        loginTask = Task { @MainActor in
+                            defer { saving = false }
+                            let cookies = await store.httpCookieStore.allCookies()
+                            guard let cookie = cookies.first(where: Self.validCookie) else {
+                                error = "Finish signing in to Galaxy first."; return
+                            }
+                            do {
+                                try await model.acceptTunnel(url: loginURL, cookie: cookie.value)
+                                try Task.checkCancellation()
+                                dismiss()
+                            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+                        }
+                    }.buttonStyle(.borderedProminent).disabled(saving).padding(.bottom)
+                } else {
+                    Form {
+                        Section {
+                            TextField("https://galaxy.firestar.link/…", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                            Button("Sign in") {
+                                guard let url = TunnelTransport.endpoint(address) else { error = "Paste your full Galaxy link, including its 16-character code."; return }
+                                error = ""; loginURL = url
+                            }
+                            if model.transport.connected {
+                                Button("Get link from comma") {
+                                    Task { if let url = await model.fetchLegacyURL() { address = url.absoluteString } else { error = model.legacyMessage } }
+                                }
+                            }
+                        } header: { Text("Your Galaxy link") } footer: { Text("Use the private Galaxy link from your comma. Both phone and comma need internet for Tunnel. Automatic uses your saved connection order.") }
+                        if model.tunnel.credential != nil {
+                            Section { Button("Forget saved tunnel", role: .destructive) { model.forgetTunnel(); address = "" } }
+                        }
+                    }
+                }
+                if !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.red).padding() }
+            }.navigationTitle("Galaxy tunnel").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+                .onAppear { address = model.tunnel.credential?.url ?? "" }
+                .onDisappear { loginTask?.cancel() }
+        }
+    }
+}
+
+private struct TunnelLoginView: UIViewRepresentable {
+    let url: URL
+    let store: WKWebsiteDataStore
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = store
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        web.navigationDelegate = context.coordinator
+        web.load(URLRequest(url: url))
+        return web
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url, url.scheme == "https", url.host == "galaxy.firestar.link",
+                  url.port == nil, url.user == nil, url.password == nil else { decisionHandler(.cancel); return }
+            decisionHandler(.allow)
+        }
     }
 }
