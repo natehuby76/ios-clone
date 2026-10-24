@@ -25,7 +25,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private var overview: CPGridTemplate?
     private var temperatures: CPGridTemplate?
     private var rates: CPGridTemplate?
-    private var toggles: CPGridTemplate?
+    private var toggles: CPListTemplate?
     private var catalog: [[String: Any]] = []
     private var values: [String: Any] = [:]
     private var valuesSession = ""
@@ -115,7 +115,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             mapController = nil; mapTemplate = nil
             window?.rootViewController = UIViewController()
             catalog = localCatalogue()
-            toggles = grid("Toggles", icon: "switch.2", buttons: categoryButtons())
+            toggles = CPListTemplate(title: "Toggles", sections: [])
+            toggles?.tabTitle = "Toggles"
+            toggles?.tabImage = UIImage(systemName: "switch.2")
             guard let overview, let temperatures, let rates, let toggles else { return }
             let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
             tabs.delegate = self
@@ -524,14 +526,25 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         if toggles.userInfo == nil { toggles.userInfo = SettingsPageState("hub") }
         loadSettings(toggles)
     }
+    private func settingsItem(_ title: String, detail: String? = nil, icon: String,
+                              enabled: Bool = true, action: @escaping @MainActor () -> Void = {}) -> CPListItem {
+        let item = CPListItem(text: title, detailText: detail, image: UIImage(systemName: icon))
+        item.isEnabled = enabled
+        item.handler = { _, completion in
+            action()
+            completion()
+        }
+        return item
+    }
+
     private func openSettings(_ name: String, title: String) {
-        let page = makeGrid(title: title, gridButtons: [button("Loading…", icon: "hourglass")])
+        let page = CPListTemplate(title: title, sections: [])
         page.userInfo = SettingsPageState(name)
         pushTemplate(page, animated: true) { [weak self, weak page] success, _ in
             if success, let page { self?.loadSettings(page) }
         }
     }
-    private func loadSettings(_ page: CPGridTemplate) {
+    private func loadSettings(_ page: CPListTemplate) {
         guard let state = page.userInfo as? SettingsPageState, !busy else { return }
         work?.cancel()
         work = Task { [weak self, weak page] in
@@ -543,84 +556,78 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 self.drawSettings(page)
             } catch {
                 if !Task.isCancelled {
-                    self.updateGrid(page, buttons: [self.button("Retry", icon: "arrow.clockwise") { [weak self, weak page] in
+                    page.updateSections([CPListSection(items: [self.settingsItem("Retry", icon: "arrow.clockwise") { [weak self, weak page] in
                         if let page { self?.loadSettings(page) }
-                    }])
+                    }])])
                     self.notice(error.localizedDescription)
                 }
             }
         }
     }
-    private func drawSettings(_ page: CPGridTemplate) {
+    private func drawSettings(_ page: CPListTemplate) {
         guard let state = page.userInfo as? SettingsPageState else { return }
         let rows = state.snapshot["rows"] as? [[String: Any]] ?? []
-        let count = max(1, (rows.count + 7) / 8)
+        let capacity = max(1, CPListTemplate.maximumItemCount)
+        let count = max(1, (rows.count + capacity - 1) / capacity)
         state.index = min(state.index, count - 1)
-        var buttons: [CPGridButton] = []
-        for index in (state.index * 8)..<min(rows.count, (state.index + 1) * 8) {
+        let start = state.index * capacity
+        let items = (start..<min(rows.count, start + capacity)).map { index in
             let row = rows[index]
             let child = row["page"] as? String ?? ""
-            let value = row["value"].map { String(describing: $0) } ?? ""
-            let choices = row["choices"] as? [String] ?? []
-            let icon = !child.isEmpty ? "folder" : choices.contains("On") && choices.contains("Off") ?
-                (value == "On" ? "switch.2" : "switch.2") : "slider.horizontal.3"
-            let tile = button(row["label"] as? String ?? "Setting", icon: icon, value: child.isEmpty ? value : nil) { [weak self, weak page] in
+            let value = row["value"].map { String(describing: $0) }
+            let enabled = row["available"] as? Bool == true && (!child.isEmpty || row["action"] as? Bool == true) && !busy
+            let item = settingsItem(row["label"] as? String ?? "Setting", detail: child.isEmpty ? value : nil,
+                                    icon: child.isEmpty ? "slider.horizontal.3" : "folder", enabled: enabled) { [weak self, weak page] in
                 guard let self, let page else { return }
                 guard state.session == self.session else { self.loadSettings(page); return }
                 if !child.isEmpty { self.openSettings(child, title: row["label"] as? String ?? "Toggles") }
                 else { self.editSetting(page, index: index, row: row) }
             }
-            tile.isEnabled = row["available"] as? Bool == true && (!child.isEmpty || row["action"] as? Bool == true) && !busy
-            buttons.append(tile)
+            item.accessoryType = .disclosureIndicator
+            return item
         }
-        updateGrid(page, buttons: buttons.isEmpty ? [button("No settings available", icon: "info.circle")] : buttons)
-        var navigation: [CPBarButton] = []
-        if state.index > 0 {
-            navigation.append(CPBarButton(image: UIImage(systemName: "chevron.left")!) { [weak self, weak page] _ in
-                guard let page else { return }; state.index -= 1; self?.drawSettings(page)
-            })
+        page.updateSections([CPListSection(items: items.isEmpty ? [settingsItem("No settings available", icon: "info.circle", enabled: false)] : items)])
+        paging(page, index: state.index, count: count) { [weak self, weak page] next in
+            guard let page else { return }; state.index = next; self?.drawSettings(page)
         }
-        if state.index + 1 < count {
-            navigation.append(CPBarButton(image: UIImage(systemName: "chevron.right")!) { [weak self, weak page] _ in
-                guard let page else { return }; state.index += 1; self?.drawSettings(page)
-            })
-        }
-        page.trailingNavigationBarButtons = navigation
     }
-    private func editSetting(_ parent: CPGridTemplate, index: Int, row: [String: Any]) {
+    private func editSetting(_ parent: CPListTemplate, index: Int, row: [String: Any]) {
         let choices = row["choices"] as? [String] ?? []
         if choices.count == 2, choices.contains("On"), choices.contains("Off") {
             preview(parent, index: index, selection: row["value"] as? String == "On" ? "Off" : "On")
             return
         }
-        let editor = makeGrid(title: row["label"] as? String, gridButtons: [button("Loading…", icon: "hourglass")])
-        var buttons: [CPGridButton] = []
+        let editor = CPListTemplate(title: row["label"] as? String, sections: [])
+        let current = String(describing: row["value"] ?? "")
         if !choices.isEmpty {
             var choicePage = 0
             func redraw() {
-                let count = max(1, (choices.count + 7) / 8)
-                let start = choicePage * 8
-                let tiles = choices[start..<min(start + 8, choices.count)].map { choice in
-                    button(choice, icon: String(describing: row["value"] ?? "") == choice ? "checkmark.circle.fill" : "circle") { [weak self] in
+                let capacity = max(1, CPListTemplate.maximumItemCount)
+                let count = max(1, (choices.count + capacity - 1) / capacity)
+                let start = choicePage * capacity
+                let items = choices[start..<min(start + capacity, choices.count)].map { choice in
+                    settingsItem(choice, icon: current == choice ? "checkmark.circle.fill" : "circle") { [weak self, weak parent] in
+                        guard let parent else { return }
                         self?.preview(parent, index: index, selection: choice)
                     }
                 }
-                updateGrid(editor, buttons: tiles)
+                editor.updateSections([CPListSection(items: items)])
                 paging(editor, index: choicePage, count: count) { next in choicePage = next; redraw() }
             }
             redraw()
-            pushTemplate(editor, animated: true, completion: nil)
-            return
-        } else if (row["step"] as? NSNumber)?.doubleValue ?? 0 > 0 {
-            buttons = [button("Decrease", icon: "minus.circle", value: String(describing: row["value"] ?? "")) { [weak self] in self?.preview(parent, index: index, direction: -1) },
-                       button("Increase", icon: "plus.circle", value: String(describing: row["value"] ?? "")) { [weak self] in self?.preview(parent, index: index, direction: 1) }]
         } else {
-            buttons = [button("Continue", icon: "checkmark.circle") { [weak self] in self?.preview(parent, index: index, direction: 0) }]
+            let actions: [(String, String, Int)] = ((row["step"] as? NSNumber)?.doubleValue ?? 0) > 0
+                ? [("Decrease", "minus.circle", -1), ("Increase", "plus.circle", 1)]
+                : [("Continue", "checkmark.circle", 0)]
+            editor.updateSections([CPListSection(items: actions.map { title, icon, direction in
+                settingsItem(title, detail: current, icon: icon) { [weak self, weak parent] in
+                    guard let parent else { return }; self?.preview(parent, index: index, direction: direction)
+                }
+            })])
         }
-        updateGrid(editor, buttons: buttons)
         pushTemplate(editor, animated: true, completion: nil)
     }
-    private func preview(_ page: CPGridTemplate, index: Int, selection: String? = nil, direction: Int = 0) {
+    private func preview(_ page: CPListTemplate, index: Int, selection: String? = nil, direction: Int = 0) {
         guard !busy, let state = page.userInfo as? SettingsPageState, state.session == session,
               let view = state.snapshot["view"] as? String else { loadSettings(page); return }
         busy = true
@@ -645,7 +652,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             } catch { self.notice(error.localizedDescription); self.busy = false; self.loadSettings(page) }
         }
     }
-    private func commit(_ intent: String, page: CPGridTemplate) {
+    private func commit(_ intent: String, page: CPListTemplate) {
         guard !busy else { return }
         busy = true
         Task { [weak self, weak page] in
@@ -662,7 +669,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             } else { self.loadSettings(page) }
         }
     }
-    private func paging(_ page: CPGridTemplate, index: Int, count: Int, change: @escaping @MainActor (Int) -> Void) {
+    private func paging<T: CPTemplate & CPBarButtonProviding>(_ page: T, index: Int, count: Int, change: @escaping @MainActor (Int) -> Void) {
         var items: [CPBarButton] = []
         if index > 0 { items.append(CPBarButton(image: UIImage(systemName: "chevron.left")!) { _ in change(index - 1) }) }
         if index + 1 < count { items.append(CPBarButton(image: UIImage(systemName: "chevron.right")!) { _ in change(index + 1) }) }
