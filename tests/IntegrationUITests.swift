@@ -33,8 +33,8 @@ final class IntegrationUITests: XCTestCase {
         let save = app.buttons["save-diagnostics-txt"]
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         save.tap()
-        XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 10))
-        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Save diagnostics text file"; shot.lifetime = .keepAlways; add(shot)
+        XCTAssertTrue(app.cells["Save to Files"].waitForExistence(timeout: 10))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Share diagnostics text file"; shot.lifetime = .keepAlways; add(shot)
     }
     func testActiveRoutePreview() {
         let app = XCUIApplication(); app.launchArguments = ["--preview-route"]; app.launch()

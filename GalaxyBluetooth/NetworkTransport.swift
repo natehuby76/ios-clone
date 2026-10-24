@@ -146,7 +146,10 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             if available { status = "Local comma verified." }
             else if response.statusCode != 200 { status = "Galaxy answered HTTP \(response.statusCode)." }
             else if identity == nil { status = "The address answered, but did not return a valid Galaxy identity." }
-            else { status = "This address belongs to a different comma than the saved pairing." }
+            else {
+                status = "This address belongs to a different comma than the saved pairing."
+                onEvent?("Galaxy runtime instance mismatch: saved=\(expectedDeviceID ?? "none"); received=\(identity ?? "none"). Runtime instances may change when Galaxy restarts.")
+            }
             if changed || !available { onEvent?(available ? "LAN probe succeeded; comma identity verified" : "LAN probe rejected: " + status) }
         } catch {
             if !Task.isCancelled, expectedGeneration == generation {

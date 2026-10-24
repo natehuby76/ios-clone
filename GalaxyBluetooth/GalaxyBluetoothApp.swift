@@ -2,7 +2,6 @@ import SwiftUI
 import Network
 import MapKit
 import CoreBluetooth
-import UniformTypeIdentifiers
 
 @main
 struct GalaxyBluetoothApp: App {
@@ -415,12 +414,52 @@ final class AppModel: ObservableObject {
         recoverGalaxy(automatic: false)
     }
 
+    private var softwareReportSession = ""
+    private var softwareReport = "Comma software: unavailable; no verified connection has reported it yet."
+    private var softwareReportDate: Date?
+    var commaSoftwareDiagnostics: String {
+        guard let date = softwareReportDate else { return softwareReport }
+        return softwareReport + "\nSoftware observed: " + ISO8601DateFormatter().string(from: date)
+            + "\nSoftware snapshot matches current connection: " + String(transport.connected && softwareReportSession == connectionSession)
+    }
+    private func collectSoftwareDiagnostics() async {
+        let session = connectionSession
+        guard transport.connected, softwareReportSession != session else { return }
+        softwareReportSession = session
+        do {
+            let response = try await transport.request(path: "/api/software/status?history=0", method: "GET", headers: [:], body: Data())
+            guard connectionSession == session else { return }
+            guard response.status == 200,
+                  let json = try JSONSerialization.jsonObject(with: response.bodyData) as? [String: Any],
+                  let installed = json["installed"] as? [String: Any] else {
+                softwareReport = "Comma software: unavailable (HTTP \(response.status) or unsupported response)."
+                softwareReportDate = Date(); return
+            }
+            func field(_ value: Any?) -> String {
+                guard let text = value as? String, !text.isEmpty else { return "not reported" }
+                return String(text.filter { !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }.prefix(160))
+            }
+            let operations = json["operations"] as? [String: Any]
+            let repository = (operations?["repository"] ?? json["repository"]) as? String
+            // Only report owner/repo, never a remote URL containing credentials.
+            let safeRepo = repository.flatMap { $0.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil ? $0 : nil }
+            softwareReport = "Comma repository: \(field(safeRepo))\nComma branch: \(field(installed["branch"]))\nComma version: \(field(installed["version"]))\nComma display version: \(field(installed["displayVersion"]))\nComma commit: \(field(installed["commit"]))\nRestart history: not reported by this endpoint; a runtime-instance change alone does not prove a full device reboot."
+            softwareReportDate = Date()
+        } catch {
+            guard connectionSession == session else { return }
+            softwareReport = "Comma software: unavailable (" + LANTransport.failureCode(error) + ")."
+            softwareReportDate = Date()
+        }
+    }
+
     func checkGalaxyUpdates() async {
         guard wantsConnection, !pairingInProgress, !offerAudioPairing, !showAudioPairing, transport.connected, !matchingGalaxy else { return }
         matchingGalaxy = true
         lastGalaxyMatch = Date()
         defer { matchingGalaxy = false }
         let session = connectionSession
+        await collectSoftwareDiagnostics()
+        guard connectionSession == session, transport.connected else { return }
         let stillCurrent = { self.wantsConnection && self.transport.connected && self.connectionSession == session }
         if transport.usesNetwork {
             // Pages come straight from comma, never through the Bluetooth bridge or the read cache.
@@ -1025,6 +1064,8 @@ final class ConnectionEventLog: ObservableObject {
         Tunnel verified: \(model.tunnel.connected)
         Tunnel status: \(model.tunnel.status)
         Connection order: \(model.connectionPriority.map(\.title).joined(separator: " → "))
+        \(model.commaSoftwareDiagnostics)
+        Saved Galaxy runtime instance: \(model.lan.expectedDeviceID ?? "none")
         LAN verified: \(model.lan.connected)
         Bluetooth verified: \(model.bluetooth.connected)
         Log session started: \(formatter.string(from: started)); retained: \(events.count); older events dropped: \(dropped)
@@ -1049,8 +1090,8 @@ final class ConnectionEventLog: ObservableObject {
 private struct DeveloperLogsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var log: ConnectionEventLog
-    @State private var exporting = false
-    @State private var exportDocument = DiagnosticsTextDocument(text: "")
+    @State private var sharedReport: GalaxyDownloadedFile?
+    @State private var reportDirectory: URL?
     @State private var exportStatus = ""
     private func allReports() -> String {
         [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
@@ -1081,10 +1122,19 @@ private struct DeveloperLogsView: View {
                     UIPasteboard.general.string = allReports()
                     log.copied = true
                 }
-                Button("Save diagnostics as .txt", systemImage: "square.and.arrow.down") {
-                    exportDocument = DiagnosticsTextDocument(text: allReports())
-                    exportStatus = ""
-                    exporting = true
+                Button("Share diagnostics .txt", systemImage: "square.and.arrow.up") {
+                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    do {
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        let name = "StarPilot-diagnostics-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-") + ".txt"
+                        let url = directory.appendingPathComponent(name)
+                        try allReports().write(to: url, atomically: true, encoding: .utf8)
+                        reportDirectory = directory; exportStatus = ""
+                        sharedReport = GalaxyDownloadedFile(url: url)
+                    } catch {
+                        try? FileManager.default.removeItem(at: directory)
+                        exportStatus = "Couldn’t prepare diagnostics. Try again or copy the report."
+                    }
                 }.buttonStyle(.bordered).accessibilityIdentifier("save-diagnostics-txt")
                 if !exportStatus.isEmpty { Text(exportStatus).font(.caption).foregroundStyle(.secondary) }
                 Text(log.section == "Connections" ? log.report(model: model) : log.detail)
@@ -1095,26 +1145,13 @@ private struct DeveloperLogsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(20)
         }.background(Color(uiColor: .systemBackground))
-            .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .plainText,
-                          defaultFilename: "StarPilot-diagnostics-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")) { result in
-                switch result {
-                case .success: exportStatus = "Diagnostics saved."
-                case .failure: exportStatus = "Couldn’t save diagnostics. Try again or copy the report."
-                }
+            .sheet(item: $sharedReport, onDismiss: {
+                if let directory = reportDirectory { try? FileManager.default.removeItem(at: directory) }
+                reportDirectory = nil
+            }) { file in
+                GalaxyFileShareSheet(url: file.url) { sharedReport = nil }
             }
             .onAppear { log.detail = selectedReport() }
             .onChange(of: log.section) { _, _ in log.detail = selectedReport(); log.copied = false }
-    }
-}
-
-private struct DiagnosticsTextDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
-    var text: String
-    init(text: String) { self.text = text }
-    init(configuration: ReadConfiguration) throws {
-        text = String(decoding: configuration.file.regularFileContents ?? Data(), as: UTF8.self)
-    }
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: Data(text.utf8))
     }
 }

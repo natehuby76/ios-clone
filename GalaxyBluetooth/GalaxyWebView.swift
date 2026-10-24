@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-private struct GalaxyDownloadedFile: Identifiable {
+struct GalaxyDownloadedFile: Identifiable {
     let id = UUID()
     let url: URL
 }
@@ -115,7 +115,7 @@ struct GalaxyWebView: View {
     }
 }
 
-private struct GalaxyFileShareSheet: UIViewControllerRepresentable {
+struct GalaxyFileShareSheet: UIViewControllerRepresentable {
     let url: URL
     let finished: () -> Void
     func makeUIViewController(context: Context) -> UIActivityViewController {
