@@ -1,5 +1,7 @@
 import SwiftUI
 import WebKit
+import VisionKit
+import AVFoundation
 
 struct ConnectionSettingsView: View {
     @ObservedObject var model: AppModel
@@ -464,6 +466,7 @@ private struct TunnelSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var address = ""
     @State private var loginURL: URL?
+    @State private var showScanner = false
     @State private var error = ""
     @State private var saving = false
     @State private var loginTask: Task<Void, Never>?
@@ -479,7 +482,7 @@ private struct TunnelSetupView: View {
             VStack(spacing: 12) {
                 if let loginURL {
                     TunnelLoginView(url: loginURL, store: store)
-                    Text("Sign in above, then tap Use tunnel. Your password stays in Galaxy’s sign-in page.").font(.footnote).padding(.horizontal)
+                    Text("Sign in above, then tap Use tunnel. Enter your Galaxy password on this page. The app remembers your sign-in, not your password.").font(.footnote).padding(.horizontal)
                     Button(saving ? "Verifying…" : "Use tunnel") {
                         saving = true; error = ""
                         loginTask = Task { @MainActor in
@@ -499,6 +502,15 @@ private struct TunnelSetupView: View {
                     Form {
                         Section {
                             TextField("https://galaxy.firestar.link/…", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                            Button {
+                                Task { @MainActor in
+                                    guard DataScannerViewController.isSupported else { error = "QR scanning isn’t supported on this device. Paste your Galaxy link instead."; return }
+                                    let allowed = await AVCaptureDevice.requestAccess(for: .video)
+                                    guard allowed else { error = "Allow camera access in iPhone Settings to scan, or paste your Galaxy link instead."; return }
+                                    guard DataScannerViewController.isAvailable else { error = "Camera unavailable. Try again or paste your Galaxy link."; return }
+                                    error = ""; showScanner = true
+                                }
+                            } label: { Label("Scan comma’s QR code", systemImage: "qrcode.viewfinder") }
                             Button("Sign in") {
                                 guard let url = TunnelTransport.endpoint(address) else { error = "Paste your full Galaxy link, including its 16-character code."; return }
                                 error = ""; loginURL = url
@@ -508,7 +520,7 @@ private struct TunnelSetupView: View {
                                     Task { if let url = await model.fetchLegacyURL() { address = url.absoluteString } else { error = model.legacyMessage } }
                                 }
                             }
-                        } header: { Text("Your Galaxy link") } footer: { Text("Use the private Galaxy link from your comma. Both phone and comma need internet for Tunnel. Automatic uses your saved connection order.") }
+                        } header: { Text("Your Galaxy link") } footer: { Text("Scan the Galaxy QR code on comma or paste its private link, then sign in with your Galaxy password. Both phone and comma need internet for Tunnel. Automatic uses your saved connection order.") }
                         if model.tunnel.credential != nil {
                             Section { Button("Forget saved tunnel", role: .destructive) { model.forgetTunnel(); address = "" } }
                         }
@@ -517,6 +529,18 @@ private struct TunnelSetupView: View {
                 if !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.red).padding() }
             }.navigationTitle("Galaxy tunnel").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+                .sheet(isPresented: $showScanner) {
+                    NavigationStack {
+                        TunnelQRScanner { value in
+                            guard let url = TunnelTransport.endpoint(value) else {
+                                error = "That isn’t a Galaxy tunnel link. Scan the Galaxy link QR code on comma."; showScanner = false; return
+                            }
+                            address = url.absoluteString; error = ""; showScanner = false; loginURL = url
+                        } failed: { message in error = message; showScanner = false }
+                        .navigationTitle("Scan Galaxy link").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showScanner = false } } }
+                    }
+                }
                 .onAppear { address = model.tunnel.credential?.url ?? "" }
                 .onDisappear { loginTask?.cancel() }
         }
@@ -542,6 +566,44 @@ private struct TunnelLoginView: UIViewRepresentable {
             guard let url = navigationAction.request.url, url.scheme == "https", url.host == "galaxy.firestar.link",
                   url.port == nil, url.user == nil, url.password == nil else { decisionHandler(.cancel); return }
             decisionHandler(.allow)
+        }
+    }
+}
+
+private struct TunnelQRScanner: UIViewControllerRepresentable {
+    let scanned: (String) -> Void
+    let failed: (String) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])],
+            qualityLevel: .balanced, recognizesMultipleItems: false, isGuidanceEnabled: true, isHighlightingEnabled: true)
+        scanner.delegate = context.coordinator
+        return scanner
+    }
+    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
+        guard !scanner.isScanning, !context.coordinator.finished else { return }
+        do { try scanner.startScanning() }
+        catch { context.coordinator.finish(error: "Couldn’t start the camera. Try again or paste your Galaxy link.") }
+    }
+    static func dismantleUIViewController(_ scanner: DataScannerViewController, coordinator: Coordinator) { scanner.stopScanning() }
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        let parent: TunnelQRScanner
+        var finished = false
+        init(parent: TunnelQRScanner) { self.parent = parent }
+        func dataScanner(_ scanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            guard !finished else { return }
+            for item in addedItems {
+                if case .barcode(let code) = item, let value = code.payloadStringValue {
+                    finished = true; scanner.stopScanning(); parent.scanned(value); return
+                }
+            }
+        }
+        func dataScanner(_ scanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable) {
+            finish(error: "Camera unavailable. Try again or paste your Galaxy link.")
+        }
+        func finish(error: String) {
+            guard !finished else { return }; finished = true
+            DispatchQueue.main.async { self.parent.failed(error) }
         }
     }
 }

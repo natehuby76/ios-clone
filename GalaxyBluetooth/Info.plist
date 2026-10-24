@@ -35,6 +35,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan the Galaxy link QR code displayed on your comma to set up Tunnel.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Connect directly to your comma's Galaxy Bluetooth bridge.</string>
 	<key>NSBonjourServices</key>

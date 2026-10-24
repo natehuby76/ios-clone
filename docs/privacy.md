@@ -12,7 +12,7 @@ Connection preferences, a remembered Bluetooth identifier and local address are 
 
 ## Permissions
 
-Bluetooth permission is used to find and connect to comma. Local Network permission is used for local Wi-Fi discovery and requests. Pairing uses the pairing window on comma; version 1.0.1 does not request camera permission or scan QR codes.
+Bluetooth permission is used to find and connect to comma. Local Network permission is used for local Wi-Fi discovery and requests. Bluetooth pairing uses the pairing window on comma. Optional camera access scans the Galaxy tunnel QR code on comma. Camera frames are processed on the iPhone; the app does not save or upload them. You can paste the link instead.
 
 The native app does not request access to the iPhone's contacts, microphone or photo library. Optional phone GPS sharing requests location permission only when you enable it. While enabled and connected, it sends recent location fixes, accuracy, timestamps and available altitude, speed and bearing to your comma, about once a second. Sharing may continue in the background with the iOS location indicator. You can turn sharing off in the app or revoke permission in iPhone Settings. This native feature does not upload GPS fixes to the app publisher; comma's navigation features and any providers configured there handle received location under their own settings and policies.
 
