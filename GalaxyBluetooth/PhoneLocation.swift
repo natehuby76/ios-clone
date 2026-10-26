@@ -2,7 +2,7 @@ import CoreLocation
 import Foundation
 
 /// Sends this iPhone's GPS to comma about once a second over the current Galaxy connection.
-/// Comma uses it for navigation only when its own GPS and the car's GPS have no fix.
+/// Galaxy's navigation GPS source setting controls whether comma prefers this phone or uses it as backup.
 @MainActor
 final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     static let path = "/api/companion/location"
@@ -20,6 +20,7 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
     private let transport: () -> (any GalaxyRequestTransport)?
     private let manager: CLLocationManager?
     private var sending = false
+    private var pending: CLLocation?
     private var lastSent = Date.distantPast
 
     init(transport: @escaping () -> (any GalaxyRequestTransport)?, manager: CLLocationManager? = CLLocationManager()) {
@@ -74,13 +75,21 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
     /// Sends one fix unless another is in flight or one went out under a second ago.
     func deliver(_ location: CLLocation, now: Date = Date()) async {
         offered += 1
-        guard sharing, !sending, now.timeIntervalSince(lastSent) >= 0.9 else { skipped += 1; return }
+        guard sharing else { skipped += 1; return }
+        if sending { pending = location; skipped += 1; return }
+        guard now.timeIntervalSince(lastSent) >= 0.9 else { skipped += 1; return }
         guard let body = Self.payload(location, now: now) else { skipped += 1; onEvent?("Fix rejected: age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)"); status = "Waiting for GPS"; return }
         guard let transport = transport(), transport.connected else { skipped += 1; status = "Waiting for comma"; return }
         let started = Date()
         onEvent?("Upload started; fix age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)m")
         sending = true
-        defer { sending = false }
+        defer {
+            sending = false
+            if let next = pending {
+                pending = nil
+                Task { await deliver(next) }
+            }
+        }
         do {
             let response = try await transport.request(path: Self.path, method: "POST", headers: ["Content-Type": "application/json"], body: body)
             if response.status == 200 { accepted += 1 } else { failed += 1 }

@@ -156,3 +156,19 @@ final class GalaxyReadCache: GalaxyRequestTransport {
         return response
     }
 }
+
+/// Include time spent in the Bluetooth queue in the phone-reported fix age.
+/// Expired GPS is discarded before transmission; other requests are unchanged.
+enum PhoneGpsDelivery {
+    static func body(_ body: Data, path: String, queuedSeconds: TimeInterval) throws -> Data {
+        guard path == "/api/companion/location" else { return body }
+        guard queuedSeconds.isFinite, queuedSeconds >= 0,
+              var value = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let age = value["ageMs"] as? Double, age.isFinite, age >= 0,
+              age + queuedSeconds * 1000 <= 2000 else {
+            throw BridgeError.message("Waiting for a fresh GPS fix.")
+        }
+        value["ageMs"] = age + queuedSeconds * 1000
+        return try JSONSerialization.data(withJSONObject: value)
+    }
+}
