@@ -152,10 +152,15 @@ final class CompanionDiagnostics: ObservableObject {
     }
     private func maintainStream() {
         stopStream()
-        screenStatus = "Open Cameras & Monitoring in Galaxy for SecretGood’s camera views. Cameras require local Wi-Fi."
+        let message = "Open Cameras & Monitoring in Galaxy for SecretGood’s camera views. Cameras require local Wi-Fi."
+        if screenStatus != message { screenStatus = message }
     }
     private func stopStream(preserveFrame: Bool = false) {
-        if !preserveFrame { screen = nil; frameAt = nil; displayFPS = 0 }
+        if !preserveFrame {
+            if screen != nil { screen = nil }
+            if frameAt != nil { frameAt = nil }
+            if displayFPS != 0 { displayFPS = 0 }
+        }
     }
 }
 

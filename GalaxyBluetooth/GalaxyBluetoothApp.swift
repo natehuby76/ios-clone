@@ -265,6 +265,12 @@ final class AppModel: ObservableObject {
                 guard windowLAN.connected else {
                     throw BridgeError.message("Connect to your comma over Local Wi-Fi first. Its saved LAN address could not be verified.")
                 }
+                // Bind the Bluetooth reply to the comma whose LAN pairing window we open.
+                let adapterResponse = try? await windowLAN.request(path: "/api/bluetooth/status", method: "GET", headers: [:], body: Data())
+                let adapter = adapterResponse.flatMap { $0.status == 200 ? AudioPairing.parse($0.bodyData) : nil }
+                let expectedAdapter = adapter.flatMap { AudioPairing.validAddress($0.adapterAddress) ? $0.adapterAddress : nil }
+                try Task.checkCancellation()
+                connectionLog.record("Pairing target adapter verification available=\(expectedAdapter != nil)")
                 connectionLog.record("Opening phone pairing window over verified LAN")
                 guard try await LANPairing.openWindow(over: windowLAN, progress: { self.connectionMessage = $0 }) else {
                     throw BridgeError.message("Local Wi-Fi disconnected before Bluetooth setup. Reconnect to comma over Local Wi-Fi and try again.")
@@ -272,7 +278,7 @@ final class AppModel: ObservableObject {
                 connectionMessage = "Opened comma’s pairing window over Local Wi-Fi. Looking for comma…"
                 connectionLog.record("Phone pairing window opened over verified LAN")
                 try Task.checkCancellation()
-                importClaim(try await claimer.claim(name: UIDevice.current.name))
+                importClaim(try await claimer.claim(name: UIDevice.current.name, expectedAdapterAddress: expectedAdapter))
             }
             catch is CancellationError { connectionMessage = "Pairing cancelled." }
             catch {
@@ -327,6 +333,8 @@ final class AppModel: ObservableObject {
         server.start()
         discovery.onEvent = { [weak self] reason in self?.connectionLog.record(reason) }
         discovery.onDevicesChanged = { [weak self] in self?.discoverAutomaticLAN() }
+        lan.onDiagnostic = { [weak self] in self?.connectionLog.record($0) }
+        tunnel.onDiagnostic = { [weak self] in self?.connectionLog.record($0) }
         tunnel.onEvent = { [weak self] reason in self?.objectWillChange.send(); self?.logConnection(reason) }
         lan.onEvent = { [weak self] reason in
             guard let self else { return }
@@ -1050,7 +1058,16 @@ struct FloatingGalaxyGlass: ViewModifier {
 
 @MainActor
 final class ConnectionEventLog: ObservableObject {
-    @Published private(set) var events: [String] = []
+    private var storage = Array(repeating: "", count: 3000)
+    private var nextEvent = 0
+    private var retained = 0
+    private var sequence = 0
+    private var repeats = 0
+    private let uptime = ProcessInfo.processInfo.systemUptime
+    var events: [String] {
+        let start = retained == storage.count ? nextEvent : 0
+        return (0..<retained).map { storage[(start + $0) % storage.count] }
+    }
     @Published var section = "Connections"
     @Published var detail = ""
     @Published var copied = false
@@ -1062,14 +1079,33 @@ final class ConnectionEventLog: ObservableObject {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-    func record(_ event: String) {
-        guard event != lastEvent else { return }
-        lastEvent = event
-        events.append("\(formatter.string(from: Date())) \(event.prefix(1000))")
-        if events.count > 3000 { dropped += events.count - 3000; events.removeFirst(events.count - 3000) }
+    // Error descriptions can contain private tunnel URLs or key material.
+    private static let privateValues = try! NSRegularExpression(pattern:
+        #"https?://[^\s]+|\b[0-9a-fA-F]{64}\b|(?i:bearer)\s+[^\s]+"#)
+    private static func redact(_ text: String) -> String {
+        privateValues.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "[redacted]")
     }
-    func clear() { dropped = 0; events.removeAll(); lastEvent = ""; detail = ""; copied = false }
-    func report(model: AppModel) -> String {
+    // No published changes or disk/network work on the connection callback path.
+    func record(_ event: String) {
+        let bounded = Self.redact(String(event.prefix(1000)))
+        guard bounded != lastEvent else { repeats += 1; return }
+        if repeats > 0 { append("Previous event repeated \(repeats) additional times"); repeats = 0 }
+        lastEvent = bounded
+        append(bounded)
+    }
+    private func append(_ event: String) {
+        sequence += 1
+        let elapsed = String(format: "%.3f", ProcessInfo.processInfo.systemUptime - uptime)
+        storage[nextEvent] = "\(formatter.string(from: Date())) #\(sequence) +\(elapsed)s \(event)"
+        nextEvent = (nextEvent + 1) % storage.count
+        if retained == storage.count { dropped += 1 } else { retained += 1 }
+    }
+    func clear() {
+        storage = Array(repeating: "", count: 3000)
+        nextEvent = 0; retained = 0; dropped = 0; repeats = 0
+        lastEvent = ""; detail = ""; copied = false
+    }
+    func report(model: AppModel, eventLimit: Int? = nil) -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         return """
         StarPilot BT connection diagnostics
@@ -1085,7 +1121,7 @@ final class ConnectionEventLog: ObservableObject {
         Saved comma identity: \(model.lan.expectedDeviceID ?? "none")
         LAN verified: \(model.lan.connected)
         Bluetooth verified: \(model.bluetooth.connected)
-        Log session started: \(formatter.string(from: started)); retained: \(events.count); older events dropped: \(dropped)
+        Log session started: \(formatter.string(from: started)); retained: \(retained); older events dropped: \(dropped); pending repeated events: \(repeats)
         Current screen: \(model.tab.rawValue)
         GPS sharing: \(model.phoneLocation.sharing); \(model.phoneLocation.diagnosticSummary)
         \(model.navigationServices.navigation.diagnosticSummary)
@@ -1099,7 +1135,7 @@ final class ConnectionEventLog: ObservableObject {
         Current connection message: \(model.connectionMessage)
         Navigation alpha: \(model.navigationEnabled)
         Recent connection events:
-        \(events.joined(separator: "\n"))
+        \(events.suffix(eventLimit ?? retained).joined(separator: "\n"))
         """
     }
 }
@@ -1110,6 +1146,7 @@ private struct DeveloperLogsView: View {
     @State private var sharedReport: GalaxyDownloadedFile?
     @State private var reportDirectory: URL?
     @State private var exportStatus = ""
+    @State private var exporting = false
     private func allReports() -> String {
         [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
     }
@@ -1119,6 +1156,9 @@ private struct DeveloperLogsView: View {
         case "Live View": return model.diagnostics.diagnosticLog()
         default: return log.report(model: model)
         }
+    }
+    private func previewReport() -> String {
+        log.section == "Connections" ? log.report(model: model, eventLimit: 150) : selectedReport()
     }
     var body: some View {
         ScrollView {
@@ -1133,32 +1173,45 @@ private struct DeveloperLogsView: View {
                     Button(log.copied ? "Copied" : "Copy report", systemImage: "doc.on.doc") {
                         UIPasteboard.general.string = selectedReport(); log.copied = true
                     }.buttonStyle(.borderedProminent).tint(.purple)
-                    Button("Refresh") { log.detail = selectedReport(); log.copied = false }.buttonStyle(.bordered)
+                    Button("Refresh") { log.detail = previewReport(); log.copied = false }.buttonStyle(.bordered)
                 }
                 Button("Copy all reports") {
                     UIPasteboard.general.string = allReports()
                     log.copied = true
                 }
-                Button("Share diagnostics .txt", systemImage: "square.and.arrow.up") {
-                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-                    do {
-                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                        let name = "StarPilot-diagnostics-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-") + ".txt"
-                        let url = directory.appendingPathComponent(name)
-                        try allReports().write(to: url, atomically: true, encoding: .utf8)
-                        reportDirectory = directory; exportStatus = ""
-                        sharedReport = GalaxyDownloadedFile(url: url)
-                    } catch {
-                        try? FileManager.default.removeItem(at: directory)
-                        exportStatus = "Couldn’t prepare diagnostics. Try again or copy the report."
+                Button(exporting ? "Preparing report…" : "Share diagnostics .txt", systemImage: "square.and.arrow.up") {
+                    guard !exporting else { return }
+                    exporting = true; exportStatus = ""
+                    let report = allReports()
+                    Task {
+                        do {
+                            let url = try await Task.detached(priority: .utility) {
+                                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                                do {
+                                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                                    let name = "StarPilot-diagnostics-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-") + ".txt"
+                                    let url = directory.appendingPathComponent(name)
+                                    try report.write(to: url, atomically: true, encoding: .utf8)
+                                    return url
+                                } catch {
+                                    try? FileManager.default.removeItem(at: directory)
+                                    throw error
+                                }
+                            }.value
+                            reportDirectory = url.deletingLastPathComponent()
+                            sharedReport = GalaxyDownloadedFile(url: url)
+                        } catch { exportStatus = "Couldn’t prepare diagnostics. Try again or copy the report." }
+                        exporting = false
                     }
-                }.buttonStyle(.bordered).accessibilityIdentifier("save-diagnostics-txt")
+                }.buttonStyle(.bordered).disabled(exporting).accessibilityIdentifier("save-diagnostics-txt")
                 if !exportStatus.isEmpty { Text(exportStatus).font(.caption).foregroundStyle(.secondary) }
-                Text(log.section == "Connections" ? log.report(model: model) : log.detail)
+                Text("Preview shows the latest 150 connection events. Copy or share includes the full retained log.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(log.detail)
                     .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-                Button("Clear connection history") { log.clear(); log.detail = selectedReport() }
+                Button("Clear connection history") { log.clear(); log.detail = previewReport() }
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(20)
         }.background(Color(uiColor: .systemBackground))
@@ -1168,7 +1221,13 @@ private struct DeveloperLogsView: View {
             }) { file in
                 GalaxyFileShareSheet(url: file.url) { sharedReport = nil }
             }
-            .onAppear { log.detail = selectedReport() }
-            .onChange(of: log.section) { _, _ in log.detail = selectedReport(); log.copied = false }
+            .task {
+                while !Task.isCancelled {
+                    let report = previewReport()
+                    if report != log.detail { log.detail = report }
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                }
+            }
+            .onChange(of: log.section) { _, _ in log.detail = previewReport(); log.copied = false }
     }
 }

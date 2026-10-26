@@ -1,6 +1,22 @@
 import XCTest
 
 final class IntegrationUITests: XCTestCase {
+    func testTunnelSetupValidation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-galaxy.app.developerMode", "NO", "-galaxy.app.navigationAlpha", "NO"]
+        app.launch()
+        let setup = app.buttons["tunnel-setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 15))
+        if !setup.isHittable { app.swipeUp() }
+        setup.tap()
+        XCTAssertTrue(app.navigationBars["Galaxy tunnel"].waitForExistence(timeout: 5))
+        let address = app.textFields.firstMatch
+        address.tap(); address.typeText("not-a-link")
+        app.buttons["Sign in"].tap()
+        XCTAssertTrue(app.staticTexts["Paste your full Galaxy link, including its 16-character code."].waitForExistence(timeout: 5))
+        app.buttons["Close"].tap()
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+    }
     func testConnectionOrderSheet() {
         let app = XCUIApplication()
         app.launchArguments = ["-galaxy.app.developerMode", "NO", "-galaxy.app.navigationAlpha", "NO", "-galaxy.connection.mode", "automatic"]

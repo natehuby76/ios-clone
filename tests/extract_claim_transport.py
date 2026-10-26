@@ -38,10 +38,14 @@ final class CBUUID: NSObject {
     static var instances: [CBCentralManager] = []
     var state = CBManagerState.poweredOn
     var cancellations = 0
+    var alreadyConnected: [CBPeripheral] = []
+    var connections: [CBPeripheral] = []
+    var scans = 0
     init(delegate: CBCentralManagerDelegate, queue: DispatchQueue) { Self.instances.append(self) }
-    func scanForPeripherals(withServices services: [CBUUID], options: [String: Any]?) {}
+    func retrieveConnectedPeripherals(withServices services: [CBUUID]) -> [CBPeripheral] { alreadyConnected }
+    func scanForPeripherals(withServices services: [CBUUID], options: [String: Any]?) { scans += 1 }
     func stopScan() {}
-    func connect(_ peripheral: CBPeripheral, options: [String: Any]?) {}
+    func connect(_ peripheral: CBPeripheral, options: [String: Any]?) { connections.append(peripheral) }
     func cancelPeripheralConnection(_ peripheral: CBPeripheral) { cancellations += 1 }
 }
 '''
@@ -52,9 +56,9 @@ tests = r'''
         var events: [String] = []
         transport.onEvent = { events.append($0) }
         var previous: CBCentralManager?
-        for attempt in 0..<2 {
+        for attempt in 0..<3 {
             let count = CBCentralManager.instances.count
-            let task = Task { try await transport.claim(name: "iPhone") }
+            let task = Task { try await transport.claim(name: "iPhone", expectedAdapterAddress: "AA:BB:CC:DD:EE:FF") }
             for _ in 0..<100 where CBCentralManager.instances.count == count { await Task.yield() }
             precondition(CBCentralManager.instances.count == count + 1)
             let central = CBCentralManager.instances.last!
@@ -63,8 +67,11 @@ tests = r'''
                 transport.centralManagerDidUpdateState(previous)
             }
             let peripheral = CBPeripheral()
+            if attempt == 1 { central.alreadyConnected = [peripheral] }
             transport.centralManagerDidUpdateState(central)
-            transport.centralManager(central, didDiscover: peripheral, advertisementData: [:], rssi: 0)
+            if attempt != 1 { transport.centralManager(central, didDiscover: peripheral, advertisementData: [:], rssi: 0) }
+            else { precondition(central.scans == 0, "An existing connection must not depend on advertising") }
+            precondition(central.connections.count == 1)
             transport.centralManager(central, didConnect: peripheral)
             let rx = CBCharacteristic(Wire.rx), tx = CBCharacteristic(Wire.tx), info = CBCharacteristic(Wire.info)
             let service = CBService()
@@ -84,12 +91,17 @@ tests = r'''
             let key = try ClaimCrypto.derive(server, peer: body.subdata(in: 4..<69), challenge: challenge)
             let id = attempt == 0 ? "11223344" : "55667788"
             let credential = String(repeating: attempt == 0 ? "ab" : "cd", count: 32)
-            let json = try JSONSerialization.data(withJSONObject: ["key": credential, "id": id])
+            let json = try JSONSerialization.data(withJSONObject: ["key": credential, "id": id, "adapterAddress": attempt == 2 ? "11:22:33:44:55:66" : "AA:BB:CC:DD:EE:FF"])
             let box = try AES.GCM.seal(json, using: key, authenticating: ClaimCrypto.aad)
             let reply = ClaimCrypto.replyMagic + server.publicKey.x963Representation + box.combined!
             for packet in Wire.packets(Wire.uint32(UInt32(reply.count)) + reply, size: 180) {
                 tx.value = packet
                 transport.peripheral(peripheral, didUpdateValueFor: tx, error: nil)
+            }
+            if attempt == 2 {
+                do { _ = try await task.value; preconditionFailure("Wrong comma reply was accepted") } catch { }
+                precondition(central.cancellations == 1)
+                continue
             }
             let completions = events.filter { $0.contains("pairing complete") }.count
             transport.peripheral(peripheral, didWriteValueFor: rx, error: nil)
@@ -114,7 +126,20 @@ tests = r'''
             }
         }
         precondition(events.filter { $0.contains("pairing complete") }.count == 2)
-        print("Repeated pairing, stale callbacks and setup handoff passed")
+        precondition(events.contains { $0.contains("[service discovery]") })
+        precondition(events.contains { $0.contains("[claim reply]") })
+        precondition(events.contains { $0.contains("reply complete; packets=") })
+        precondition(!events.joined().contains(String(repeating: "ab", count: 32)))
+        precondition(!events.joined().contains(String(repeating: "cd", count: 32)))
+        let count = CBCentralManager.instances.count
+        let ambiguous = Task { try await transport.claim(name: "iPhone") }
+        for _ in 0..<100 where CBCentralManager.instances.count == count { await Task.yield() }
+        let central = CBCentralManager.instances.last!
+        central.alreadyConnected = [CBPeripheral(), CBPeripheral()]
+        transport.centralManagerDidUpdateState(central)
+        do { _ = try await ambiguous.value; preconditionFailure("Multiple commas must not be selected arbitrarily") } catch { }
+        precondition(central.connections.isEmpty)
+        print("Pairing discovery, existing connections, multiple-device refusal, stale callbacks, handoff and safe diagnostics passed")
     }
 }
 '''

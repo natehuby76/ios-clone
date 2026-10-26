@@ -72,6 +72,8 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     @Published private(set) var connected = false
     @Published private(set) var status = "Local connection not checked yet."
     var onEvent: ((String) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
+    private var probeNumber = 0
     private(set) var endpoint: URL?
     private(set) var generation = UUID().uuidString
     private(set) var expectedDeviceID: String?
@@ -149,9 +151,16 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
     func probe() async -> Bool {
         guard endpoint != nil else { return false }
         let expectedGeneration = generation
+        probeNumber += 1
+        let attempt = probeNumber, started = ProcessInfo.processInfo.systemUptime
+        onDiagnostic?("LAN probe \(attempt) started; previously verified=\(connected)")
+        defer {
+            onDiagnostic?("LAN probe \(attempt) finished; elapsed=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s; cancelled=\(Task.isCancelled); superseded=\(expectedGeneration != generation); verified=\(connected)")
+        }
         do {
             let (data, response) = try await authenticated(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
+            onDiagnostic?("LAN probe \(attempt) runtime response HTTP \(response.statusCode); bytes=\(data.count)")
             let runtime = Self.deviceID(data)
             var persistent: String?
             if response.statusCode == 200, runtime != nil {
@@ -417,6 +426,8 @@ final class TunnelTransport: ObservableObject, GalaxyRequestTransport {
     private(set) var credential: TunnelCredential?
     var expectedDeviceID: String?
     var onEvent: ((String) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
+    private var probeNumber = 0
     private let load: (URLRequest, Int) async throws -> (Data, HTTPURLResponse)
     init(load: @escaping (URLRequest, Int) async throws -> (Data, HTTPURLResponse) = { try await BoundedHTTP.load($0, limit: $1) }) { self.load = load }
     static func endpoint(_ text: String) -> URL? {
@@ -438,9 +449,16 @@ final class TunnelTransport: ObservableObject, GalaxyRequestTransport {
     func probe() async -> Bool {
         guard let credential else { return false }
         let original = generation
+        probeNumber += 1
+        let attempt = probeNumber, started = ProcessInfo.processInfo.systemUptime
+        onDiagnostic?("Tunnel probe \(attempt) started; previously verified=\(connected)")
+        defer {
+            onDiagnostic?("Tunnel probe \(attempt) finished; elapsed=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s; cancelled=\(Task.isCancelled); session changed=\(original != generation); verified=\(connected)")
+        }
         do {
             let (data, response) = try await send(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, generation == original else { return false }
+            onDiagnostic?("Tunnel probe \(attempt) runtime response HTTP \(response.statusCode); bytes=\(data.count)")
             let persistent = LANTransport.persistentIdentity(url: Self.endpoint(credential.url)!)
             guard response.statusCode == 200, let runtime = LANTransport.deviceID(data),
                   // The authenticated, fixed tunnel URL identifies the saved tunnel across restarts.

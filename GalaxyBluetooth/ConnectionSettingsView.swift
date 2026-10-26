@@ -79,8 +79,8 @@ struct ConnectionSettingsView: View {
                 Text("PREFERENCES").font(.system(size: 11, weight: .medium)).tracking(1.2)
                     .foregroundStyle(muted).frame(maxWidth: .infinity, alignment: .leading)
                 preferences
-                row("network", title: "Galaxy tunnel", subtitle: model.tunnel.status) {
-                    Button(model.tunnel.credential == nil ? "Set up" : "Manage") { showTunnel = true }
+                row("network", title: "Galaxy tunnel", subtitle: model.tunnel.credential == nil ? "Not set up" : model.tunnel.status) {
+                    Button(model.tunnel.credential == nil ? "Set up" : "Manage") { showTunnel = true }.accessibilityIdentifier("tunnel-setup")
                 }.padding(14).background(panel, in: RoundedRectangle(cornerRadius: 16))
                 DisclosureGroup(isExpanded: $advanced) { advancedControls.padding(.top, 8) } label: {
                     Text("Advanced connection options").font(.system(size: 13)).frame(minHeight: 30)
@@ -124,7 +124,7 @@ struct ConnectionSettingsView: View {
                     }.environment(\.editMode, .constant(.active))
                         .navigationTitle("Connection order").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showOrder = false } } }
-                }.presentationDetents([.medium])
+                }.presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showTunnel) { TunnelSetupView(model: model) }
             .tint(accent)
@@ -172,7 +172,7 @@ struct ConnectionSettingsView: View {
                     Button { model.mode = mode } label: {
                         Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Local Wi-Fi")
                             .font(.system(size: 13, weight: .medium))
-                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                             .foregroundStyle(model.mode == mode ? Color.white : Color.primary)
                             .background(model.mode == mode ? accent : Color.clear, in: Capsule())
                     }.buttonStyle(.plain)
