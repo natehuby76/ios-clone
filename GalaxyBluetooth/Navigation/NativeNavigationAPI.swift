@@ -112,7 +112,7 @@ enum NativeNavigationAPI {
         let guiding = ["guiding", "arrived"].contains(state.status) && state.instruction != nil && state.destination != nil && ((state.route?.count ?? 0) >= 2 || state.routeUnchanged == true)
         let location = state.location
         let live = location?.lastKnown != true && (location?.validForMs ?? 0) > 0
-        let position = live ? location.map { CommaPosition(latitude: $0.latitude, longitude: $0.longitude, bearing: $0.bearing ?? 0) } : nil
+        let position = live ? location.map { CommaPosition(latitude: $0.latitude, longitude: $0.longitude, bearing: $0.bearing) } : nil
         let instruction = guiding ? state.instruction.map { CommaInstruction(primary: $0.text, secondary: "", distance: $0.distanceMeters,
             distanceRemaining: $0.remainingDistanceMeters, timeRemaining: $0.remainingDurationSeconds, type: $0.maneuverType, modifier: $0.maneuverModifier) } : nil
         // The server bounds guidance age to 3 seconds but doesn't expose its timestamp.

@@ -261,6 +261,12 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     static func nextRequestIndex(methods: [String], paths: [String], priorityStreak: Int) -> Int {
         guard methods.count == paths.count, !methods.isEmpty, methods[0] == "GET", priorityStreak < 3 else { return 0 }
+        // A GPS update can pass queued reads, but never another write. Bound
+        // priority bursts so regular reads still make progress.
+        for index in methods.indices {
+            if methods[index] == "POST" && paths[index] == "/api/companion/location" { return index }
+            if methods[index] != "GET" { break }
+        }
         // Keep the short-lived state badge from waiting behind large page snapshots.
         for index in methods.indices {
             if methods[index] != "GET" { break }
@@ -295,9 +301,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"
         onEvent?("Bluetooth request started: [\(active.id.prefix(8))] \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), waited=\(String(format: "%.2f", requestStarted - active.enqueuedAt))s, response=\(activeNotifications ? "notifications" : activeReadStream ? "read stream" : "encrypted reads")")
         do {
+            let body = try PhoneGpsDelivery.body(active.body, path: active.path,
+                                                 queuedSeconds: ProcessInfo.processInfo.systemUptime - active.enqueuedAt)
             notificationTag = try Wire.streamTag(session: session, counter: counter)
             let request = BridgeRequest(id: active.id, session: session, counter: counter, path: active.path,
-                                        method: active.method, headers: active.headers, body: active.body.base64EncodedString(),
+                                        method: active.method, headers: active.headers, body: body.base64EncodedString(),
                                         phone: active.phone, responseCodec: 2, responseFlow: activeNotifications ? "notify-window8" : activeReadStream ? "read-stream" : nil)
             let packetLimit = min(supportsNotifications ? 512 : 180, peripheral.maximumWriteValueLength(for: .withResponse))
             onEvent?("Bluetooth write limit: \(packetLimit) bytes; acknowledged writes; compression=2")

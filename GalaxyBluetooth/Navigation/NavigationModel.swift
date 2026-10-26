@@ -414,7 +414,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                 if let position = snapshot.position, snapshot.positionValidForSeconds == nil || snapshot.positionValidForSeconds! > Date().timeIntervalSince(requestedAt) {
                     commaPositionExpires = snapshot.positionValidForSeconds.map { requestedAt.addingTimeInterval($0) }
                     commaPositionSampleDate = requestedAt
-                    commaBearing = position.bearing
+                    if let bearing = position.bearing { commaBearing = bearing }
                     commaPosition = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
                 } else { commaPosition = nil }
             } catch {

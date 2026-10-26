@@ -22,6 +22,9 @@ methods += "\n" + method("GalaxyBluetooth/BluetoothTransport.swift", "canDrainCa
 tests = r'''
 @main struct BluetoothReadRegression {
     static func main() {
+        precondition(Probe.nextRequestIndex(methods: ["GET", "GET", "POST"], paths: ["/api/settings/pages/hub", "/api/device/state", "/api/companion/location"], priorityStreak: 0) == 2)
+        precondition(Probe.nextRequestIndex(methods: ["GET", "PUT", "POST"], paths: ["/api/device/state", "/api/settings/confirm", "/api/companion/location"], priorityStreak: 0) == 0)
+        precondition(Probe.nextRequestIndex(methods: ["GET", "POST"], paths: ["/api/device/state", "/api/companion/location"], priorityStreak: 3) == 0)
         for path in ["/api/settings/pages/hub", "/api/device/state", "/api/settings/pages/appearance"] {
             precondition(!Probe.useNotifications(method: "GET", path: path, supported: true), "Read used stalled notification window")
         }

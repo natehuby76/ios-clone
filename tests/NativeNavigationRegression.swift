@@ -80,6 +80,9 @@ import Foundation
         let active = try snapshot()
         precondition(active.status == "active" && active.ageSeconds == 3 && active.routePoints?.count == 2 && active.position != nil)
         precondition(tryPath(active.routeVersion) == "/api/navigation/status?routeKey=0123456789abcdef")
+        state["location"] = ["latitude":40, "longitude":-110, "validForMs":2500] as [String:Any]
+        let noHeading = try snapshot()
+        precondition(noHeading.position != nil && noHeading.position?.bearing == nil, "Unknown heading became north")
         let completeRoute = state.removeValue(forKey: "route")!
         state["routeUnchanged"] = true
         let unchanged = try snapshot()

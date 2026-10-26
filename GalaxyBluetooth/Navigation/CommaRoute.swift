@@ -36,9 +36,9 @@ enum RoutePolyline {
 struct CommaPosition: Decodable {
     let latitude: Double
     let longitude: Double
-    let bearing: Double
+    let bearing: Double?
     var valid: Bool {
-        latitude.isFinite && longitude.isFinite && bearing.isFinite &&
+        latitude.isFinite && longitude.isFinite && (bearing == nil || (bearing!.isFinite && (0..<360).contains(bearing!))) &&
         (-90...90).contains(latitude) && (-180...180).contains(longitude)
     }
 }
