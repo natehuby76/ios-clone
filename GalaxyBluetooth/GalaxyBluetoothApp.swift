@@ -894,9 +894,10 @@ struct GalaxyRootView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if model.navigationEnabled && !editorFocused && model.tab != .navigation {
-                CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode, navigation: model.navigationServices.navigation, expanded: $appTabsExpanded, select: select)
+                CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode,
+                    navigation: model.navigationServices.navigation, expanded: $appTabsExpanded,
+                    compactIconOnly: true, statusModel: model, select: select)
                     .padding(.horizontal, 14).padding(.vertical, 5)
-                    .frame(maxWidth: .infinity)
 
 
             }
@@ -975,6 +976,7 @@ struct CompanionNavigationBar: View {
     @ObservedObject var navigation: NavigationModel
     @Binding var expanded: Bool
     var compactIconOnly = false
+    var statusModel: AppModel? = nil
     let select: (CompanionTab) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -1011,6 +1013,7 @@ struct CompanionNavigationBar: View {
                         }.accessibilityLabel("Developer options")
                     }
                 }.padding(5)
+                    .padding(.trailing, statusModel == nil ? 0 : 32)
                     .frame(width: geometry.size.width)
                     .scaleEffect(x: expanded ? 1 : 0.18, y: expanded ? 1 : 0.65, anchor: .leading)
                     .opacity(expanded ? 1 : 0)
@@ -1029,6 +1032,14 @@ struct CompanionNavigationBar: View {
             .frame(width: expanded ? geometry.size.width : compactWidth, height: 54, alignment: .leading)
             .clipped()
             .modifier(FloatingGalaxyGlass())
+            .frame(width: geometry.size.width, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                if let statusModel {
+                    CompactConnectionStatus(model: statusModel, compact: expanded) { select(.connections) }
+                        .padding(.trailing, expanded ? 5 : 0)
+                }
+            }
+            .frame(width: geometry.size.width, alignment: .leading)
         }
         .frame(height: 54)
         .onChange(of: tab) { _, newTab in if newTab == .connections { setExpanded(true) } }
@@ -1041,6 +1052,58 @@ struct CompanionNavigationBar: View {
     private var compactWidth: CGFloat { compactIconOnly ? 56 : 168 }
     private func setExpanded(_ value: Bool) {
         withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82)) { expanded = value }
+    }
+}
+
+/// Displays the selected verified transport, not Wi-Fi availability or a saved address.
+struct CompactConnectionStatus: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject private var bluetooth: BluetoothTransport
+    @ObservedObject private var lan: LANTransport
+    @ObservedObject private var tunnel: TunnelTransport
+    let openSettings: () -> Void
+    var compact: Bool
+
+    init(model: AppModel, compact: Bool = false, openSettings: @escaping () -> Void) {
+        self.model = model
+        self.compact = compact
+        bluetooth = model.bluetooth
+        lan = model.lan
+        tunnel = model.tunnel
+        self.openSettings = openSettings
+    }
+
+    private var label: String {
+        switch model.transport.selectedRoute {
+        case .bluetooth: return "Bluetooth"
+        case .lan: return lan.endpoint?.host ?? "Local Wi-Fi"
+        // Tunnel links may contain private access codes. Never display the link here.
+        case .tunnel: return "Tunnel"
+        case nil: return bluetooth.connecting || bluetooth.isScanning ? "Connecting…" : "Disconnected"
+        }
+    }
+    private var tint: Color {
+        model.transport.connected ? .green : bluetooth.connecting || bluetooth.isScanning ? .orange : .secondary
+    }
+    var body: some View {
+        Button(action: openSettings) {
+            HStack(spacing: compact ? 0 : 7) {
+                Circle().fill(tint).frame(width: 7, height: 7)
+                Text(label).font(.system(size: 13, weight: .medium))
+                    .monospacedDigit().lineLimit(1).truncationMode(.middle)
+                    .frame(width: compact ? 0 : nil).opacity(compact ? 0 : 1)
+                    .clipped()
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12).frame(height: 44)
+            .background {
+                Capsule().fill(.regularMaterial).opacity(compact ? 0 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Connection settings")
+        .accessibilityValue(model.transport.connected ? "Connected via " + label : label)
+        .accessibilityIdentifier("bluetooth-connection-status")
     }
 }
 

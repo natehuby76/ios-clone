@@ -134,21 +134,11 @@ struct NavigationHome: View {
     private var mapHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !navigation.navigating {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        CompanionNavigationBar(tab: .navigation, developerMode: connection.app.developerMode,
-                            navigation: navigation, expanded: $appTabsExpanded, compactIconOnly: true, select: selectAppTab)
-                        HStack(spacing: 8) {
-                            connectionStatus
-                            Spacer(minLength: 0)
-                            navigationOptions
-                        }
-                        .padding(.leading, 64)
-                        .opacity(appTabsExpanded ? 0 : 1)
-                        .offset(x: appTabsExpanded ? 20 : 0)
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18).delay(appTabsExpanded ? 0 : 0.24), value: appTabsExpanded)
-                        .allowsHitTesting(!appTabsExpanded).accessibilityHidden(appTabsExpanded)
-                    }.frame(width: geometry.size.width, height: 54)
+                HStack(spacing: 8) {
+                    CompanionNavigationBar(tab: .navigation, developerMode: connection.app.developerMode,
+                        navigation: navigation, expanded: $appTabsExpanded, compactIconOnly: true,
+                        statusModel: connection.app, select: selectAppTab)
+                    navigationOptions
                 }.frame(height: 54)
             }
             HStack(alignment: .top, spacing: 12) {
@@ -207,25 +197,6 @@ struct NavigationHome: View {
             Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
                 .background(.regularMaterial, in: Circle())
         }.accessibilityLabel("Navigation options")
-    }
-    private var connectionTint: Color {
-        connection.connected ? .green : bluetooth.connecting || bluetooth.isScanning ? .orange : .secondary
-    }
-    private var connectionStatus: some View {
-        Button { openSettings() } label: {
-            HStack(spacing: 8) {
-                Circle().fill(connectionTint).frame(width: 8, height: 8)
-                Text(connection.connectionLabel).font(.subheadline.weight(.semibold))
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 14).frame(minHeight: 44)
-            .background(.regularMaterial, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Connection settings")
-        .accessibilityValue(connection.connectionLabel)
-        .accessibilityIdentifier("bluetooth-connection-status")
     }
     private func mapButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
