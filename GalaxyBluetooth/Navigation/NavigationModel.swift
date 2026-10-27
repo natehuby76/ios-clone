@@ -64,7 +64,10 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
 #endif
     var commaHeading: Double { commaBearing }
     private(set) var commaPositionSampleDate = Date.distantPast
-    private let followCameraDistance: CLLocationDistance = 2800
+    private var followCameraDistance: CLLocationDistance {
+        NavigationMapMotion.cameraDistance(speed: max(0, goodLocation?.speed ?? 0),
+            distanceToTurn: navigating ? distanceToTurn : 0)
+    }
     private var commaBearing: Double = 0
     private var lastCommaSample = Date.distantPast
     private var guidanceMaxAge: TimeInterval = 4
@@ -119,13 +122,13 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         guard let fresh = goodLocation else { locationMessage = "Waiting for a reliable GPS location."; return }
         locationMessage = ""
         guard navigating, !usingComma, let route else { return }
+        updateProgress(route, at: fresh)
         if followsUser {
             withAnimation(.linear(duration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.8)) {
                 camera = .camera(MapCamera(centerCoordinate: fresh.coordinate, distance: followCameraDistance,
                     heading: fresh.course >= 0 ? fresh.course : camera.camera?.heading ?? 0, pitch: 35))
             }
         }
-        updateProgress(route, at: fresh)
         let deviation = distanceFromRoute(fresh.coordinate, polyline: route.polyline)
         offRouteSamples = deviation > max(60, fresh.horizontalAccuracy * 2) ? offRouteSamples + 1 : 0
         if !recalculating, Date().timeIntervalSince(lastCalculation) > 30,
@@ -422,7 +425,8 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                 if Task.isCancelled { return }
                 clearCommaDisplay(error.localizedDescription)
             }
-            do { try await Task.sleep(for: .seconds(connection.nativeNavigation ? 0.5 : 2)) } catch { return }
+            let delay = connection.transport.localRefreshDelay ?? (connection.nativeNavigation ? 0.5 : 2)
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
         }
     }
     private var commaPositionExpires: Date?

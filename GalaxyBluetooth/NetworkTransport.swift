@@ -348,6 +348,8 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
     var selectedRoute: ConnectionRoute? { routes.first { transport($0)?.connected == true } }
     var connected: Bool { selectedRoute != nil }
     var usesLAN: Bool { selectedRoute == .lan }
+    private var localDelay: TimeInterval = 0.2
+    var localRefreshDelay: TimeInterval? { usesLAN ? localDelay : nil }
     var usesNetwork: Bool { selectedRoute == .lan || selectedRoute == .tunnel }
     var label: String { selectedRoute?.title ?? "Reconnecting…" }
     var catalogSHA256: String? { selectedRoute.flatMap { transport($0)?.catalogSHA256 } }
@@ -373,8 +375,19 @@ final class PreferredTransport: ObservableObject, GalaxyRequestTransport {
                     headers: ["content-type": "application/json"],
                     body: Data("{\"error\":\"Connect over Local Wi-Fi or Tunnel to use this feature.\"}".utf8).base64EncodedString())
             }
-            do { return try await chosen.request(path: path, method: method, headers: headers, body: body) }
+            let started = ProcessInfo.processInfo.systemUptime
+            do {
+                let response = try await chosen.request(path: path, method: method, headers: headers, body: body)
+                if route == .lan {
+                    let elapsed = ProcessInfo.processInfo.systemUptime - started
+                    let target = response.status >= 400 ? 2.0 : min(2, max(0.2, elapsed * 2))
+                    // Back off immediately; recover gradually rather than oscillating.
+                    localDelay = target > localDelay ? target : max(target, localDelay * 0.9)
+                }
+                return response
+            }
             catch {
+                if route == .lan { localDelay = 2 }
                 try Task.checkCancellation()
                 guard error is URLError, route != .bluetooth else { throw error }
                 if route == .lan { invalidateLAN("LAN request failed: " + LANTransport.failureCode(error)) }

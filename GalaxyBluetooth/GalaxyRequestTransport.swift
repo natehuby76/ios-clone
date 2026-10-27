@@ -4,6 +4,7 @@ import Foundation
 protocol GalaxyRequestTransport: AnyObject {
     var connected: Bool { get }
     var catalogSHA256: String? { get }
+    var localRefreshDelay: TimeInterval? { get }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse
     /// GET one Galaxy page file (not an API call). Only the Local Wi-Fi/LAN transport can do this.
     func page(path: String) async throws -> BridgeResponse
@@ -11,6 +12,7 @@ protocol GalaxyRequestTransport: AnyObject {
 
 extension GalaxyRequestTransport {
     var catalogSHA256: String? { nil }
+    var localRefreshDelay: TimeInterval? { nil }
     func page(path: String) async throws -> BridgeResponse {
         throw BridgeError.message("Galaxy screens can only be downloaded from comma over Local Wi-Fi or Tunnel.")
     }
@@ -99,6 +101,7 @@ final class GalaxyReadCache: GalaxyRequestTransport {
     private var pending: [String: (UUID, Task<BridgeResponse, Error>)] = [:]
     var connected: Bool { transport.connected }
     var catalogSHA256: String? { transport.catalogSHA256 }
+    var localRefreshDelay: TimeInterval? { transport.localRefreshDelay }
 
     init(transport: any GalaxyRequestTransport, sessionID: @escaping () -> String,
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {

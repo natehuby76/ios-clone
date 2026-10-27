@@ -122,12 +122,14 @@ final class CompanionDiagnostics: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.pollDiagnostics()
-                do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+                let delay = self.transport?.localRefreshDelay.map { max(1, $0) } ?? 2
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             }
         }
     }
     private func pollDiagnostics() async {
-        guard Date().timeIntervalSince(lastDiagnostics) >= 3, let transport, transport.connected else { return }
+        let interval = transport?.localRefreshDelay.map { max(1, $0) } ?? 3
+        guard Date().timeIntervalSince(lastDiagnostics) >= interval, let transport, transport.connected else { return }
         lastDiagnostics = Date()
         do {
             let response = try await transport.request(path: "/api/system/monitor", method: "GET", headers: [:], body: Data())

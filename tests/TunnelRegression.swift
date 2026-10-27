@@ -3,13 +3,14 @@ import Foundation
 @MainActor final class RouteStub: GalaxyRequestTransport {
     var connected = true
     var fail = false
+    var status = 200
     var calls = 0
     let name: String
     init(_ name: String) { self.name = name }
     func request(path: String, method: String, headers: [String: String], body: Data) async throws -> BridgeResponse {
         calls += 1
         if fail { throw URLError(.networkConnectionLost) }
-        return BridgeResponse(id: "test", session: name, counter: 0, status: 200, headers: [:], body: "")
+        return BridgeResponse(id: "test", session: name, counter: 0, status: status, headers: [:], body: "")
     }
 }
 @MainActor final class TunnelServer {
@@ -57,8 +58,16 @@ import Foundation
         let preferred = PreferredTransport(lan: wifi, bluetooth: ble, tunnel: remote,
             invalidateTunnel: { _ in remote.connected = false }, invalidateLAN: { _ in wifi.connected = false })
         precondition(preferred.label == "Local Wi-Fi")
+        precondition(preferred.localRefreshDelay == 0.2)
+        wifi.status = 503
+        _ = try await preferred.request(path: "/api/system/monitor", method: "GET", headers: [:], body: Data())
+        precondition(preferred.localRefreshDelay == 2)
+        wifi.status = 200
+        _ = try await preferred.request(path: "/api/system/monitor", method: "GET", headers: [:], body: Data())
+        precondition(preferred.localRefreshDelay == 1.8)
         preferred.priority = [.tunnel, .bluetooth, .lan]
         precondition(preferred.label == "Tunnel")
+        precondition(preferred.localRefreshDelay == nil)
         remote.fail = true
         let fallback = try await preferred.request(path: "/api/settings/pages/hub", method: "GET", headers: [:], body: Data())
         precondition(fallback.session == "ble" && ble.connected && wifi.connected)
@@ -70,6 +79,7 @@ import Foundation
         precondition(preferred.label == "Local Wi-Fi")
         preferred.mode = .bluetooth
         precondition(preferred.label == "Bluetooth")
+        precondition(preferred.localRefreshDelay == nil)
         print("Tunnel identity/auth, origin and cookie isolation, priority, fallback and no-write-replay checks passed")
     }
 }

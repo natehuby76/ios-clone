@@ -48,6 +48,7 @@ struct CommaFollowingMap: UIViewRepresentable {
         private var markerAdded = false
         private var destinationAdded = false
         private var line: MKPolyline?
+        private var routePoints: [RoutePoint] = []
         private var displayLink: CADisplayLink?
         private var displayed: RoutePoint?
         private var origin: RoutePoint?
@@ -63,7 +64,10 @@ struct CommaFollowingMap: UIViewRepresentable {
         private var bottomInset: CGFloat = 0
         private var distance = 2800.0
         private var targetDistance = 2800.0
-        private var originDistance = 2800.0
+        private var lastRender: CFTimeInterval?
+        private var speedPoint: RoutePoint?
+        private var speedTime: CFTimeInterval?
+        private var filteredSpeed = 0.0
         private var framed = false
         private var changingCamera = false
         private var overviewRevision = -1
@@ -97,6 +101,7 @@ struct CommaFollowingMap: UIViewRepresentable {
                 if markerAdded { map.removeAnnotation(marker); markerAdded = false }
                 displayed = nil; target = nil; lastArrival = nil; framed = false
                 acceptedDate = .distantPast
+                speedPoint = nil; speedTime = nil; filteredSpeed = 0; lastRender = nil
                 positionGeneration = navigation.positionDisplayGeneration
             }
             let insetChanged = self.bottomInset != bottomInset
@@ -104,6 +109,12 @@ struct CommaFollowingMap: UIViewRepresentable {
             if line !== navigation.commaPolyline {
                 if let line { map.removeOverlay(line) }
                 line = navigation.commaPolyline
+                routePoints = line.map { line in
+                    (0..<line.pointCount).map {
+                        let coordinate = line.points()[$0].coordinate
+                        return RoutePoint(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                    }
+                } ?? []
                 if let line { map.addOverlay(line) }
             }
             if let place = navigation.destination {
@@ -140,16 +151,27 @@ struct CommaFollowingMap: UIViewRepresentable {
                 let now = CACurrentMediaTime()
                 let point = RoutePoint(latitude: coordinate.latitude, longitude: coordinate.longitude)
                 let elapsed = lastArrival.map { now - $0 } ?? 0
-                if let previous = target, elapsed > 0, elapsed < 5 {
+                if let previous = speedPoint, let sampleTime = speedTime {
                     let meters = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
                         .distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude))
-                    targetDistance = NavigationMapMotion.cameraDistance(speed: meters / elapsed,
-                        distanceToTurn: navigation.distanceToTurn)
+                    let sampleElapsed = now - sampleTime
+                    if meters >= 1, sampleElapsed > 0 {
+                        let measured = meters / sampleElapsed
+                        if sampleElapsed < 5, measured <= 55 {
+                            filteredSpeed += (measured - filteredSpeed) * (1 - exp(-sampleElapsed / 3))
+                        }
+                        speedPoint = point; speedTime = now
+                    } else if sampleElapsed > 3 {
+                        filteredSpeed *= exp(-max(0, elapsed) / 3)
+                    }
+                } else {
+                    speedPoint = point; speedTime = now
                 }
+                targetDistance = NavigationMapMotion.cameraDistance(speed: filteredSpeed,
+                    distanceToTurn: navigation.distanceToTurn)
                 origin = displayed ?? point; target = point
                 originHeading = heading
                 targetHeading = NavigationMapMotion.heading(from: heading, to: navigation.commaHeading, fraction: 1)
-                originDistance = distance
                 let jump = displayed.map {
                     CLLocation(latitude: $0.latitude, longitude: $0.longitude)
                         .distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude))
@@ -177,7 +199,8 @@ struct CommaFollowingMap: UIViewRepresentable {
                 return
             }
             render(at: link.timestamp)
-            if duration == 0 || link.timestamp - startedAt >= duration { stop() }
+            if (duration == 0 || link.timestamp - startedAt >= duration),
+               !navigation.followsUser || abs(distance - targetDistance) < 2 { stop() }
         }
         func layoutChanged() { render(at: CACurrentMediaTime()) }
         private func render(at time: CFTimeInterval) {
@@ -187,8 +210,12 @@ struct CommaFollowingMap: UIViewRepresentable {
             let point = NavigationMapMotion.point(from: origin, to: target, fraction: fraction)
             displayed = point
             heading = NavigationMapMotion.heading(from: originHeading, to: targetHeading, fraction: fraction)
-            distance = originDistance + (targetDistance - originDistance) * fraction
-            let coordinate = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+            let elapsed = lastRender.map { time - $0 } ?? 1.0 / 30
+            lastRender = time
+            distance = UIAccessibility.isReduceMotionEnabled ? targetDistance :
+                NavigationMapMotion.smoothDistance(distance, toward: targetDistance, elapsed: elapsed)
+            let aligned = NavigationMapMotion.routeAligned(point, route: routePoints)
+            let coordinate = CLLocationCoordinate2D(latitude: aligned.latitude, longitude: aligned.longitude)
             marker.coordinate = coordinate
             if navigation.followsUser {
                 changingCamera = true

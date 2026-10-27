@@ -33,6 +33,29 @@ import Foundation
 @main struct NativeNavigationRegression {
     static func tryPath(_ version: String?) -> String { try! NativeNavigationAPI.statusPath(version: version) }
     @MainActor static func main() async throws {
+        let straight = [RoutePoint(latitude: 43, longitude: -80), RoutePoint(latitude: 43.01, longitude: -80)]
+        let beside = RoutePoint(latitude: 43.005, longitude: -79.9999)
+        let aligned = NavigationMapMotion.routeAligned(beside, route: straight)
+        precondition(abs(aligned.longitude + 80) < 0.0000001 && abs(aligned.latitude - beside.latitude) < 0.0000001)
+        let offRoute = RoutePoint(latitude: 43.005, longitude: -79.999)
+        precondition(NavigationMapMotion.routeAligned(offRoute, route: straight) == offRoute)
+        let parallel = straight + [RoutePoint(latitude: 43.01, longitude: -79.9998), RoutePoint(latitude: 43, longitude: -79.9998)]
+        precondition(NavigationMapMotion.routeAligned(beside, route: parallel) == beside)
+        let street = NavigationMapMotion.cameraDistance(speed: 10, distanceToTurn: 2000)
+        let highway = NavigationMapMotion.cameraDistance(speed: 30, distanceToTurn: 2000)
+        precondition(highway > street)
+        let near = NavigationMapMotion.cameraDistance(speed: 20, distanceToTurn: 50)
+        precondition(near < street)
+        precondition(abs(NavigationMapMotion.cameraDistance(speed: 20, distanceToTurn: 299) -
+            NavigationMapMotion.cameraDistance(speed: 20, distanceToTurn: 301)) < 15,
+            "Crossing 300m must not cause a zoom jump")
+        var zoom = 3000.0
+        for _ in 0..<180 {
+            let next = NavigationMapMotion.smoothDistance(zoom, toward: 1200, elapsed: 1.0 / 30)
+            precondition(next <= zoom && next >= 1200 && zoom - next < 50)
+            zoom = next
+        }
+        precondition(zoom < 1250)
         // Reproduce build 45: a 3s server upper bound plus 5.449s BLE transfer
         // must leave time for another compact poll, without making old GPS live.
         precondition(NativeNavigationAPI.guidanceRemaining(ageUpperBound: 3, elapsed: 5.449) > 3)

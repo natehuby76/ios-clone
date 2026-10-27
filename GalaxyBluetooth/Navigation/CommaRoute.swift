@@ -92,6 +92,36 @@ struct CommaRouteSnapshot: Decodable {
 }
 
 enum NavigationMapMotion {
+    /// Display only. Do not use a projected point as a location observation or control input.
+    static func routeAligned(_ point: RoutePoint, route: [RoutePoint]) -> RoutePoint {
+        guard route.count >= 2 else { return point }
+        let latScale = 111_195.0
+        let lonScale = latScale * cos(point.latitude * .pi / 180)
+        guard abs(lonScale) > 1 else { return point }
+        var candidates: [(distance: Double, x: Double, y: Double)] = []
+        for index in 1..<route.count {
+            let a = route[index - 1], b = route[index]
+            let ax = delta(from: point.longitude, to: a.longitude) * lonScale
+            let ay = (a.latitude - point.latitude) * latScale
+            let bx = delta(from: point.longitude, to: b.longitude) * lonScale
+            let by = (b.latitude - point.latitude) * latScale
+            let dx = bx - ax, dy = by - ay
+            let length = dx * dx + dy * dy
+            guard length > 0 else { continue }
+            let fraction = min(1, max(0, -(ax * dx + ay * dy) / length))
+            let x = ax + fraction * dx, y = ay + fraction * dy
+            let distance = hypot(x, y)
+            if distance <= 20 { candidates.append((distance, x, y)) }
+        }
+        guard let best = candidates.min(by: { $0.distance < $1.distance }) else { return point }
+        // Nearby parallel sections or a hairpin can both be plausible. Keep the real position.
+        if candidates.contains(where: {
+            $0.distance <= best.distance + 3 && hypot($0.x - best.x, $0.y - best.y) > 10
+        }) { return point }
+        return RoutePoint(latitude: point.latitude + best.y / latScale,
+            longitude: point.longitude + best.x / lonScale)
+    }
+
     static func point(from: RoutePoint, to: RoutePoint, fraction: Double) -> RoutePoint {
         let amount = min(1, max(0, fraction))
         let longitude = from.longitude + delta(from: from.longitude, to: to.longitude) * amount
@@ -110,7 +140,19 @@ enum NavigationMapMotion {
         max(0, min(height, height - max(0, bottomInset) - 64))
     }
     static func cameraDistance(speed: Double, distanceToTurn: Double) -> Double {
-        if distanceToTurn > 0 && distanceToTurn < 300 { return 1800 }
-        return min(3800, max(2200, 1900 + max(0, speed) * 40))
+        let speed = speed.isFinite ? min(55, max(0, speed)) : 0
+        let cruising = min(3800, 1600 + speed * 65)
+        guard distanceToTurn.isFinite, distanceToTurn > 0 else { return cruising }
+        // Blend continuously over the approach; no zoom switch at a distance threshold.
+        let approach = max(180, speed * 22)
+        let fraction = min(1, max(0, (distanceToTurn - 30) / approach))
+        let blend = fraction * fraction * (3 - 2 * fraction)
+        return 1200 + (cruising - 1200) * blend
+    }
+
+    static func smoothDistance(_ current: Double, toward target: Double, elapsed: Double) -> Double {
+        let dt = min(0.1, max(0, elapsed))
+        let amount = 1 - exp(-dt / (target < current ? 1.5 : 3.0))
+        return current + (target - current) * amount
     }
 }

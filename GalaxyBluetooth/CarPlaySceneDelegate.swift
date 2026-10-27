@@ -684,10 +684,73 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 }
 
 @MainActor
+final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashboardSceneDelegate {
+    private weak var window: UIWindow?
+    private var mapController: CompanionCarPlayMap?
+    private var timer: Timer?
+    private var subscriptions = Set<AnyCancellable>()
+
+    func templateApplicationDashboardScene(_ scene: CPTemplateApplicationDashboardScene,
+                                          didConnect dashboardController: CPDashboardController,
+                                          to window: UIWindow) {
+        self.window = window
+        dashboardController.shortcutButtons = []
+        let model = AppModel.shared
+        model.$navigationAlpha.combineLatest(model.$developerMode)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &subscriptions)
+        refresh()
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        refresh()
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        timer?.invalidate(); timer = nil
+    }
+
+    private func refresh() {
+        guard let window else { return }
+        guard AppModel.shared.navigationEnabled else {
+            if window.rootViewController == nil || mapController != nil {
+                window.rootViewController = UIViewController()
+            }
+            mapController = nil
+            return
+        }
+        if mapController == nil {
+            let map = CompanionCarPlayMap()
+            mapController = map
+            window.rootViewController = map
+        }
+        mapController?.update(AppModel.shared.navigationServices.navigation)
+    }
+
+    func templateApplicationDashboardScene(_ scene: CPTemplateApplicationDashboardScene,
+                                          didDisconnect dashboardController: CPDashboardController,
+                                          from window: UIWindow) {
+        timer?.invalidate(); timer = nil
+        subscriptions.removeAll()
+        window.rootViewController = nil
+        mapController = nil; self.window = nil
+    }
+}
+
+@MainActor
 private final class CompanionCarPlayMap: UIViewController, MKMapViewDelegate {
     private let map = MKMapView()
     private let position = MKPointAnnotation()
     private var line: MKPolyline?
+    private var lastLocation: CLLocation?
+    private var lastMovement = Date.distantPast
+    private var filteredSpeed = 0.0
+    private var cameraDistance = 2200.0
     override func loadView() {
         view = map
         map.delegate = self
@@ -704,9 +767,28 @@ private final class CompanionCarPlayMap: UIViewController, MKMapViewDelegate {
         }
         let coordinate = navigation.usingComma ? (navigation.commaFeedReady ? navigation.commaPosition : nil) : navigation.goodLocation?.coordinate
         if let coordinate {
+            let now = Date()
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            if let previous = lastLocation {
+                let meters = previous.distance(from: location)
+                let elapsed = now.timeIntervalSince(lastMovement)
+                if meters >= 1, elapsed > 0 {
+                    let speed = meters / elapsed
+                    if elapsed < 5, speed <= 55 {
+                        filteredSpeed += (speed - filteredSpeed) * (1 - exp(-elapsed / 3))
+                    }
+                    lastLocation = location; lastMovement = now
+                } else if elapsed > 3 { filteredSpeed *= 0.8 }
+            } else { lastLocation = location; lastMovement = now }
+            let target = NavigationMapMotion.cameraDistance(speed: filteredSpeed,
+                distanceToTurn: navigation.navigating ? navigation.distanceToTurn : 0)
+            cameraDistance += (target - cameraDistance) * (target < cameraDistance ? 0.35 : 0.2)
+            let hadPosition = map.annotations.contains(where: { $0 === position })
             position.coordinate = coordinate
-            if !map.annotations.contains(where: { $0 === position }) { map.addAnnotation(position) }
-            map.setRegion(MKCoordinateRegion(center: coordinate, latitudinalMeters: 1500, longitudinalMeters: 1500), animated: false)
+            if !hadPosition { map.addAnnotation(position) }
+            let heading = navigation.usingComma ? navigation.commaHeading : max(0, navigation.goodLocation?.course ?? 0)
+            map.setCamera(MKMapCamera(lookingAtCenter: coordinate, fromDistance: cameraDistance,
+                pitch: 35, heading: heading), animated: hadPosition && !UIAccessibility.isReduceMotionEnabled)
         } else { map.removeAnnotation(position) }
     }
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

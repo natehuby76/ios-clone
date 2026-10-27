@@ -1,7 +1,7 @@
 import CoreLocation
 import Foundation
 
-/// Sends this iPhone's GPS to comma about once a second over the current Galaxy connection.
+/// Shares fresh fixes up to 5 Hz on Local Wi-Fi, retaining the existing cadence on other routes.
 /// Galaxy's navigation GPS source setting controls whether comma prefers this phone or uses it as backup.
 @MainActor
 final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
@@ -15,13 +15,14 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
     private var skipped = 0
     private var accepted = 0
     private var failed = 0
-    var diagnosticSummary: String { "offered=\(offered); skipped=\(skipped); accepted=\(accepted); failed=\(failed); in flight=\(sending); permission=\(manager?.authorizationStatus.rawValue ?? -1)" }
+    var diagnosticSummary: String { "offered=\(offered); skipped=\(skipped); accepted=\(accepted); failed=\(failed); in flight=\(sending); permission=\(manager?.authorizationStatus.rawValue ?? -1); upload interval=\(transport()?.localRefreshDelay ?? 0.9)s" }
     var onSharingChanged: ((Bool) -> Void)?
     private let transport: () -> (any GalaxyRequestTransport)?
     private let manager: CLLocationManager?
     private var sending = false
     private var pending: CLLocation?
     private var lastSent = Date.distantPast
+    private var lastLocalFix = Date.distantPast
 
     init(transport: @escaping () -> (any GalaxyRequestTransport)?, manager: CLLocationManager? = CLLocationManager()) {
         self.transport = transport
@@ -72,14 +73,21 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
         Task { await deliver(location) }
     }
 
-    /// Sends one fix unless another is in flight or one went out under a second ago.
+    /// One upload at a time; newer callbacks replace pending fixes instead of building a queue.
     func deliver(_ location: CLLocation, now: Date = Date()) async {
         offered += 1
         guard sharing else { skipped += 1; return }
         if sending { pending = location; skipped += 1; return }
-        guard now.timeIntervalSince(lastSent) >= 0.9 else { skipped += 1; return }
+        let currentTransport = transport()
+        let localDelay = currentTransport?.localRefreshDelay
+        guard now.timeIntervalSince(lastSent) >= (localDelay ?? 0.9) else { skipped += 1; return }
+        if localDelay != nil, location.timestamp <= lastLocalFix { skipped += 1; return }
         guard let body = Self.payload(location, now: now) else { skipped += 1; onEvent?("Fix rejected: age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)"); status = "Waiting for GPS"; return }
-        guard let transport = transport(), transport.connected else { skipped += 1; status = "Waiting for comma"; return }
+        guard let transport = currentTransport, transport.connected else { skipped += 1; status = "Waiting for comma"; return }
+        if localDelay != nil {
+            lastLocalFix = location.timestamp
+            lastSent = now
+        }
         let started = Date()
         onEvent?("Upload started; fix age=\(now.timeIntervalSince(location.timestamp)); accuracy=\(location.horizontalAccuracy)m")
         sending = true

@@ -10,6 +10,7 @@ enum BridgeError: LocalizedError {
 
 @MainActor final class RecordingComma: GalaxyRequestTransport {
     var connected = true
+    var localRefreshDelay: TimeInterval?
     var bodies: [[String: Any]] = []
     var pauseNext = false
     var release: CheckedContinuation<Void, Never>?
@@ -83,6 +84,28 @@ struct PhoneLocationRegression {
         }
         precondition(delayed.bodies.count == 2 && delayed.bodies.last?["bearing"] as? Double == 270)
         stream.setSharing(false)
+        UserDefaults.standard.set(true, forKey: "galaxy.phoneGps")
+        let local = RecordingComma()
+        local.localRefreshDelay = 0.2
+        let wifi = PhoneLocation(transport: { local }, manager: nil)
+        await wifi.deliver(fix(at: now), now: now)
+        await wifi.deliver(fix(at: now.addingTimeInterval(0.1)), now: now.addingTimeInterval(0.1))
+        precondition(local.bodies.count == 1)
+        await wifi.deliver(fix(at: now.addingTimeInterval(0.25)), now: now.addingTimeInterval(0.25))
+        precondition(local.bodies.count == 2)
+        // Never dress a duplicate fix up as a faster GPS sample.
+        await wifi.deliver(fix(at: now.addingTimeInterval(0.25)), now: now.addingTimeInterval(0.5))
+        precondition(local.bodies.count == 2)
+        local.localRefreshDelay = 2
+        await wifi.deliver(fix(at: now.addingTimeInterval(0.75)), now: now.addingTimeInterval(0.75))
+        precondition(local.bodies.count == 2)
+        // A route switch immediately restores the existing non-LAN throttle.
+        local.localRefreshDelay = nil
+        await wifi.deliver(fix(at: now.addingTimeInterval(0.8)), now: now.addingTimeInterval(0.8))
+        precondition(local.bodies.count == 2)
+        await wifi.deliver(fix(at: now.addingTimeInterval(1.25)), now: now.addingTimeInterval(1.25))
+        precondition(local.bodies.count == 3)
+        wifi.setSharing(false)
         UserDefaults.standard.removeObject(forKey: "galaxy.phoneGps")
         print("phone location ok")
     }
