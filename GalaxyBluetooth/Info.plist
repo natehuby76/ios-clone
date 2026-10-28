@@ -51,6 +51,8 @@
 	<string>Connect to Galaxy on your comma over your local Wi-Fi network.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
+		<key>CPSupportsDashboardNavigationScene</key>
+		<true/>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 		<key>UISceneConfigurations</key>

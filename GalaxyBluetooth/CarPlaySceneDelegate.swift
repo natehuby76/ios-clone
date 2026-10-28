@@ -103,6 +103,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             window?.rootViewController = map
             let template = CPMapTemplate()
             template.mapDelegate = self
+            template.guidanceBackgroundColor = StarPilotTheme.uiAccent
             template.automaticallyHidesNavigationBar = false
             template.trailingNavigationBarButtons = [CPBarButton(title: "Stats", handler: { [weak self] _ in
                 guard let self, let overview = self.overview else { return }
@@ -154,23 +155,44 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         guard let trip, let navigationSession else { return }
         let distance = max(0, nav.remainingDistance.isFinite ? nav.remainingDistance : 0)
         let duration = max(0, nav.remainingTime.isFinite ? nav.remainingTime : 0)
-        template.updateEstimates(CPTravelEstimates(distanceRemaining: Measurement(value: distance, unit: .meters), timeRemaining: duration), for: trip)
+        template.updateEstimates(travelEstimates(meters: distance, seconds: duration), for: trip)
         if !nav.instruction.isEmpty {
             if maneuver?.instructionVariants.first != nav.instruction {
                 let next = CPManeuver()
                 next.instructionVariants = [nav.instruction]
+                let turn = (nav.usingComma ? nav.commaManeuverType + " " + nav.commaManeuverModifier : nav.instruction).lowercased()
+                let symbol = turn.contains("roundabout") ? "arrow.triangle.2.circlepath" :
+                    turn.contains("u-turn") ? "arrow.uturn.down" :
+                    turn.contains("left") ? "arrow.turn.up.left" :
+                    turn.contains("right") ? "arrow.turn.up.right" : "arrow.up"
+                next.symbolImage = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 32, weight: .bold))
                 if #available(iOS 17.4, *) { navigationSession.add([next]) }
                 maneuver = next
             }
             if let maneuver {
                 navigationSession.upcomingManeuvers = [maneuver]
                 let turnDistance = max(0, nav.distanceToTurn.isFinite ? nav.distanceToTurn : 0)
-                navigationSession.updateEstimates(CPTravelEstimates(distanceRemaining: Measurement(value: turnDistance, unit: .meters), timeRemaining: 0), for: maneuver)
+                navigationSession.updateEstimates(travelEstimates(meters: turnDistance, seconds: 0), for: maneuver)
             }
         } else {
             navigationSession.upcomingManeuvers = []
             maneuver = nil
         }
+    }
+
+    private func travelEstimates(meters: Double, seconds: Double) -> CPTravelEstimates {
+        let actual = Measurement(value: meters, unit: UnitLength.meters)
+        let display: Measurement<UnitLength>
+        if Locale.current.measurementSystem == .us || Locale.current.measurementSystem == .uk {
+            display = meters >= 160.9344 ? actual.converted(to: .miles) :
+                actual.converted(to: Locale.current.measurementSystem == .uk ? .yards : .feet)
+        } else {
+            display = meters >= 1000 ? actual.converted(to: .kilometers) : actual
+        }
+        if #available(iOS 17.4, *) {
+            return CPTravelEstimates(distanceRemaining: actual, distanceRemainingToDisplay: display, timeRemaining: seconds)
+        }
+        return CPTravelEstimates(distanceRemaining: display, timeRemaining: seconds)
     }
 
     func mapTemplateDidCancelNavigation(_ mapTemplate: CPMapTemplate) {
@@ -685,7 +707,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
 @MainActor
 final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashboardSceneDelegate {
-    private weak var window: UIWindow?
+    private var window: UIWindow?
+    private var dashboardController: CPDashboardController?
     private var mapController: CompanionCarPlayMap?
     private var timer: Timer?
     private var subscriptions = Set<AnyCancellable>()
@@ -694,6 +717,7 @@ final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashbo
                                           didConnect dashboardController: CPDashboardController,
                                           to window: UIWindow) {
         self.window = window
+        self.dashboardController = dashboardController
         dashboardController.shortcutButtons = []
         let model = AppModel.shared
         model.$navigationAlpha.combineLatest(model.$developerMode)
@@ -738,7 +762,7 @@ final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashbo
         timer?.invalidate(); timer = nil
         subscriptions.removeAll()
         window.rootViewController = nil
-        mapController = nil; self.window = nil
+        mapController = nil; self.window = nil; self.dashboardController = nil
     }
 }
 
@@ -793,13 +817,24 @@ private final class CompanionCarPlayMap: UIViewController, MKMapViewDelegate {
     }
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         let renderer = MKPolylineRenderer(overlay: overlay)
-        renderer.strokeColor = .systemBlue
+        renderer.strokeColor = StarPilotTheme.uiAccent
+        renderer.lineCap = .round; renderer.lineJoin = .round
         renderer.lineWidth = 7
         return renderer
     }
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
         let marker = MKAnnotationView(annotation: annotation, reuseIdentifier: nil)
-        marker.image = UIImage(systemName: "location.circle.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
+        marker.image = UIGraphicsImageRenderer(size: CGSize(width: 36, height: 36)).image { context in
+            UIColor.white.setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: 36, height: 36))
+            StarPilotTheme.uiAccent.setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 3, y: 3, width: 30, height: 30))
+            let arrow = UIBezierPath()
+            arrow.move(to: CGPoint(x: 18, y: 7)); arrow.addLine(to: CGPoint(x: 27, y: 28))
+            arrow.addLine(to: CGPoint(x: 18, y: 23)); arrow.addLine(to: CGPoint(x: 9, y: 28))
+            arrow.close(); UIColor.white.setFill(); arrow.fill()
+        }
+        marker.displayPriority = .required
         return marker
     }
 }

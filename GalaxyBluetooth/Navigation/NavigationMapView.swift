@@ -68,7 +68,6 @@ struct CommaFollowingMap: UIViewRepresentable {
         private var speedPoint: RoutePoint?
         private var speedTime: CFTimeInterval?
         private var filteredSpeed = 0.0
-        private var framed = false
         private var changingCamera = false
         private var overviewRevision = -1
         private var wasFollowing = false
@@ -99,7 +98,7 @@ struct CommaFollowingMap: UIViewRepresentable {
             if positionGeneration != navigation.positionDisplayGeneration {
                 stop()
                 if markerAdded { map.removeAnnotation(marker); markerAdded = false }
-                displayed = nil; target = nil; lastArrival = nil; framed = false
+                displayed = nil; target = nil; lastArrival = nil
                 acceptedDate = .distantPast
                 speedPoint = nil; speedTime = nil; filteredSpeed = 0; lastRender = nil
                 positionGeneration = navigation.positionDisplayGeneration
@@ -141,7 +140,7 @@ struct CommaFollowingMap: UIViewRepresentable {
                 map.view(for: marker)?.accessibilityLabel = "Last known comma location"
                 if !navigation.navigating || navigation.destination == nil {
                     if markerAdded { map.removeAnnotation(marker); markerAdded = false }
-                    displayed = nil; target = nil; lastArrival = nil; framed = false
+                    displayed = nil; target = nil; lastArrival = nil
                 }
                 return
             }
@@ -176,7 +175,6 @@ struct CommaFollowingMap: UIViewRepresentable {
                     CLLocation(latitude: $0.latitude, longitude: $0.longitude)
                         .distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude))
                 } ?? 0
-                if jump > 500 { framed = false }
                 duration = displayed == nil || jump > 500 || UIAccessibility.isReduceMotionEnabled ? 0 : min(2.5, max(0.35, elapsed))
                 acceptedDate = received; lastArrival = now; startedAt = now
                 if !markerAdded { marker.coordinate = coordinate; map.addAnnotation(marker); markerAdded = true }
@@ -219,18 +217,24 @@ struct CommaFollowingMap: UIViewRepresentable {
             marker.coordinate = coordinate
             if navigation.followsUser {
                 changingCamera = true
-                let center = framed ? map.camera.centerCoordinate : coordinate
-                map.setCamera(MKMapCamera(lookingAtCenter: center, fromDistance: distance, pitch: 40, heading: heading), animated: false)
+                // Start from the position, never the previous camera centre. Overview and
+                // gesture offsets must not feed back into subsequent follow frames.
+                map.setCamera(MKMapCamera(lookingAtCenter: coordinate, fromDistance: distance, pitch: 40, heading: heading), animated: false)
                 let anchor = CGPoint(x: map.bounds.midX, y: CGFloat(NavigationMapMotion.anchorY(
                     height: Double(map.bounds.height), bottomInset: Double(bottomInset))))
-                for _ in 0..<(framed ? 1 : 3) {
+                for _ in 0..<3 {
                     let screen = map.convert(coordinate, toPointTo: map)
                     let centerPoint = CGPoint(x: map.bounds.midX + screen.x - anchor.x,
                         y: map.bounds.midY + screen.y - anchor.y)
                     let shifted = map.convert(centerPoint, toCoordinateFrom: map)
-                    if CLLocationCoordinate2DIsValid(shifted) { map.setCenter(shifted, animated: false) }
+                    // Projection near the horizon can produce a valid but distant coordinate.
+                    // Keep framing local even while MapKit is settling an overview animation.
+                    guard CLLocationCoordinate2DIsValid(shifted),
+                          CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                            .distance(from: CLLocation(latitude: shifted.latitude, longitude: shifted.longitude)) <= distance * 2
+                    else { break }
+                    map.setCenter(shifted, animated: false)
                 }
-                framed = true
                 changingCamera = false
             }
             if let view = map.view(for: marker) {
