@@ -12,6 +12,10 @@ final class PrivateLANHTTP {
     private var timeout: Task<Void, Never>?
     private var finished = false
     private var sent = false
+    private var phase = "connecting"
+    private var receivedBytes = 0
+    private var networkFailure = "none"
+    private let started = ProcessInfo.processInfo.systemUptime
     private let request: URLRequest
     private init(_ request: URLRequest, limit: Int, host: String) {
         self.request = request; self.limit = limit; head = request.httpMethod == "HEAD"
@@ -41,8 +45,9 @@ final class PrivateLANHTTP {
             Task { @MainActor in
                 guard let self, !self.finished else { return }
                 switch state {
-                case .ready: self.send()
-                case .failed: self.finish(.failure(URLError(.cannotConnectToHost)))
+                case .ready: self.phase = "sending"; self.send()
+                case .failed(let error): self.networkFailure = Self.networkCode(error); self.finish(.failure(URLError(.cannotConnectToHost)))
+                case .waiting(let error): self.networkFailure = Self.networkCode(error)
                 case .cancelled: self.finish(.failure(URLError(.networkConnectionLost)))
                 default: break
                 }
@@ -70,7 +75,7 @@ final class PrivateLANHTTP {
             Task { @MainActor in
                 guard let self, !self.finished else { return }
                 if error != nil { self.finish(.failure(URLError(.networkConnectionLost))) }
-                else { self.receive() }
+                else { self.phase = "receiving"; self.receive() }
             }
         })
     }
@@ -78,13 +83,16 @@ final class PrivateLANHTTP {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, ended, error in
             Task { @MainActor in
                 guard let self, !self.finished else { return }
+                self.receivedBytes += data?.count ?? 0
+                if let error { self.networkFailure = Self.networkCode(error) }
                 guard error == nil else { self.finish(.failure(URLError(.networkConnectionLost))); return }
                 do {
+                    self.phase = "parsing"
                     if let result = try self.parser.consume(data ?? Data(), ended: ended),
                        let response = HTTPURLResponse(url: self.request.url!, statusCode: result.status, httpVersion: "HTTP/1.1", headerFields: result.headers) {
                         self.finish(.success((result.body, response)))
-                    } else { self.receive() }
-                } catch { self.finish(.failure(URLError(.cannotParseResponse))) }
+                    } else { self.phase = "receiving"; self.receive() }
+                } catch { self.finish(.failure(error)) }
             }
         }
     }
@@ -92,7 +100,18 @@ final class PrivateLANHTTP {
         guard !finished else { return }
         finished = true; timeout?.cancel(); connection.stateUpdateHandler = nil; connection.cancel()
         let callback = continuation; continuation = nil
-        callback?.resume(with: result)
+        if case .failure(let error) = result, let urlError = error as? URLError {
+            let detail = "phase=\(phase); elapsed=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - started))s; received=\(receivedBytes); network=\(networkFailure); \(parser.diagnosticSummary)"
+            callback?.resume(throwing: URLError(urlError.code, userInfo: ["StarPilotLANContext": detail]))
+        } else { callback?.resume(with: result) }
+    }
+    private static func networkCode(_ error: NWError) -> String {
+        switch error {
+        case .posix(let code): return "posix:\(code.rawValue)"
+        case .dns(let code): return "dns:\(code)"
+        case .tls(let code): return "tls:\(code)"
+        default: return "other"
+        }
     }
 }
 
@@ -109,6 +128,9 @@ struct LANHTTPParser {
     private var chunkLength: Int?
     private var lastChunk = false
     private var overhead = 0
+    var diagnosticSummary: String {
+        "HTTP=\(status ?? 0); expected=\(length ?? -1); buffered=\(buffer.count); decoded=\(body.count); chunked=\(chunked)"
+    }
     init(limit: Int, headOnly: Bool) { self.limit = limit; self.headOnly = headOnly }
     mutating func consume(_ data: Data, ended: Bool) throws -> LocalResponse? {
         buffer.append(data)

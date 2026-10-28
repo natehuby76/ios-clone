@@ -65,3 +65,5 @@ swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-li
 "$test_dir/tunnel-tests"
 
 python3 tests/check_connection_log.py
+
+python3 tests/check_navigation_recovery.py

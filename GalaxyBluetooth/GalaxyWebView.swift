@@ -190,7 +190,9 @@ private struct GalaxyPage: UIViewRepresentable {
             try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind, path, code}); } catch (_) {}
           };
           // Keep this native presentation independent of downloaded Galaxy assets.
-          const editorScreen = matchMedia('(orientation: landscape) and (max-height: 600px)');
+          // A portrait keyboard can make the web viewport report landscape.
+          // Only use the two-column editor when there is room for both panels.
+          const editorScreen = matchMedia('(min-width: 700px) and (orientation: landscape) and (max-height: 600px)');
           let editorFocused = false;
           const editorCSS = document.createElement('style');
           editorCSS.textContent = `

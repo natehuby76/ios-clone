@@ -300,6 +300,10 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         notificationBuffer = []
         activeReadStream = supportsReadStream && active.path != "/_bridge/health"
         onEvent?("Bluetooth request started: [\(active.id.prefix(8))] \(active.method) \(LoopbackServer.reportPath(active.path)), queued=\(queue.count), waited=\(String(format: "%.2f", requestStarted - active.enqueuedAt))s, response=\(activeNotifications ? "notifications" : activeReadStream ? "read stream" : "encrypted reads")")
+        if requestStarted - active.enqueuedAt > 2 {
+            let pending = queue.prefix(6).map { "\($0.method) \(LoopbackServer.reportPath($0.path)) age=\(Int(requestStarted - $0.enqueuedAt))s" }.joined(separator: "; ")
+            onEvent?("Bluetooth slow queue: waiting=\(queue.count); priority streak=\(priorityStreak); fast reads=\(fastReads); fallback=\(fastReadFallback); next=[\(pending)]")
+        }
         do {
             let body = try PhoneGpsDelivery.body(active.body, path: active.path,
                                                  queuedSeconds: ProcessInfo.processInfo.systemUptime - active.enqueuedAt)
@@ -343,7 +347,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
             let outcome: String
             switch result {
             case .success(let response): outcome = "HTTP \(response.status), \(response.bodyData.count) bytes"
-            case .failure: outcome = "failed"
+            case .failure(let error): outcome = "failed: \(LANTransport.failureCode(error)); sent packets=\(writeIndex)/\(outgoing.count); awaiting ack=\(awaitingAck); cancelled=\(activeCancelled)"
             }
             let elapsed = max(0.001, ProcessInfo.processInfo.systemUptime - requestStarted)
             onEvent?("Bluetooth request finished: [\(previous.id.prefix(8))] \(previous.method) \(LoopbackServer.reportPath(previous.path)), \(outcome), packets=\(receivedPackets), wire=\(receivedWireBytes) bytes, rate=\(String(format: "%.1f", Double(receivedWireBytes) / elapsed / 1024)) KiB/s, transfer=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - requestStarted))s")

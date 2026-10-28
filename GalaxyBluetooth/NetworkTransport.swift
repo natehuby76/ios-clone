@@ -184,6 +184,10 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             }
             else if response.statusCode != 200 { status = "Galaxy answered HTTP \(response.statusCode)." }
             else if identity == nil { status = "The address answered, but did not return a valid Galaxy identity." }
+            else if expectedDeviceID?.hasPrefix("galaxy:") == true && persistent == nil {
+                status = "Waiting for comma’s saved identity."
+                onEvent?("Comma identity verification unavailable: stable identity missing; saved identity preserved")
+            }
             else {
                 status = "Couldn’t verify the saved comma. Reconnect Bluetooth or select your comma again."
                 onEvent?("Comma identity mismatch: saved=\(expectedDeviceID ?? "none"); received=\(identity ?? "none"). A legacy runtime pin needs Bluetooth verification or explicit local-only selection after a restart.")
@@ -209,7 +213,8 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
             case .cancelled: name = "cancelled"
             default: name = "network error"
             }
-            return "\(name) (\(value.domain) \(value.code))"
+            let context = url.userInfo["StarPilotLANContext"] as? String
+            return "\(name) (\(value.domain) \(value.code))" + (context.map { "; " + $0 } ?? "")
         }
         return "\(value.domain) \(value.code)"
     }
@@ -265,7 +270,13 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
                 request.setValue(endpoint.absoluteString, forHTTPHeaderField: "Origin")
                 request.setValue(LocalRequest.isPackageUpload(method: method, target: path) ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type")
             }
-            let result = try await load(request, limit)
+            let started = ProcessInfo.processInfo.systemUptime
+            let result: (Data, HTTPURLResponse)
+            do { result = try await load(request, limit) }
+            catch {
+                onDiagnostic?("LAN request \(method) \(SecretGoodGalaxy.diagnosticPath(path)) failed; elapsed=\(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - started))s; session changed=\(original != generation); \(Self.failureCode(error))")
+                throw error
+            }
             try Task.checkCancellation()
             guard original == generation, self.endpoint == endpoint else { throw CancellationError() }
             let message = (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any]

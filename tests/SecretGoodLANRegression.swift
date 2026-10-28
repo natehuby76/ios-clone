@@ -88,6 +88,12 @@ import Foundation
         server.tunnelURL = "https://galaxy.firestar.link/abcdefghijklmnop"
         let returned = await lan.probe()
         precondition(returned, "The selected comma reconnects after another device was rejected")
+        precondition(SecretGoodGalaxy.diagnosticPath("/api/navigation/status?secret=hidden") == "/api/navigation/status")
+        precondition(SecretGoodGalaxy.diagnosticPath("/api/auth/private-token") == "/api/auth/…")
+        precondition(SecretGoodGalaxy.diagnosticPath("/api/private-token") == "[other path]")
+        precondition(SecretGoodGalaxy.diagnosticPath("https://private.invalid/token") == "[other path]")
+        let framedError = URLError(.timedOut, userInfo: ["StarPilotLANContext": "phase=receiving; received=120"])
+        precondition(LANTransport.failureCode(framedError).contains("phase=receiving; received=120"))
         for invalid in ["http://evil.invalid/api/x", "//evil.invalid/api/x", "/api/../x", "/api/%2e%2e/x", "/api/%252e/x", "/api/x#fragment", "/data/system-monitor.sample.json"] {
             precondition(!SecretGoodGalaxy.validTarget(invalid), invalid)
         }

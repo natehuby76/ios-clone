@@ -22,6 +22,8 @@ final class NavigationServices: ObservableObject {
     func resetNavigation() async {
         guard !resetting else { return }
         resetting = true
+        let resetID = String(UUID().uuidString.prefix(8))
+        connection.recordAction("USER RESET [\(resetID)] started; intentional route clearing and request cancellation follow")
         defer { resetting = false; navigation.busy = false; connection.busy = false }
         let identity = connection.deviceIdentity
         routeTask?.cancel(); routeTask = nil
@@ -31,6 +33,7 @@ final class NavigationServices: ObservableObject {
         connection.recordAction("Reset: cleared local navigation and invalidated pending results")
         guard let identity, connection.connected else {
             navigation.notice = "Phone navigation cleared. Comma is not verified; its route was left unchanged."
+            connection.recordAction("USER RESET [\(resetID)] finished: phone cleared; comma unverified, no remote clear sent")
             return
         }
         do {
@@ -38,10 +41,10 @@ final class NavigationServices: ObservableObject {
             _ = try await connection.navigation(.read)
             _ = try await connection.navigation(.end)
             navigation.notice = "Navigation cleared on phone and comma."
-            connection.recordAction("Reset: comma clear confirmed")
+            connection.recordAction("USER RESET [\(resetID)] finished: phone and comma clear confirmed")
         } catch {
             navigation.error = "Phone navigation cleared. Comma did not confirm clearing its route; check its screen."
-            connection.recordAction("Reset: comma clear not confirmed")
+            connection.recordAction("USER RESET [\(resetID)] finished: phone cleared; comma clear failed: \(LANTransport.failureCode(error))")
         }
     }
     func setEnabled(_ value: Bool) {

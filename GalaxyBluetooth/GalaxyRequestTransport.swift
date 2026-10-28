@@ -65,6 +65,13 @@ enum LANPairing {
 }
 
 enum SecretGoodGalaxy {
+    static func diagnosticPath(_ target: String) -> String {
+        let path = String(target.prefix(512)).split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
+        if ["/_bridge/health", "/data/runtime.json", "/api/navigation/status", "/api/navigation/action", "/api/companion/location", "/api/device/state"].contains(path) { return path }
+        let category = path.split(separator: "/").dropFirst().first.map(String.init) ?? ""
+        let known = ["auth", "galaxy", "settings", "local-access", "system", "ui", "companion", "navigation", "device", "cameras", "recordings", "maps", "android-auto", "spotify", "phone-internet"]
+        return path.hasPrefix("/api/") && known.contains(category) ? "/api/" + category + "/…" : "[other path]"
+    }
     static func validTarget(_ path: String) -> Bool {
         guard path.hasPrefix("/"), !path.hasPrefix("//"),
               let parts = URLComponents(string: path), parts.scheme == nil, parts.host == nil, parts.fragment == nil,

@@ -349,6 +349,15 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
             }
             do {
                 let revision = self.revision
+                // A route handoff invalidates the adapter's identity cache. Reverify
+                // before accepting guidance, rather than comparing against a stale nil.
+                let identity = try await connection.ensureDeviceIdentity()
+                guard !Task.isCancelled, navigating, usingComma, self.revision == revision else { return }
+                guard commaIdentity == identity else {
+                    clearCommaDisplay("Paired comma changed. Check the connection.", discardRoute: true)
+                    try await Task.sleep(for: .seconds(2))
+                    continue
+                }
                 let requestedAt = Date()
                 let snapshot = try await connection.navigationSnapshot(version: commaRouteVersion)
                 onEvent?("Guidance response; elapsed: \(String(format: "%.3f", Date().timeIntervalSince(requestedAt)))s; state: \(snapshot.status); instruction: \(snapshot.instruction != nil); route points: \(snapshot.routePoints?.count ?? 0); cached route: \(cachedCommaPolyline != nil); version matches: \(commaRouteVersion == snapshot.routeVersion)")
@@ -424,6 +433,9 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                 onEvent?("Guidance request failed: \(LANTransport.failureCode(error)); cancelled: \(Task.isCancelled)")
                 if Task.isCancelled { return }
                 clearCommaDisplay(error.localizedDescription)
+                // An unavailable connection cannot recover through faster status polls.
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                continue
             }
             let delay = connection.transport.localRefreshDelay ?? (connection.nativeNavigation ? 0.5 : 2)
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
@@ -437,7 +449,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
         }
     }
     private func clearCommaDisplay(_ message: String, discardRoute: Bool = false) {
-        onEvent?("Guidance cleared; discard route: \(discardRoute); was ready: \(commaFeedReady); cached route: \(cachedCommaPolyline != nil); last sample age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample))s")
+        onEvent?("Guidance cleared; reason: \(message); discard route: \(discardRoute); was ready: \(commaFeedReady); cached route: \(cachedCommaPolyline != nil); last sample age: \(lastCommaSample == .distantPast ? -1 : Date().timeIntervalSince(lastCommaSample))s")
         commaFeedReady = false; commaPolyline = nil; commaPosition = nil
         if discardRoute { positionDisplayGeneration += 1; commaRouteVersion = nil; cachedCommaPolyline = nil }
         commaFeedMessage = message
