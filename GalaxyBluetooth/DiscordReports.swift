@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 import CryptoKit
 import Security
@@ -191,13 +192,52 @@ private extension Data {
     var base64URL: String { base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
 }
 
+private struct ReportTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let editable: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = .clear
+        view.isScrollEnabled = true
+        view.accessibilityLabel = "Describe what happened"
+        let bar = UIToolbar()
+        bar.sizeToFit()
+        let hide = UIBarButtonItem(image: UIImage(systemName: "keyboard.chevron.compact.down"), style: .plain, target: context.coordinator, action: #selector(Coordinator.hideKeyboard))
+        hide.accessibilityLabel = "Hide keyboard"
+        bar.items = [UIBarButtonItem(systemItem: .flexibleSpace), hide]
+        view.inputAccessoryView = bar
+        return view
+    }
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if view.text != text { view.text = text }
+        view.isEditable = editable
+        if !isFocused && view.isFirstResponder { view.resignFirstResponder() }
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ReportTextEditor
+        weak var textView: UITextView?
+        init(_ parent: ReportTextEditor) { self.parent = parent }
+        func textViewDidBeginEditing(_ textView: UITextView) { self.textView = textView; parent.isFocused = true }
+        func textViewDidEndEditing(_ textView: UITextView) { parent.isFocused = false }
+        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text }
+        @objc func hideKeyboard() { textView?.resignFirstResponder() }
+    }
+}
+
 struct DiscordReportSheet: View {
     @StateObject private var discord = DiscordReports()
     @Environment(\.colorScheme) private var colorScheme
     private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
     @Environment(\.dismiss) private var dismiss
     @State private var description = ""
-    @FocusState private var descriptionFocused: Bool
+    @State private var descriptionFocused = false
     @State private var attempted = false
     @State private var reference = UUID().uuidString
     let logs: String
@@ -239,14 +279,9 @@ struct DiscordReportSheet: View {
                     }
                 }
                 Section("What happened?") {
-                    TextEditor(text: $description)
+                    ReportTextEditor(text: $description, isFocused: $descriptionFocused, editable: !attempted)
                         .frame(minHeight: 120)
-                        .disabled(attempted)
-                        .focused($descriptionFocused)
                         .accessibilityLabel("Describe what happened")
-                    if descriptionFocused {
-                        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down") { descriptionFocused = false }
-                    }
                     Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
