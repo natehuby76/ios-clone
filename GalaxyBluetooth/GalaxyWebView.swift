@@ -200,6 +200,8 @@ private struct GalaxyPage: UIViewRepresentable {
             :root { --native-galaxy-edge: rgb(3.5% 3.5% 7.8%); }
             :root[data-theme="light"] { --native-galaxy-edge: rgb(94% 91% 99%); }
             html, body { background: var(--native-galaxy-edge) !important; }
+            /* The native web view already sits above the iPhone home indicator. */
+            .blur-nav { bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important; }
             #galaxy-bg {
               -webkit-mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);
               mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);

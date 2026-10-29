@@ -27,7 +27,7 @@ struct NavigationHome: View {
                 if navigation.navigating && navigation.usingComma {
                     CommaFollowingMap(navigation: navigation, bottomInset: navigationPanelHeight)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .ignoresSafeArea(.container, edges: .top)
+                        .ignoresSafeArea(.container, edges: [.top, .bottom])
                 } else {
                     Map(position: $navigation.camera) {
                         UserAnnotation()

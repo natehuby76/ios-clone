@@ -168,9 +168,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 next.symbolImage = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 32, weight: .bold))
                 if #available(iOS 17.4, *) { navigationSession.add([next]) }
                 maneuver = next
+                navigationSession.upcomingManeuvers = [next]
             }
             if let maneuver {
-                navigationSession.upcomingManeuvers = [maneuver]
                 let turnDistance = max(0, nav.distanceToTurn.isFinite ? nav.distanceToTurn : 0)
                 navigationSession.updateEstimates(travelEstimates(meters: turnDistance, seconds: 0), for: maneuver)
             }
@@ -190,7 +190,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             display = meters >= 1000 ? actual.converted(to: .kilometers) : actual
         }
         if #available(iOS 17.4, *) {
-            return CPTravelEstimates(distanceRemaining: actual, distanceRemainingToDisplay: display, timeRemaining: seconds)
+            return CPTravelEstimates(distanceRemaining: display, distanceRemainingToDisplay: display, timeRemaining: seconds)
         }
         return CPTravelEstimates(distanceRemaining: display, timeRemaining: seconds)
     }

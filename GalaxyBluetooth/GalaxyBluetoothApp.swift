@@ -844,7 +844,7 @@ struct GalaxyRootView: View {
                 CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode,
                     navigation: model.navigationServices.navigation, expanded: $appTabsExpanded,
                     compactIconOnly: true, statusModel: model, select: select)
-                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .padding(.horizontal, 14).padding(.vertical, 0)
 
 
             }
@@ -950,7 +950,7 @@ struct CompanionNavigationBar: View {
                             .accessibilityAddTraits((tab == item || (tab == .logs && item == .connections)) ? .isSelected : [])
                     }
 
-                }.padding(5)
+                }.padding(3)
                     .padding(.trailing, statusModel == nil ? 0 : 32)
                     .frame(width: geometry.size.width)
                     .scaleEffect(x: expanded ? 1 : 0.18, y: expanded ? 1 : 0.65, anchor: .leading)
@@ -961,13 +961,13 @@ struct CompanionNavigationBar: View {
                         Image(systemName: tab.icon).foregroundStyle(StarPilotTheme.accent)
                         if !compactIconOnly { Text(tab.rawValue).font(.system(size: 13, weight: .semibold)) }
                         Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                    }.frame(width: compactWidth, height: 54)
+                    }.frame(width: compactWidth, height: 46)
                 }.buttonStyle(.plain).accessibilityLabel("Show app tabs").accessibilityIdentifier("expand-app-tabs")
                     .opacity(expanded ? 0 : 1)
                     .scaleEffect(expanded ? 0.8 : 1, anchor: .leading)
                     .allowsHitTesting(!expanded).accessibilityHidden(expanded)
             }
-            .frame(width: expanded ? geometry.size.width : compactWidth, height: 54, alignment: .leading)
+            .frame(width: expanded ? geometry.size.width : compactWidth, height: 46, alignment: .leading)
             .clipped()
             .modifier(FloatingGalaxyGlass())
             .frame(width: geometry.size.width, alignment: .leading)
@@ -979,7 +979,7 @@ struct CompanionNavigationBar: View {
             }
             .frame(width: geometry.size.width, alignment: .leading)
         }
-        .frame(height: 54)
+        .frame(height: 46)
         .onChange(of: tab) { _, newTab in if newTab == .connections { setExpanded(true) } }
         .task(id: idleKey) {
             guard expanded, !voiceOver, tab == .galaxy || tab == .navigation else { return }
