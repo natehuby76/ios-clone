@@ -181,6 +181,7 @@ struct DiscordReportSheet: View {
     let logs: String
     @State private var restoredLogs: String?
     @State private var confirmDiscard = false
+    @State private var explainDiscord = false
     private var reportLogs: String { restoredLogs ?? logs }
     var body: some View {
         NavigationStack {
@@ -194,7 +195,13 @@ struct DiscordReportSheet: View {
                         Label("Discord connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                         Button("Disconnect Discord", role: .destructive) { Task { await discord.disconnect() } }.disabled(discord.busy)
                     } else {
-                        Button("Connect with Discord") { discord.connect() }.buttonStyle(.borderedProminent).disabled(discord.busy)
+                        Button { explainDiscord = true } label: {
+                            HStack(spacing: 10) {
+                                Image("DiscordSymbol").resizable().scaledToFit().frame(width: 24, height: 18).accessibilityHidden(true)
+                                Text("Connect Discord")
+                            }
+                                .frame(maxWidth: .infinity).padding(.vertical, 5)
+                        }.buttonStyle(.borderedProminent).disabled(discord.busy)
                     }
                 }
                 Section("What happened?") {
@@ -232,6 +239,12 @@ struct DiscordReportSheet: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(discord.busy) } }
                 .interactiveDismissDisabled(discord.busy)
+                .alert("Connect Discord", isPresented: $explainDiscord) {
+                    Button("Continue") { discord.connect() }
+                    Button("Not now", role: .cancel) {}
+                } message: {
+                    Text("Sign in to identify your report and open its support thread in Discord. Your diagnostics are only sent when you submit the report.")
+                }
                 .confirmationDialog("Discard this saved report? Check Discord first—it may already have been delivered.", isPresented: $confirmDiscard, titleVisibility: .visible) {
                     Button("Discard saved report", role: .destructive) {
                         do {

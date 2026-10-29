@@ -1150,6 +1150,11 @@ private struct DeveloperLogsView: View {
     @State private var exporting = false
     @State private var discordReport: String?
     @State private var showDiscordReport = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var accent: Color { colorScheme == .dark ? Color(red: 0.68, green: 0.48, blue: 0.96) : Color(red: 0.45, green: 0.26, blue: 0.73) }
+    private var panel: Color { colorScheme == .dark ? Color(red: 0.09, green: 0.065, blue: 0.145) : Color(red: 0.88, green: 0.83, blue: 0.95) }
+    private var background: Color { colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.93, green: 0.90, blue: 0.98) }
+    private var muted: Color { colorScheme == .dark ? Color(red: 0.70, green: 0.65, blue: 0.77) : Color(red: 0.36, green: 0.29, blue: 0.46) }
     private func allReports() -> String {
         [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
     }
@@ -1166,26 +1171,40 @@ private struct DeveloperLogsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Logs & support").font(.title2.bold())
-                Text("Recent events stay in memory. Reports leave the app only when you submit, copy, save or share them.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                Picker("Report", selection: $log.section) {
-                    ForEach(["Connections", "Galaxy", "Live View"], id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.segmented)
-                HStack {
-                    Button(log.copied ? "Copied" : "Copy report", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = selectedReport(); log.copied = true
-                    }.buttonStyle(.borderedProminent).tint(Color(red: 0.55, green: 0.36, blue: 0.90)).buttonBorderShape(.capsule)
-                    Button("Refresh") { log.detail = previewReport(); log.copied = false }.buttonStyle(.bordered)
-                }
-                Button("Report a problem", systemImage: "bubble.left.and.exclamationmark.bubble.right") {
-                    discordReport = allReports()
-                    showDiscordReport = true
-                }.buttonStyle(.borderedProminent).tint(Color(red: 0.55, green: 0.36, blue: 0.90)).buttonBorderShape(.capsule)
-                Button("Copy all reports") {
-                    UIPasteboard.general.string = allReports()
-                    log.copied = true
-                }
+                Text("Logs & support").font(.largeTitle.bold()).frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Need a hand?", systemImage: "bubble.left.and.exclamationmark.bubble.right.fill")
+                        .font(.headline).foregroundStyle(accent)
+                    Text("Tell us what happened and send diagnostics to the support forum.")
+                        .font(.subheadline).foregroundStyle(muted)
+                    Button {
+                        discordReport = allReports()
+                        showDiscordReport = true
+                    } label: {
+                        Label("Report a problem", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+                            .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 13)
+                            .foregroundStyle(.white).background(accent, in: Capsule())
+                    }.buttonStyle(.plain)
+                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(panel, in: RoundedRectangle(cornerRadius: 22))
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
+                        .font(.headline).foregroundStyle(accent)
+                    Text("Preview your logs or share a file. Nothing is sent until you choose to share or submit it.")
+                        .font(.subheadline).foregroundStyle(muted)
+                    Picker("Report", selection: $log.section) {
+                        ForEach(["Connections", "Galaxy", "Live View"], id: \.self) { Text($0).tag($0) }
+                    }.pickerStyle(.segmented)
+                    HStack {
+                        Button(log.copied ? "Copied" : "Copy selected", systemImage: "doc.on.doc") {
+                            UIPasteboard.general.string = selectedReport(); log.copied = true
+                        }
+                        Spacer()
+                        Button("Refresh", systemImage: "arrow.clockwise") { log.detail = previewReport(); log.copied = false }
+                    }.font(.subheadline.weight(.semibold)).foregroundStyle(accent)
+                    Button("Copy all diagnostics", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = allReports(); log.copied = true
+                    }.font(.subheadline.weight(.semibold)).foregroundStyle(accent)
                 Button(exporting ? "Preparing report…" : "Share diagnostics .txt", systemImage: "square.and.arrow.up") {
                     guard !exporting else { return }
                     exporting = true; exportStatus = ""
@@ -1219,9 +1238,10 @@ private struct DeveloperLogsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                 Button("Clear connection history") { log.clear(); log.detail = previewReport() }
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(muted)
+                }.padding(18).background(panel, in: RoundedRectangle(cornerRadius: 22))
             }.padding(20)
-        }.background(Color.purple.opacity(0.08).ignoresSafeArea())
+        }.background(background.ignoresSafeArea())
             .sheet(isPresented: $showDiscordReport) {
                 DiscordReportSheet(logs: discordReport ?? "")
             }
