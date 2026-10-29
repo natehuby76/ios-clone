@@ -153,14 +153,18 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         let expectedGeneration = generation
         probeNumber += 1
         let attempt = probeNumber, started = ProcessInfo.processInfo.systemUptime
-        onDiagnostic?("LAN probe \(attempt) started; previously verified=\(connected)")
+        let wasConnected = connected
+        let sampleProbe = !wasConnected || attempt % 20 == 0
+        if sampleProbe { onDiagnostic?("LAN probe \(attempt) started; previously verified=\(wasConnected)") }
         defer {
-            onDiagnostic?("LAN probe \(attempt) finished; elapsed=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s; cancelled=\(Task.isCancelled); superseded=\(expectedGeneration != generation); verified=\(connected)")
+            if sampleProbe || !connected || Task.isCancelled || expectedGeneration != generation {
+                onDiagnostic?("LAN probe \(attempt) finished; elapsed=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started))s; cancelled=\(Task.isCancelled); superseded=\(expectedGeneration != generation); verified=\(connected)")
+            }
         }
         do {
             let (data, response) = try await authenticated(path: "/data/runtime.json", method: "GET", headers: [:], body: Data(), limit: 4096)
             guard !Task.isCancelled, expectedGeneration == generation else { return false }
-            onDiagnostic?("LAN probe \(attempt) runtime response HTTP \(response.statusCode); bytes=\(data.count)")
+            if sampleProbe || response.statusCode != 200 { onDiagnostic?("LAN probe \(attempt) runtime response HTTP \(response.statusCode); bytes=\(data.count)") }
             let runtime = Self.deviceID(data)
             var persistent: String?
             if response.statusCode == 200, runtime != nil {

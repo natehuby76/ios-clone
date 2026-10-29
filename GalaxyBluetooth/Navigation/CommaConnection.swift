@@ -95,15 +95,17 @@ final class CommaConnection: ObservableObject {
         if nativeNavigation {
             snapshotSequence += 1
             let requestID = snapshotSequence
-            record("Feed request #\(requestID); cached route requested: \(version != nil); transport: \(transport.label)")
+            if requestID == 1 || requestID % 30 == 0 { record("Feed request #\(requestID); cached route requested: \(version != nil); transport: \(transport.label)") }
             let before = session
             let response = try await transport.request(path: try NativeNavigationAPI.statusPath(version: version), method: "GET", headers: [:], body: Data())
             guard before == session, response.status == 200 else { throw BridgeError.message("Comma navigation status unavailable (HTTP \(response.status)).") }
             let decoded = try NativeNavigationAPI.decode(response.bodyData)
             let snapshot = try NativeNavigationAPI.snapshot(response.bodyData)
             if let version = snapshot.routeVersion { nativeRouteVersion = (before, version) }
-            record("Feed #\(requestID); state=\(decoded.status); geometry=\(decoded.route?.count ?? 0); unchanged=\(decoded.routeUnchanged == true); instruction=\(decoded.instruction != nil); position=\(snapshot.position != nil); position valid ms=\(decoded.location?.validForMs ?? 0); last known=\(decoded.location?.lastKnown == true); guidance age=server upper bound 3s")
             let state = "Navigation feed: \(decoded.status); enabled: \(decoded.enabled); map key configured: \(decoded.hasKey); instruction: \(snapshot.instruction != nil)"
+            if requestID == 1 || requestID % 30 == 0 || state != lastFeedState {
+                record("Feed #\(requestID); state=\(decoded.status); geometry=\(decoded.route?.count ?? 0); unchanged=\(decoded.routeUnchanged == true); instruction=\(decoded.instruction != nil); position=\(snapshot.position != nil); position valid ms=\(decoded.location?.validForMs ?? 0); last known=\(decoded.location?.lastKnown == true); guidance age=server upper bound 3s")
+            }
             if state != lastFeedState { lastFeedState = state; recordAction(state) }
             return snapshot
         }
