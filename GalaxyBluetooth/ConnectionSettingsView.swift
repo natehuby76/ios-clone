@@ -20,6 +20,7 @@ struct ConnectionSettingsView: View {
     @State private var showTunnel = false
     @State private var advanced = false
     @State private var confirmForget = false
+    @State private var confirmNavigationAlpha = false
     @State private var showPairingHelp = false
     @State private var checked = false
     @State private var openAfterReconnect = false
@@ -105,6 +106,12 @@ struct ConnectionSettingsView: View {
             if model.navigationEnabled { LinearGradient(colors: [background, panel.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea() }
             else { background.ignoresSafeArea() }
         }.foregroundStyle(Color.primary).preferredColorScheme(model.navigationEnabled ? nil : .dark)
+            .alert("Enable navigation alpha?", isPresented: $confirmNavigationAlpha) {
+                Button("Cancel", role: .cancel) { }
+                Button("Enable alpha") { model.navigationAlpha = true }
+            } message: {
+                Text("Navigation and CarPlay maps are experimental and may stop working or show incorrect guidance. Check directions independently. You can turn this off at any time.")
+            }
             .onChange(of: connected) { _, _ in openReconnectedGalaxy() }
             .onChange(of: pairing) { _, value in if value { openAfterReconnect = false } }
             .onChange(of: model.opened) { _, _ in openReconnectedGalaxy() }
@@ -335,13 +342,17 @@ struct ConnectionSettingsView: View {
             }
             if checked && !checking { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
             separator
-            row("chevron.left.forwardslash.chevron.right", title: "Developer mode", subtitle: "Diagnostics and logs") {
+            row("ladybug", title: "Logs & support", subtitle: "Report a problem or share diagnostics") {
+                Button { select(.logs) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("Open Logs & support")
+            }
+            separator
+            row("chevron.left.forwardslash.chevron.right", title: "Developer mode", subtitle: "Advanced testing") {
                 Toggle("Developer mode", isOn: $model.developerMode).labelsHidden().accessibilityIdentifier("developer-mode-toggle")
             }
             if model.developerMode {
                 Divider().overlay(accent.opacity(0.12)).padding(.leading, 42)
                 row("location.fill", title: "Navigation alpha testing", subtitle: "Navigation UI and CarPlay maps · experimental") {
-                    Toggle("Navigation alpha testing", isOn: $model.navigationAlpha).labelsHidden()
+                    Toggle("Navigation alpha testing", isOn: Binding(get: { model.navigationAlpha }, set: { if $0 { confirmNavigationAlpha = true } else { model.navigationAlpha = false } })).labelsHidden()
                         .accessibilityIdentifier("navigation-alpha-toggle")
                 }
             }
@@ -352,9 +363,9 @@ struct ConnectionSettingsView: View {
     private var advancedControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.developerMode {
-                Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads)
-                message(bluetooth.fastReadFallback ? "Fast reads paused after an error. Reliable reads are active." : "Experimental. Turn off to use reliable reads.")
-                Button("Open Dev / Logs") { select(.logs) }
+                row("bolt", title: "Fast Bluetooth reads", subtitle: bluetooth.fastReadFallback ? "Reliable reads active after an error" : "Experimental · turn off for reliable reads") {
+                    Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads).labelsHidden()
+                }
                 Divider()
             }
             if model.mode != .bluetooth {
@@ -364,10 +375,12 @@ struct ConnectionSettingsView: View {
                     }.disabled(model.selectingDiscoveredComma || pairing)
                 }
                 message(discovery.status)
-                Toggle("Find address over Bluetooth", isOn: $model.findAddressAutomatically)
+                row("antenna.radiowaves.left.and.right", title: "Find address automatically", subtitle: "Discover comma’s address over Bluetooth") {
+                    Toggle("Find address over Bluetooth", isOn: $model.findAddressAutomatically).labelsHidden()
+                }
                 TextField("Comma IP address", text: $model.address, prompt: Text("172.31.254.1 or IP:8082").foregroundColor(muted)).keyboardType(.numbersAndPunctuation)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.plain)
-                    .foregroundStyle(Color.white).tint(accent).padding(12)
+                    .foregroundStyle(Color.primary).tint(accent).padding(12)
                     .background(background, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.3)))
                 message(lan.status)
@@ -377,7 +390,7 @@ struct ConnectionSettingsView: View {
                 if !model.hasLANPairingSetup { message("Connect to comma over Local Wi-Fi before setting up Bluetooth.") }
                 SecureField("64-character pairing key", text: $model.pairingKey, prompt: Text("64-character pairing key").foregroundColor(muted))
                     .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.plain)
-                    .foregroundStyle(Color.white).tint(accent).padding(12)
+                    .foregroundStyle(Color.primary).tint(accent).padding(12)
                     .background(background, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.3)))
                 Button(bluetooth.isScanning ? "Scanning…" : "Scan for comma") { model.wantsConnection = true; bluetooth.scan() }

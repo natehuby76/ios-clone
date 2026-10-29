@@ -10,9 +10,9 @@ struct GalaxyBluetoothApp: App {
 }
 
 enum CompanionTab: String, CaseIterable, Identifiable {
-    case galaxy = "Galaxy", navigation = "Navigation", live = "Live View", diagnostics = "Diagnostics", logs = "Dev / Logs", connections = "Settings"
+    case galaxy = "Galaxy", navigation = "Navigation", live = "Live View", diagnostics = "Diagnostics", logs = "Logs & support", connections = "Settings"
     var id: String { rawValue }
-    var isDeveloperPage: Bool { self == .live || self == .diagnostics || self == .logs }
+    var isDeveloperPage: Bool { self == .live || self == .diagnostics }
     var icon: String {
         switch self {
         case .galaxy: "sparkles"
@@ -882,7 +882,7 @@ struct GalaxyRootView: View {
                 }
                 if model.navigationEnabled && model.tab == .navigation {
                     NavigationHome(connection: model.navigationServices.connection, navigation: model.navigationServices.navigation, saved: model.navigationServices.saved, selectAppTab: select) { select(.connections) }
-                } else if model.developerMode && model.tab == .logs {
+                } else if model.tab == .logs {
                     DeveloperLogsView(model: model, log: model.connectionLog)
                 } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
                     CompanionView(diagnostics: model.diagnostics)
@@ -1210,6 +1210,8 @@ private struct DeveloperLogsView: View {
     @State private var reportDirectory: URL?
     @State private var exportStatus = ""
     @State private var exporting = false
+    @State private var discordReport: String?
+    @State private var showDiscordReport = false
     private func allReports() -> String {
         [log.report(model: model), model.galaxyPage.report(server: model.server, connection: model.transport.label), model.diagnostics.diagnosticLog(), "Galaxy screen updates\n" + model.assets.status].joined(separator: "\n\n")
     }
@@ -1226,8 +1228,8 @@ private struct DeveloperLogsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Dev / Logs").font(.title2.bold())
-                Text("Recent events stay in memory. Reports leave the app only when you copy, save or share them.")
+                Text("Logs & support").font(.title2.bold())
+                Text("Recent events stay in memory. Reports leave the app only when you submit, copy, save or share them.")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Picker("Report", selection: $log.section) {
                     ForEach(["Connections", "Galaxy", "Live View"], id: \.self) { Text($0).tag($0) }
@@ -1238,6 +1240,10 @@ private struct DeveloperLogsView: View {
                     }.buttonStyle(.borderedProminent).tint(.purple)
                     Button("Refresh") { log.detail = previewReport(); log.copied = false }.buttonStyle(.bordered)
                 }
+                Button("Report a problem", systemImage: "bubble.left.and.exclamationmark.bubble.right") {
+                    discordReport = allReports()
+                    showDiscordReport = true
+                }.buttonStyle(.borderedProminent).tint(.purple)
                 Button("Copy all reports") {
                     UIPasteboard.general.string = allReports()
                     log.copied = true
@@ -1278,6 +1284,9 @@ private struct DeveloperLogsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(20)
         }.background(Color(uiColor: .systemBackground))
+            .sheet(isPresented: $showDiscordReport) {
+                DiscordReportSheet(logs: discordReport ?? "")
+            }
             .sheet(item: $sharedReport, onDismiss: {
                 if let directory = reportDirectory { try? FileManager.default.removeItem(at: directory) }
                 reportDirectory = nil

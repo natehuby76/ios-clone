@@ -1,0 +1,12 @@
+{
+  "name": "starpilot-log-relay",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "account_id": "99a95f1b8f51e83e8d1af8e8a71bc36d",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": { "REPORT_MAINTAINER_ID": "524762496373096459" },
+  "observability": { "enabled": false },
+  "durable_objects": { "bindings": [{ "name": "REPORTS", "class_name": "Reports" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reports"] }]
+}

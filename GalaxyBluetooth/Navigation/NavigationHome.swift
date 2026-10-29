@@ -49,6 +49,7 @@ struct NavigationHome: View {
             .overlay(alignment: .top) { mapHeader.padding(12) }
             .modifier(PlacePanelLayout(overlaid: navigation.navigating && navigation.usingComma) {
                 VStack(spacing: 0) {
+                    if !navigation.navigating {
                     Button {
                         withAnimation(.snappy) { expanded.toggle() }
                     } label: {
@@ -61,6 +62,7 @@ struct NavigationHome: View {
                     .gesture(DragGesture(minimumDistance: 12).onEnded { value in
                         withAnimation(.snappy) { expanded = value.translation.height < 0 }
                     })
+                    }
                     if !navigation.error.isEmpty {
                         Text(navigation.error).font(.callout).foregroundStyle(.red)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -83,7 +85,7 @@ struct NavigationHome: View {
                         VStack(alignment: .leading, spacing: 12) {
                             tripPanel
                             messages
-                        }.padding(.horizontal, 20).padding(.bottom, 18)
+                        }.padding(.horizontal, 16).padding(.vertical, 14)
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
@@ -103,10 +105,15 @@ struct NavigationHome: View {
                     }
                 }
                 .background {
-                    UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24)
-                        .fill(.regularMaterial).ignoresSafeArea(edges: .bottom)
+                    if navigation.navigating {
+                        RoundedRectangle(cornerRadius: 28).fill(.regularMaterial)
+                    } else {
+                        UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24)
+                            .fill(.regularMaterial).ignoresSafeArea(edges: .bottom)
+                    }
                 }
                 .shadow(color: .black.opacity(0.12), radius: 16, y: -4)
+                .padding(navigation.navigating ? 12 : 0)
             })
             .onPreferenceChange(NavigationPanelHeightKey.self) { navigationPanelHeight = $0 }
             .sheet(item: $searchPurpose) { purpose in
@@ -133,14 +140,12 @@ struct NavigationHome: View {
     }
     private var mapHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !navigation.navigating {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
                     CompanionNavigationBar(tab: .navigation, developerMode: connection.app.developerMode,
                         navigation: navigation, expanded: $appTabsExpanded, compactIconOnly: true,
                         statusModel: connection.app, select: selectAppTab)
                     navigationOptions
                 }.frame(height: 54)
-            }
             HStack(alignment: .top, spacing: 12) {
                 if navigation.navigating {
                     HStack(alignment: .center, spacing: 18) {
@@ -156,26 +161,6 @@ struct NavigationHome: View {
                     .accessibilityElement(children: .combine)
                 } else { Spacer() }
                 VStack(spacing: 10) {
-                    if navigation.navigating {
-                        Menu {
-                            Button("Galaxy", systemImage: "sparkles") { selectAppTab(.galaxy) }
-                            Button("Navigation", systemImage: "location.fill") { }
-                            Button("Settings", systemImage: "gearshape.fill") { selectAppTab(.connections) }
-                            if connection.app.developerMode {
-                                Section("Developer") {
-                                    ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { item in
-                                        Button(item.rawValue, systemImage: item.icon) { selectAppTab(item) }
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "location.fill").font(.system(size: 17, weight: .semibold)).foregroundStyle(StarPilotTheme.accent)
-                                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                            }.frame(width: 56, height: 44)
-                        }.modifier(FloatingGalaxyGlass()).accessibilityIdentifier("expand-app-tabs").accessibilityLabel("Navigation, show app tabs")
-                        navigationOptions
-                    }
                     mapButton("location.fill", label: "Follow my location") { navigation.followLocation() }
                     if navigation.navigating {
                         mapButton("arrow.up.left.and.arrow.down.right", label: "Show full route") { navigation.showOverview() }
@@ -360,14 +345,7 @@ struct NavigationHome: View {
                     .font(.headline).foregroundStyle(.white).padding(.horizontal, 18).padding(.vertical, 13)
                     .background(.red, in: Capsule()).disabled(navigation.busy)
             }
-            HStack {
-                Text(navigation.destination?.name ?? "Destination").font(.subheadline.weight(.medium)).lineLimit(1)
-                Spacer()
-                Text(navigation.usingComma ? "Comma route" : "Phone route").font(.caption).foregroundStyle(.secondary)
-            }
-            if expanded {
-                Button("Show route overview") { navigation.showOverview() }.frame(maxWidth: .infinity)
-            }
+
         }
     }
     private func tripMetric(_ value: String, label: String) -> some View {
@@ -381,7 +359,14 @@ struct NavigationHome: View {
             if !navigation.locationMessage.isEmpty {
                 Button(navigation.locationMessage) { navigation.requestLocation() }.font(.caption)
             }
-            if navigation.usingComma, !navigation.commaFeedMessage.isEmpty { Text(navigation.commaFeedMessage).font(.caption).foregroundStyle(.orange) }
+            if navigation.usingComma, !navigation.commaFeedMessage.isEmpty {
+                Text(navigation.commaFeedMessage).font(.caption).foregroundStyle(.orange)
+                if !connection.app.transport.connected {
+                    Button("Open Settings to reconnect", action: openSettings).font(.caption.weight(.medium))
+                } else if !navigation.error.isEmpty {
+                    Text("If this continues, open ••• → Reset navigation, then choose your destination again.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if !saved.message.isEmpty { Text(saved.message).font(.caption).foregroundStyle(.secondary) }
         }.fixedSize(horizontal: false, vertical: true)
     }

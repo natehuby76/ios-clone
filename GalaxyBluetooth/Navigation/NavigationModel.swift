@@ -284,7 +284,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
                 guard generation == commandGeneration else { return }
                 onEvent?("Destination confirmed by comma")
                 commaDestination = destination.coordinate; commaIdentity = identity
-                notice = "Destination sent. Comma calculates its own route."
+                notice = ""
             } catch {
                 guard generation == commandGeneration else { return }
                 onEvent?("Go failed; send phase: \(sending); \(LANTransport.failureCode(error))")

@@ -20,6 +20,7 @@ CAFE0000000000000000004A = {isa = PBXContainerItemProxy; containerPortal = 24421
 CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206EEC990BD9; targetProxy = CAFE0000000000000000004A; };
 
 /* Begin PBXBuildFile section */
+D15C00000000000000000901 = {isa = PBXBuildFile; fileRef = D15C00000000000000000902; };
 		C0AA00000000000000000007 /* Lucide-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000008 /* Lucide-LICENSE.txt */; };
 		C0AA00000000000000000005 /* Sora-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000006 /* Sora-OFL.txt */; };
 		C0AA00000000000000000003 /* Sora.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C0AA00000000000000000004 /* Sora.ttf */; };
@@ -60,6 +61,7 @@ CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206E
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+D15C00000000000000000902 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscordReports.swift; sourceTree = "<group>"; };
 		C0AA00000000000000000008 /* Lucide-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Resources/Lucide-LICENSE.txt; sourceTree = "<group>"; };
 		C0AA00000000000000000006 /* Sora-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Resources/Sora-OFL.txt; sourceTree = "<group>"; };
 		C0AA00000000000000000004 /* Sora.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/Sora.ttf; sourceTree = "<group>"; };
@@ -147,6 +149,7 @@ CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206E
 				FACE00000000000000000002 /* PairingCode.swift */,
 				C1A100000000000000000002 /* ClaimPairing.swift */,
 				3356A9DC86451A9D92F074F8 /* GalaxyBluetoothApp.swift */,
+D15C00000000000000000902 /* DiscordReports.swift */,
 				C0AA00000000000000000002 /* ConnectionSettingsView.swift */,
 				C0AA00000000000000000004 /* Sora.ttf */,
 				C0AA00000000000000000006 /* Sora-OFL.txt */,
@@ -266,6 +269,7 @@ CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206E
 				28D504D2BD92FF8A8AEB68A7 /* CompanionDiagnostics.swift in Sources */,
 				A6D597850E6DD0CDFB754EF8 /* CarPlaySceneDelegate.swift in Sources */,
 				36EBF9BB2BE027F139572ADA /* GalaxyBluetoothApp.swift in Sources */,
+D15C00000000000000000901 /* DiscordReports.swift in Sources */,
 				C0AA00000000000000000001 /* ConnectionSettingsView.swift in Sources */,
 				8BA587954B4079F504AAD35E /* GalaxyRequestTransport.swift in Sources */,
 				DE64BADD40C934E610D4D505 /* GalaxyWebView.swift in Sources */,
