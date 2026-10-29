@@ -16,6 +16,8 @@ struct ConnectionSettingsView: View {
     let select: (CompanionTab) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
+    @AppStorage("galaxy.app.language") private var language = "en"
+    @AppStorage("galaxy.app.followGalaxyLanguage") private var followGalaxyLanguage = true
     @State private var showOrder = false
     @State private var showTunnel = false
     @State private var advanced = false
@@ -96,6 +98,16 @@ struct ConnectionSettingsView: View {
                     Link("Support", destination: URL(string: "https://wiki.firestar.link/ticketsystem/")!)
                     Link("Privacy", destination: URL(string: "https://github.com/natehuby76/ios-clone/blob/codex/secretgood-galaxy/docs/privacy.md")!)
                 }.font(.system(size: 12)).frame(minHeight: 44)
+                Menu {
+                    Button("English") { language = "en" }
+                    Button("Español") { language = "es" }
+                    Button("Français") { language = "fr" }
+                    Button("한국어") { language = "ko" }
+                    Button("简体中文") { language = "zh-Hans" }
+                } label: {
+                    Label("Language", systemImage: "globe")
+                }.font(.system(size: 12)).frame(minHeight: 44)
+                    .accessibilityIdentifier("setup-language")
                 if !model.legacyMessage.isEmpty { message(model.legacyMessage) }
                 if !server.error.isEmpty { message(server.error) }
                 Text("StarPilot BT · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
@@ -121,7 +133,7 @@ struct ConnectionSettingsView: View {
                     List {
                         Section {
                             ForEach(model.connectionPriority) { route in
-                                Label { Text(route.title) } icon: {
+                                Label { Text(LocalizedStringKey(route.title)) } icon: {
                                     if route == .tunnel { Image(systemName: "network") }
                                     else { Image(route == .lan ? "ConnectionWiFi" : "ConnectionBluetooth").renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22) }
                                 }
@@ -166,10 +178,10 @@ struct ConnectionSettingsView: View {
                     .frame(width: 38, height: 38).background(accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Your comma").font(.system(size: 17, weight: .medium))
-                    Text(status).font(.system(size: 11)).foregroundStyle(muted).accessibilityAddTraits(.updatesFrequently)
+                    Text(LocalizedStringKey(status)).font(.system(size: 11)).foregroundStyle(muted).accessibilityAddTraits(.updatesFrequently)
                 }
                 Spacer(minLength: 4)
-                Text(pairing ? "Pairing…" : connected ? "Connected" : connecting ? "Connecting…" : "Offline")
+                Text(LocalizedStringKey(pairing ? "Pairing…" : connected ? "Connected" : connecting ? "Connecting…" : "Offline"))
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(pairing ? accent : connected ? .mint : muted)
                     .padding(.horizontal, 9).padding(.vertical, 6)
                     .background((pairing ? accent : connected ? Color.mint : muted).opacity(0.13), in: Capsule())
@@ -177,7 +189,7 @@ struct ConnectionSettingsView: View {
             HStack(spacing: 3) {
                 ForEach([ConnectionMode.automatic, .bluetooth, .lan], id: \.self) { mode in
                     Button { model.mode = mode } label: {
-                        Text(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Local Wi-Fi")
+                        Text(LocalizedStringKey(mode == .automatic ? "Automatic" : mode == .bluetooth ? "Bluetooth" : "Local Wi-Fi"))
                             .font(.system(size: 13, weight: .medium))
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .foregroundStyle(model.mode == mode ? Color.white : Color.primary)
@@ -198,7 +210,7 @@ struct ConnectionSettingsView: View {
                 if model.pairingKey.isEmpty && !model.hasLANPairingSetup {
                     Text("Allow Local Network and Bluetooth when iPhone asks. We’ll find comma on your Wi-Fi or hotspot first.").font(.system(size: 11)).foregroundStyle(muted)
                 }
-                Text(model.mode == .automatic ? "Uses your first available connection" : model.mode == .bluetooth ? "Connect directly to comma\nControl Galaxy without Local Wi-Fi" : "Connect over your local network\nJoin the same Wi-Fi or comma’s hotspot")
+                Text(LocalizedStringKey(model.mode == .automatic ? "Uses your first available connection" : model.mode == .bluetooth ? "Connect directly to comma\nControl Galaxy without Local Wi-Fi" : "Connect over your local network\nJoin the same Wi-Fi or comma’s hotspot"))
                     .font(.system(size: 11)).foregroundStyle(muted).lineSpacing(3)
                     .multilineTextAlignment(.center).frame(maxWidth: .infinity)
                     .fixedSize(horizontal: false, vertical: true).padding(.vertical, 3)
@@ -221,7 +233,7 @@ struct ConnectionSettingsView: View {
                 HStack(spacing: 7) {
                     if pairing { PairingSignal() }
                     else if connecting || (connected && !model.opened) { ProgressView().controlSize(.small) }
-                    Text(pairing ? model.connectionMessage : primaryTitle)
+                    Text(LocalizedStringKey(pairing ? model.connectionMessage : primaryTitle))
                         .lineLimit(2).minimumScaleFactor(0.85).multilineTextAlignment(.center)
                 }.font(.system(size: 12, weight: .medium)).padding(.horizontal, 18)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -250,9 +262,9 @@ struct ConnectionSettingsView: View {
         let title = split.map { String(copy[..<$0.lowerBound]) } ?? copy
         let detail = split.map { String(copy[$0.upperBound...]) }
         return VStack(spacing: 4) {
-            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.primary.opacity(0.9))
+            Text(LocalizedStringKey(title)).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.primary.opacity(0.9))
             if let detail, !detail.isEmpty {
-                Text(detail)
+                Text(LocalizedStringKey(detail))
                     .font(.system(size: 11)).foregroundStyle(muted).lineSpacing(3)
             }
         }.multilineTextAlignment(.center).frame(maxWidth: .infinity)
@@ -362,6 +374,10 @@ struct ConnectionSettingsView: View {
 
     private var advancedControls: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Toggle("Follow Galaxy language", isOn: $followGalaxyLanguage)
+            Text("Use Galaxy’s selected language after connecting.")
+                .font(.system(size: 11)).foregroundStyle(muted)
+            Divider()
             if model.developerMode {
                 row("bolt", title: "Fast Bluetooth reads", subtitle: bluetooth.fastReadFallback ? "Reliable reads active after an error" : "Experimental · turn off for reliable reads") {
                     Toggle("Fast Bluetooth reads", isOn: $bluetooth.fastReads).labelsHidden()
@@ -415,14 +431,14 @@ struct ConnectionSettingsView: View {
 
     private var separator: some View { Rectangle().fill(accent.opacity(0.12)).frame(height: 1).padding(.leading, 42) }
     private func message(_ text: String) -> some View {
-        Text(text).font(.system(size: 11)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
+        Text(LocalizedStringKey(text)).font(.system(size: 11)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
     }
     private func row<Control: View>(_ symbol: String, title: String, subtitle: String, @ViewBuilder control: () -> Control) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).foregroundStyle(accent).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
+                Text(LocalizedStringKey(title)).font(.system(size: 13, weight: .medium))
+                Text(LocalizedStringKey(subtitle)).font(.system(size: 11)).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
             control().fixedSize(horizontal: true, vertical: false)

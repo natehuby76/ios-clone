@@ -29,7 +29,7 @@ struct AudioPairingSheet: View {
             case .connected:
                 Text("Music connected. This iPhone is already using comma as its Bluetooth audio output.").multilineTextAlignment(.center)
             case .message(let text):
-                Text(text).multilineTextAlignment(.center)
+                Text(LocalizedStringKey(text)).multilineTextAlignment(.center)
             }
             Button((pairing.phase == .done || pairing.phase == .connected) ? "Done" : "Close") { close() }.padding(.top, 6)
         }.padding(24).presentationDetents([.medium, .large])

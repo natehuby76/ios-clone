@@ -82,12 +82,13 @@ struct GalaxyWebView: View {
     let url: URL
     let requestKey: String
     @ObservedObject var diagnostics: GalaxyPageDiagnostics
+    @AppStorage("galaxy.app.followGalaxyLanguage") private var followGalaxyLanguage = true
     var isActive = true
     var bluetooth = false
     let report: () -> String
     var body: some View {
         ZStack {
-            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive, bluetooth: bluetooth)
+            GalaxyPage(url: url, requestKey: requestKey, diagnostics: diagnostics, isActive: isActive, bluetooth: bluetooth, followGalaxyLanguage: followGalaxyLanguage)
                 .id(url.absoluteString + diagnostics.reloadID.uuidString)
             if diagnostics.stalled {
                 VStack(spacing: 16) {
@@ -135,6 +136,7 @@ private struct GalaxyPage: UIViewRepresentable {
     let diagnostics: GalaxyPageDiagnostics
     let isActive: Bool
     let bluetooth: Bool
+    let followGalaxyLanguage: Bool
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(origin: url, diagnostics: diagnostics)
         coordinator.isVisible = isActive
@@ -151,6 +153,14 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          // Galaxy writes this preference when its own language changes.
+          const originalSetItem = Storage.prototype.setItem;
+          Storage.prototype.setItem = function(key, value) {
+            originalSetItem.apply(this, arguments);
+            if (this === window.localStorage && key === 'galaxy-language') {
+              try { window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind: 'language', code: String(value)}); } catch (_) {}
+            }
+          };
           window.__galaxyBluetooth = \(bluetooth ? "true" : "false");
           const phoneAppearance = window.matchMedia('(prefers-color-scheme: dark)');
           const syncTheme = () => {
@@ -200,8 +210,8 @@ private struct GalaxyPage: UIViewRepresentable {
             :root { --native-galaxy-edge: rgb(3.5% 3.5% 7.8%); }
             :root[data-theme="light"] { --native-galaxy-edge: rgb(94% 91% 99%); }
             html, body { background: var(--native-galaxy-edge) !important; }
-            /* The native web view already sits above the iPhone home indicator. */
-            .blur-nav { bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important; }
+            /* Keep controls above the system home indicator when the page extends to the bottom edge. */
+            .blur-nav { bottom: env(safe-area-inset-bottom, 0px) !important; }
             #galaxy-bg {
               -webkit-mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);
               mask-image: linear-gradient(to bottom, transparent, black 100px, black calc(100% - 48px), transparent);
@@ -322,6 +332,10 @@ private struct GalaxyPage: UIViewRepresentable {
         uiView.evaluateJavaScript("window.__galaxyBluetooth = \(bluetooth ? "true" : "false")", completionHandler: nil)
         context.coordinator.isVisible = isActive
         context.coordinator.syncVisibility(uiView)
+        if followGalaxyLanguage && !context.coordinator.wasFollowingLanguage {
+            uiView.evaluateJavaScript("try { let code = localStorage.getItem('galaxy-language'); if (code) window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind:'language',code}); } catch (_) {}", completionHandler: nil)
+        }
+        context.coordinator.wasFollowingLanguage = followGalaxyLanguage
     }
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "galaxyDiagnostics")
@@ -333,6 +347,7 @@ private struct GalaxyPage: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
         private var downloads: [ObjectIdentifier: (WKDownload, URL?)] = [:]
         var isVisible = true
+        var wasFollowingLanguage = false
         func syncVisibility(_ webView: WKWebView) {
             webView.evaluateJavaScript("window.__galaxySetVisible?.(\(isVisible ? "true" : "false"))", completionHandler: nil)
         }
@@ -346,6 +361,12 @@ private struct GalaxyPage: UIViewRepresentable {
                   let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
             let path = LoopbackServer.reportPath(body["path"] as? String ?? "")
             switch kind {
+            case "language":
+                guard message.frameInfo.isMainFrame,
+                      UserDefaults.standard.object(forKey: "galaxy.app.followGalaxyLanguage") as? Bool ?? true,
+                      let code = body["code"] as? String else { break }
+                let supported = ["en": "en", "es": "es", "fr": "fr", "ko": "ko", "zh-CHS": "zh-Hans"]
+                if let language = supported[code] { UserDefaults.standard.set(language, forKey: "galaxy.app.language") }
             case "theme":
                 if message.frameInfo.isMainFrame, let dark = body["dark"] as? Bool {
                     diagnostics.darkAppearance = dark

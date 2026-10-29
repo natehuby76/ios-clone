@@ -301,7 +301,7 @@ struct DiscordReportSheet: View {
                     if attempted && discord.threadURL == nil {
                         Button("Discard saved report", role: .destructive) { confirmDiscard = true }.disabled(discord.busy)
                     }
-                    if !discord.status.isEmpty { Text(discord.status).font(.callout).accessibilityIdentifier("discord-report-status") }
+                    if !discord.status.isEmpty { Text(LocalizedStringKey(discord.status)).font(.callout).accessibilityIdentifier("discord-report-status") }
                 }
             }.scrollContentBackground(.hidden)
                 .listRowBackground(colorScheme == .dark ? Color(red: 0.09, green: 0.065, blue: 0.145) : Color(red: 0.91, green: 0.87, blue: 0.97))

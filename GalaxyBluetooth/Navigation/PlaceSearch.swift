@@ -45,7 +45,7 @@ struct PlaceSearch: View {
                         }.padding(.vertical, 6)
                     }.accessibilityIdentifier("place-search-result")
                 }
-                if !navigation.error.isEmpty { Text(navigation.error).foregroundStyle(.secondary) }
+                if !navigation.error.isEmpty { Text(LocalizedStringKey(navigation.error)).foregroundStyle(.secondary) }
                 if query.isEmpty {
                     Text(saveAs == .home ? "Search for your home address, then select it to save." :
                         saveAs == .work ? "Search for your work address, then select it to save." :
@@ -95,7 +95,7 @@ struct SavedPlacesView: View {
                     }
                 }
                 Section { Text("Saved on this iPhone.").font(.caption).foregroundStyle(.secondary) }
-                if !saved.message.isEmpty { Text(saved.message).font(.caption) }
+                if !saved.message.isEmpty { Text(LocalizedStringKey(saved.message)).font(.caption) }
             }
             .navigationTitle("Saved Places")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

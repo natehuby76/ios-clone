@@ -6,7 +6,8 @@ import CoreBluetooth
 @main
 struct GalaxyBluetoothApp: App {
     @StateObject private var model = AppModel.shared
-    var body: some Scene { WindowGroup { GalaxyRootView(model: model) } }
+    @AppStorage("galaxy.app.language") private var language = "en"
+    var body: some Scene { WindowGroup { GalaxyRootView(model: model).environment(\.locale, Locale(identifier: language)) } }
 }
 
 enum CompanionTab: String, CaseIterable, Identifiable {
@@ -817,6 +818,15 @@ struct GalaxyRootView: View {
                                   bluetooth: model.transport.label == "Bluetooth") {
                         model.galaxyPage.report(server: server, connection: model.transport.label)
                     }
+                        .ignoresSafeArea(.container, edges: .bottom)
+                        .overlay(alignment: .top) {
+                            if !editorFocused {
+                                let dark = (galaxyColorScheme ?? systemColorScheme) == .dark
+                                let edge = dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.94, green: 0.91, blue: 0.99)
+                                LinearGradient(colors: [edge, edge.opacity(0)], startPoint: .top, endPoint: .bottom)
+                                    .frame(height: 16).allowsHitTesting(false).accessibilityHidden(true)
+                            }
+                        }
                         .opacity(model.tab == .galaxy ? 1 : 0)
                         .allowsHitTesting(model.tab == .galaxy)
                         .accessibilityHidden(model.tab != .galaxy)
@@ -938,7 +948,7 @@ struct CompanionNavigationBar: View {
                         Button { select(item) } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: item.icon).font(.system(size: 15, weight: .semibold))
-                                Text(item.rawValue).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                                Text(LocalizedStringKey(item.rawValue)).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
                             }.frame(maxWidth: .infinity).frame(height: 44)
                                 .foregroundStyle((tab == item || (tab == .logs && item == .connections)) ? Color.white : Color.primary.opacity(0.7))
                                 .background {

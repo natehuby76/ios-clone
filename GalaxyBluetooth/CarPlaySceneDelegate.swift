@@ -105,7 +105,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             template.mapDelegate = self
             template.guidanceBackgroundColor = StarPilotTheme.uiAccent
             template.automaticallyHidesNavigationBar = false
-            template.trailingNavigationBarButtons = [CPBarButton(title: "Stats", handler: { [weak self] _ in
+            template.trailingNavigationBarButtons = [CPBarButton(title: localizedCarPlay("Stats"), handler: { [weak self] _ in
                 guard let self, let overview = self.overview else { return }
                 self.pushTemplate(overview, animated: true, completion: nil)
             })]
@@ -116,8 +116,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             mapController = nil; mapTemplate = nil
             window?.rootViewController = UIViewController()
             catalog = localCatalogue()
-            toggles = CPListTemplate(title: "Toggles", sections: [])
-            toggles?.tabTitle = "Toggles"
+            toggles = CPListTemplate(title: localizedCarPlay("Toggles"), sections: [])
+            toggles?.tabTitle = localizedCarPlay("Toggles")
             toggles?.tabImage = UIImage(systemName: "switch.2")
             guard let overview, let temperatures, let rates, let toggles else { return }
             let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
@@ -308,9 +308,16 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return result
     }
 
+    private func localizedCarPlay(_ text: String) -> String {
+        let language = UserDefaults.standard.string(forKey: "galaxy.app.language") ?? "en"
+        guard let path = Bundle.main.path(forResource: language, ofType: "lproj"),
+              let bundle = Bundle(path: path) else { return text }
+        return bundle.localizedString(forKey: text, value: text, table: nil)
+    }
+
     private func makeGrid(title: String?, gridButtons: [CPGridButton], compact: Bool = false) -> CPGridTemplate {
         let capacity = compact ? 4 : 8
-        let page = CPGridTemplate(title: title, gridButtons: paddedButtons(gridButtons, capacity: capacity))
+        let page = CPGridTemplate(title: title.map(localizedCarPlay), gridButtons: paddedButtons(gridButtons, capacity: capacity))
         gridSizes.setObject(NSNumber(value: capacity), forKey: page)
         return page
     }
@@ -318,7 +325,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     private func grid(_ title: String, icon: String, buttons: [CPGridButton]) -> CPGridTemplate {
         precondition(!buttons.isEmpty)
         let template = makeGrid(title: title, gridButtons: buttons)
-        template.tabTitle = title
+        template.tabTitle = localizedCarPlay(title)
         template.tabImage = UIImage(systemName: icon)
         return template
     }
@@ -358,7 +365,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 UITraitCollection(userInterfaceStyle: carAppearance), UITraitCollection(displayScale: format.scale)
             ]))
         } else { image = symbol.withRenderingMode(.alwaysTemplate) }
-        let label = title
+        let label = localizedCarPlay(title)
         let state = GridAction(signature: "\(title)|\(icon)|\(value ?? "")", perform: action)
         let result = CPGridButton(titleVariants: [label, compactCaption(label)], image: image) { _ in state.perform() }
         gridActions.setObject(state, forKey: result)
@@ -550,7 +557,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
     private func settingsItem(_ title: String, detail: String? = nil, icon: String,
                               enabled: Bool = true, action: @escaping @MainActor () -> Void = {}) -> CPListItem {
-        let item = CPListItem(text: title, detailText: detail, image: UIImage(systemName: icon))
+        let item = CPListItem(text: localizedCarPlay(title), detailText: detail.map(localizedCarPlay), image: UIImage(systemName: icon))
         item.isEnabled = enabled
         item.handler = { _, completion in
             action()
@@ -560,7 +567,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func openSettings(_ name: String, title: String) {
-        let page = CPListTemplate(title: title, sections: [])
+        let page = CPListTemplate(title: localizedCarPlay(title), sections: [])
         page.userInfo = SettingsPageState(name)
         pushTemplate(page, animated: true) { [weak self, weak page] success, _ in
             if success, let page { self?.loadSettings(page) }
@@ -662,14 +669,14 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 if let selection { payload["value"] = selection }
                 let pending = try await self.request("/api/settings/preview", payload: payload)
                 guard let intent = pending["intent"] as? String else { throw BridgeError.message("Refresh settings and try again.") }
-                let confirm = CPAlertAction(title: "Save", style: .default) { [weak self, weak page] _ in
+                let confirm = CPAlertAction(title: localizedCarPlay("Save"), style: .default) { [weak self, weak page] _ in
                     guard let self, let page else { return }
                     self.controller?.dismissTemplate(animated: true) { _, _ in
                         guard original == self.session else { self.notice("Connection changed. Refresh settings."); return }
                         self.commit(intent, page: page)
                     }
                 }
-                let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
+                let cancel = CPAlertAction(title: localizedCarPlay("Cancel"), style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
                 self.controller?.presentTemplate(CPAlertTemplate(titleVariants: [pending["question"] as? String ?? "Save this preference?"], actions: [cancel, confirm]), animated: true, completion: nil)
             } catch { self.notice(error.localizedDescription); self.busy = false; self.loadSettings(page) }
         }
@@ -700,7 +707,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
     private func notice(_ message: String) {
         guard controller?.presentedTemplate == nil else { return }
-        let action = CPAlertAction(title: "OK", style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
+        let action = CPAlertAction(title: localizedCarPlay("OK"), style: .cancel) { [weak self] _ in self?.controller?.dismissTemplate(animated: true, completion: nil) }
         controller?.presentTemplate(CPAlertTemplate(titleVariants: [String(message.prefix(240))], actions: [action]), animated: true, completion: nil)
     }
 }

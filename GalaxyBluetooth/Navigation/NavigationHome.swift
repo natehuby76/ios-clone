@@ -64,14 +64,14 @@ struct NavigationHome: View {
                     })
                     }
                     if !navigation.error.isEmpty {
-                        Text(navigation.error).font(.callout).foregroundStyle(.red)
+                        Text(LocalizedStringKey(navigation.error)).font(.callout).foregroundStyle(.red)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 20).padding(.bottom, 12)
                             .accessibilityIdentifier("navigation-error-banner")
                     }
                     if !navigation.notice.isEmpty {
                         HStack(alignment: .top, spacing: 8) {
-                            Text(navigation.notice).font(.callout)
+                            Text(LocalizedStringKey(navigation.notice)).font(.callout)
                             Spacer(minLength: 0)
                             Button { navigation.notice = "" } label: { Image(systemName: "xmark.circle.fill") }
                                 .accessibilityLabel("Dismiss navigation message")
@@ -152,7 +152,7 @@ struct NavigationHome: View {
                         Image(systemName: turnSymbol).font(.system(size: 42, weight: .bold)).frame(width: 52)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(navigation.usingComma && !navigation.commaFeedReady ? "—" : distance(navigation.distanceToTurn)).font(.system(size: 30, weight: .bold, design: .rounded))
-                            Text(navigation.instruction).font(.title3.weight(.semibold)).lineLimit(3)
+                            Text(LocalizedStringKey(navigation.instruction)).font(.title3.weight(.semibold)).lineLimit(3)
                         }
                         Spacer(minLength: 0)
                     }
@@ -360,14 +360,14 @@ struct NavigationHome: View {
                 Button(navigation.locationMessage) { navigation.requestLocation() }.font(.caption)
             }
             if navigation.usingComma, !navigation.commaFeedMessage.isEmpty {
-                Text(navigation.commaFeedMessage).font(.caption).foregroundStyle(.orange)
+                Text(LocalizedStringKey(navigation.commaFeedMessage)).font(.caption).foregroundStyle(.orange)
                 if !connection.app.transport.connected {
                     Button("Open Settings to reconnect", action: openSettings).font(.caption.weight(.medium))
                 } else if !navigation.error.isEmpty {
                     Text("If this continues, open ••• → Reset navigation, then choose your destination again.").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if !saved.message.isEmpty { Text(saved.message).font(.caption).foregroundStyle(.secondary) }
+            if !saved.message.isEmpty { Text(LocalizedStringKey(saved.message)).font(.caption).foregroundStyle(.secondary) }
         }.fixedSize(horizontal: false, vertical: true)
     }
     private var turnSymbol: String {
