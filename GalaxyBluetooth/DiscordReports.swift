@@ -16,6 +16,7 @@ private struct PendingDiscordReport: Codable {
     let reference: String
     let userID: String
     let created: Date
+    var threadID: String? = nil
     static var url: URL {
         URL.applicationSupportDirectory.appendingPathComponent("PendingDiscordReport.json")
     }
@@ -32,12 +33,15 @@ private struct PendingDiscordReport: Codable {
     }
 }
 
+struct DiscordReportItem: Identifiable { let id: String; let title: String }
+
 @MainActor
 final class DiscordReports: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     @Published var busy = false
     @Published var connected = false
     @Published var status = ""
     @Published var threadURL: URL?
+    @Published var reports: [DiscordReportItem] = []
     private var session: ASWebAuthenticationSession?
     private var credentials: DiscordCredentials?
     private let base = "https://starpilot-log-relay.nathan-g-hubbard.workers.dev"
@@ -116,9 +120,24 @@ final class DiscordReports: NSObject, ObservableObject, ASWebAuthenticationPrese
             catch { status = "Couldn’t disconnect Discord. Try again when online."; return }
         }
         SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
-        credentials = nil; connected = false; status = "Discord disconnected."
+        credentials = nil; connected = false; reports = []; status = "Discord disconnected."
     }
-    func send(description: String, logs: String, reference: String) async {
+    func loadReports() async {
+        guard !busy, var credentials else { return }
+        busy = true; defer { busy = false }
+        do {
+            if credentials.expires.timeIntervalSinceNow < 60 {
+                try store(await request("/auth/discord/refresh", body: ["refresh_token": credentials.refresh]))
+                guard let updated = self.credentials else { return }; credentials = updated
+            }
+            let response = try await request("/v1/reports", body: [:], token: credentials.access)
+            reports = (response["reports"] as? [[String: Any]] ?? []).compactMap { item in
+                guard let id = item["id"] as? String, let title = item["title"] as? String else { return nil }
+                return DiscordReportItem(id: id, title: title)
+            }
+        } catch { status = error.localizedDescription }
+    }
+    func send(description: String, logs: String, reference: String, threadID: String? = nil) async {
         guard !busy, var credentials else { return }
         busy = true; status = "Sending report…"; threadURL = nil
         defer { busy = false }
@@ -130,13 +149,15 @@ final class DiscordReports: NSObject, ObservableObject, ASWebAuthenticationPrese
             let payload = ["description": description, "logs": logs, "reference": reference]
             guard try JSONSerialization.data(withJSONObject: payload).count <= 1024 * 1024 else { throw ReportError("This report is too large. Use Share diagnostics instead.") }
             if let pending = PendingDiscordReport.load() {
-                guard pending.reference == reference, pending.description == description, pending.logs == logs else { throw ReportError("Reopen the report to retry the saved submission.") }
+                guard pending.reference == reference, pending.description == description, pending.logs == logs, pending.threadID == threadID else { throw ReportError("Reopen the report to retry the saved submission.") }
                 guard pending.userID == credentials.userID else { throw ReportError("Reconnect the Discord account used for this report, or discard it first.") }
                 guard pending.created.timeIntervalSinceNow > -6 * 24 * 3600 else { throw ReportError("This saved report is too old to retry safely. Check Discord, then discard it before starting another.") }
             } else {
-                try PendingDiscordReport(description: description, logs: logs, reference: reference, userID: credentials.userID, created: Date()).save()
+                try PendingDiscordReport(description: description, logs: logs, reference: reference, userID: credentials.userID, created: Date(), threadID: threadID).save()
             }
-            let response = try await request("/v1/logs", body: ["description": description, "logs": logs, "reference": reference], token: credentials.access)
+            var body = ["description": description, "logs": logs, "reference": reference]
+            if let threadID { body["threadID"] = threadID }
+            let response = try await request("/v1/logs", body: body, token: credentials.access)
             guard response["sent"] as? Bool == true, let raw = response["threadURL"] as? String,
                   let url = URL(string: raw), url.scheme == "https", url.host == "discord.com", url.path.hasPrefix("/channels/") else {
                 throw ReportError("Delivery wasn’t confirmed. Check Discord before sending another report.")
@@ -176,12 +197,15 @@ struct DiscordReportSheet: View {
     private let brandPurple = Color(red: 139.0 / 255, green: 92.0 / 255, blue: 246.0 / 255)
     @Environment(\.dismiss) private var dismiss
     @State private var description = ""
+    @FocusState private var descriptionFocused: Bool
     @State private var attempted = false
     @State private var reference = UUID().uuidString
     let logs: String
     @State private var restoredLogs: String?
     @State private var confirmDiscard = false
     @State private var explainDiscord = false
+    @State private var selectedThread = ""
+    @State private var loadedReports = false
     private var reportLogs: String { restoredLogs ?? logs }
     var body: some View {
         NavigationStack {
@@ -190,7 +214,7 @@ struct DiscordReportSheet: View {
                     Label("StarPilot support", systemImage: "bubble.left.and.text.bubble.right.fill")
                         .font(.headline).foregroundStyle(brandPurple)
                     Text("Tell us what happened. We’ll attach your diagnostics and open a post in Discord.")
-                    Text("Your Discord identity and report are visible to people with access to the forum.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Your Discord username and report are visible to people with access to the forum.").font(.footnote).foregroundStyle(.secondary)
                     if discord.connected {
                         Label("Discord connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                         Button("Disconnect Discord", role: .destructive) { Task { await discord.disconnect() } }.disabled(discord.busy)
@@ -204,8 +228,18 @@ struct DiscordReportSheet: View {
                         }.buttonStyle(.borderedProminent).disabled(discord.busy)
                     }
                 }
+                if discord.connected {
+                    Section("Report") {
+                        Picker("Send to", selection: $selectedThread) {
+                            Text("New report").tag("")
+                            ForEach(discord.reports) { report in Text(report.title).tag(report.id) }
+                        }.disabled(attempted)
+                        Button("Refresh your reports", systemImage: "arrow.clockwise") { Task { await discord.loadReports() } }.disabled(discord.busy || attempted)
+                        Text("Report titles and thread IDs are saved with your Discord account so you can follow up. Older reports may not be listed.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Section("What happened?") {
-                    TextField("A short description", text: $description, axis: .vertical).lineLimit(3...6).disabled(attempted)
+                    TextField("A short description", text: $description, axis: .vertical).lineLimit(3...6).disabled(attempted).focused($descriptionFocused)
                     Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
@@ -214,16 +248,13 @@ struct DiscordReportSheet: View {
                         if reportLogs.count > 24000 { Text("Preview shortened. The full diagnostics file will be attached.").font(.caption) }
                     }
                     Label("Diagnostics are always included", systemImage: "checkmark.circle.fill").disabled(attempted)
-                    Text("Diagnostics may include device names, network addresses and navigation details. Check the preview before sending.").font(.caption).foregroundStyle(.secondary)
+                    Text("Diagnostics can include device names, local network addresses and connection or navigation status. Review the preview before sending.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     if let url = discord.threadURL {
                         Link("Open in Discord", destination: url)
-                    } else {
-                        Button(discord.busy ? "Please wait…" : (attempted ? "Check / retry this report" : "Send report")) {
-                            attempted = true
-                            Task { await discord.send(description: description, logs: reportLogs, reference: reference) }
-                        }.disabled(!discord.connected || discord.busy || description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || description.count > 1000)
+                    } else if attempted {
+                        Text("Use Send to check or retry this report.").font(.footnote).foregroundStyle(.secondary)
                     }
                     if attempted && discord.threadURL == nil {
                         Button("Discard saved report", role: .destructive) { confirmDiscard = true }.disabled(discord.busy)
@@ -237,7 +268,21 @@ struct DiscordReportSheet: View {
                 .tint(brandPurple)
                 .navigationTitle("Report a problem")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(discord.busy) } }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(discord.busy) }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(discord.threadURL != nil ? "Done" : "Send") {
+                            if discord.threadURL != nil { dismiss() } else {
+                                descriptionFocused = false; attempted = true
+                                Task { await discord.send(description: description, logs: reportLogs, reference: reference, threadID: selectedThread.isEmpty ? nil : selectedThread) }
+                            }
+                        }.tint(.blue).disabled(discord.busy || (discord.threadURL == nil && (!discord.connected || description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || description.count > 1000)))
+                    }
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button { descriptionFocused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Dismiss keyboard")
+                    }
+                }
                 .interactiveDismissDisabled(discord.busy)
                 .alert("Connect Discord", isPresented: $explainDiscord) {
                     Button("Continue") { discord.connect() }
@@ -256,9 +301,16 @@ struct DiscordReportSheet: View {
                         } catch { discord.status = "Couldn’t discard the saved report. Try again." }
                     }
                 }
+                .onChange(of: discord.busy) { _, busy in
+                    if !busy && discord.connected && !loadedReports { loadedReports = true; Task { await discord.loadReports() } }
+                }
+                .onChange(of: discord.connected) { _, connected in
+                    if !connected { loadedReports = false; selectedThread = "" }
+                }
                 .onAppear {
+                    if discord.connected { loadedReports = true; Task { await discord.loadReports() } }
                     if let pending = PendingDiscordReport.load() {
-                        description = pending.description; restoredLogs = pending.logs
+                        description = pending.description; restoredLogs = pending.logs; selectedThread = pending.threadID ?? ""
                         reference = pending.reference; attempted = true
                         discord.status = "Your previous report is awaiting confirmation. Retry to check its delivery without creating a duplicate."
                     }

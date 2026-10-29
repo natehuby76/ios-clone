@@ -830,7 +830,7 @@ struct GalaxyRootView: View {
                 if model.navigationEnabled && model.tab == .navigation {
                     NavigationHome(connection: model.navigationServices.connection, navigation: model.navigationServices.navigation, saved: model.navigationServices.saved, selectAppTab: select) { select(.connections) }
                 } else if model.tab == .logs {
-                    DeveloperLogsView(model: model, log: model.connectionLog)
+                    DeveloperLogsView(model: model, log: model.connectionLog, back: { select(.connections) })
                 } else if model.developerMode && (model.tab == .live || model.tab == .diagnostics) {
                     CompanionView(diagnostics: model.diagnostics)
                 } else if model.tab == .connections || !model.opened {
@@ -940,14 +940,14 @@ struct CompanionNavigationBar: View {
                                 Image(systemName: item.icon).font(.system(size: 15, weight: .semibold))
                                 Text(item.rawValue).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
                             }.frame(maxWidth: .infinity).frame(height: 44)
-                                .foregroundStyle(tab == item ? Color.white : Color.primary.opacity(0.7))
+                                .foregroundStyle((tab == item || (tab == .logs && item == .connections)) ? Color.white : Color.primary.opacity(0.7))
                                 .background {
-                                    if tab == item {
+                                    if tab == item || (tab == .logs && item == .connections) {
                                         Capsule().fill(LinearGradient(colors: [Color(red: 0.61, green: 0.39, blue: 0.91), Color(red: 0.40, green: 0.22, blue: 0.69)], startPoint: .topLeading, endPoint: .bottomTrailing))
                                     }
                                 }
                         }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + item.rawValue)
-                            .accessibilityAddTraits(tab == item ? .isSelected : [])
+                            .accessibilityAddTraits((tab == item || (tab == .logs && item == .connections)) ? .isSelected : [])
                     }
 
                 }.padding(5)
@@ -1144,6 +1144,7 @@ final class ConnectionEventLog: ObservableObject {
 private struct DeveloperLogsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var log: ConnectionEventLog
+    let back: () -> Void
     @State private var sharedReport: GalaxyDownloadedFile?
     @State private var reportDirectory: URL?
     @State private var exportStatus = ""
@@ -1172,6 +1173,10 @@ private struct DeveloperLogsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Logs & support").font(.largeTitle.bold()).frame(maxWidth: .infinity)
+                    .overlay(alignment: .leading) {
+                        Button(action: back) { Image(systemName: "chevron.left").font(.headline).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                            .buttonStyle(.plain).accessibilityLabel("Back to Settings")
+                    }
                 VStack(alignment: .leading, spacing: 14) {
                     Label("Need a hand?", systemImage: "bubble.left.and.exclamationmark.bubble.right.fill")
                         .font(.headline).foregroundStyle(accent)
