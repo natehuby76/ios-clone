@@ -1192,9 +1192,8 @@ private struct DeveloperLogsView: View {
                     }.buttonStyle(.plain)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(panel, in: RoundedRectangle(cornerRadius: 22))
-                VStack(alignment: .leading, spacing: 14) {
-                    Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
-                        .font(.headline).foregroundStyle(accent)
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 14) {
                     Text("Preview your logs or share a file. Nothing is sent until you choose to share or submit it.")
                         .font(.subheadline).foregroundStyle(muted)
                     Picker("Report", selection: $log.section) {
@@ -1244,6 +1243,10 @@ private struct DeveloperLogsView: View {
                     .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                 Button("Clear connection history") { log.clear(); log.detail = previewReport() }
                     .font(.caption).foregroundStyle(muted)
+                    }
+                } label: {
+                    Label("Manual Log Submission", systemImage: "doc.text.magnifyingglass")
+                        .font(.headline).foregroundStyle(accent)
                 }.padding(18).background(panel, in: RoundedRectangle(cornerRadius: 22))
             }.padding(20)
         }.background(background.ignoresSafeArea())

@@ -168,7 +168,7 @@ final class DiscordReports: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
     private func request(_ path: String, body: [String: String], token: String? = nil) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: base + path)!)
-        request.httpMethod = "POST"; request.timeoutInterval = 45
+        request.httpMethod = "POST"; request.timeoutInterval = path == "/v1/logs" ? 120 : 45
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -239,7 +239,14 @@ struct DiscordReportSheet: View {
                     }
                 }
                 Section("What happened?") {
-                    TextField("A short description", text: $description, axis: .vertical).lineLimit(3...6).disabled(attempted).focused($descriptionFocused)
+                    TextEditor(text: $description)
+                        .frame(minHeight: 120)
+                        .disabled(attempted)
+                        .focused($descriptionFocused)
+                        .accessibilityLabel("Describe what happened")
+                    if descriptionFocused {
+                        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down") { descriptionFocused = false }
+                    }
                     Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
@@ -277,10 +284,6 @@ struct DiscordReportSheet: View {
                                 Task { await discord.send(description: description, logs: reportLogs, reference: reference, threadID: selectedThread.isEmpty ? nil : selectedThread) }
                             }
                         }.tint(.blue).disabled(discord.busy || (discord.threadURL == nil && (!discord.connected || description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || description.count > 1000)))
-                    }
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button { descriptionFocused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Dismiss keyboard")
                     }
                 }
                 .interactiveDismissDisabled(discord.busy)
