@@ -5,6 +5,7 @@
   "account_id": "99a95f1b8f51e83e8d1af8e8a71bc36d",
   "workers_dev": true,
   "preview_urls": false,
+  "ai": { "binding": "AI" },
   "vars": { "REPORT_MAINTAINER_ID": "524762496373096459" },
   "observability": { "enabled": false },
   "durable_objects": { "bindings": [{ "name": "REPORTS", "class_name": "Reports" }] },

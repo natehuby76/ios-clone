@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, {Reports} from './worker.mjs';
+import worker, {Reports, reportTitle} from './worker.mjs';
 const env = {REPORT_MAINTAINER_ID:'524762496373096459',DISCORD_CLIENT_ID:'123', DISCORD_CLIENT_SECRET:'test', DISCORD_WEBHOOK_URL:'https://discord.com/api/webhooks/123/fake'};
 const request = (path, body, token) => new Request('https://relay'+path, {method:'POST',headers:{'Content-Type':'application/json', ...(token ? {Authorization:token}: {})},body:JSON.stringify(body)});
 test('OAuth uses fixed callback and PKCE, rejects invalid state', async () => {
@@ -41,4 +41,14 @@ test('uncertain delivery is not automatically sent twice',async()=>{
  globalThis.fetch=async(url,options)=>{if(options.method==='POST'){posts++;throw new Error('network lost');}return Response.json({guild_id:'333'});};
  const reports=new Reports({storage:storage(),blockConcurrencyWhile:f=>f()},env);
  try {assert.equal((await reports.fetch(request('/submit',body))).status,409);assert.equal((await reports.fetch(request('/submit',body))).status,409);assert.equal(posts,1);}finally{globalThis.fetch=old;}
+});
+
+test('AI titles use only the description and fall back safely', async () => {
+ let received;
+ const ai = {run: async (model, input) => { received = {model, input}; return {response: 'Bluetooth reconnect fails'}; }};
+ assert.equal(await reportTitle(ai, 'Bluetooth failed'), 'iOS — Bluetooth reconnect fails');
+ assert.equal(received.model, '@cf/meta/llama-3.2-1b-instruct');
+ assert.equal(received.input.messages[1].content, 'Bluetooth failed');
+ assert.equal(await reportTitle({run: async () => {throw Error('unavailable')}}, 'Bluetooth failed'), 'iOS — Bluetooth failed');
+ assert.equal(await reportTitle({run: async () => ({response: ''})}, 'Bluetooth failed'), 'iOS — Bluetooth failed');
 });
