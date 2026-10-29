@@ -43,12 +43,36 @@ test('uncertain delivery is not automatically sent twice',async()=>{
  try {assert.equal((await reports.fetch(request('/submit',body))).status,409);assert.equal((await reports.fetch(request('/submit',body))).status,409);assert.equal(posts,1);}finally{globalThis.fetch=old;}
 });
 
-test('AI titles use only the description and fall back safely', async () => {
+test('AI titles use only descriptions and fall back safely', async () => {
  let received;
- const ai = {run: async (model, input) => { received = {model, input}; return {response: 'Bluetooth reconnect fails'}; }};
- assert.equal(await reportTitle(ai, 'Bluetooth failed'), 'iOS — Bluetooth reconnect fails');
- assert.equal(received.model, '@cf/meta/llama-3.2-1b-instruct');
- assert.equal(received.input.messages[1].content, 'Bluetooth failed');
- assert.equal(await reportTitle({run: async () => {throw Error('unavailable')}}, 'Bluetooth failed'), 'iOS — Bluetooth failed');
- assert.equal(await reportTitle({run: async () => ({response: ''})}, 'Bluetooth failed'), 'iOS — Bluetooth failed');
+ const ai = {run: async (model, input) => { received = {model, input}; return {response: 'Wi-Fi and tunnel failed; Bluetooth worked'}; }};
+ const example = 'Didn’t connect on wifi or tunnel but did over Bluetooth';
+ assert.equal(await reportTitle(ai, example), 'iOS — Wi-Fi and tunnel failed; Bluetooth worked');
+ assert.equal(received.model, '@cf/meta/llama-3.1-8b-instruct-fp8');
+ assert.equal(received.input.messages[1].content, example);
+ assert.equal(await reportTitle({run: async () => {throw Error('unavailable')}}, example), 'iOS — ' + example);
+});
+
+test('follow-up requires a report owned by this account and posts to its thread', async () => {
+ const old = globalThis.fetch; let posted;
+ globalThis.fetch = async (url, options) => {
+   if (options.method === 'POST') { posted = {url: String(url), payload: JSON.parse(options.body.get('payload_json'))}; return Response.json({id:'444',channel_id:'222'}); }
+   return Response.json({guild_id:'333'});
+ };
+ const store=storage(); const reports=new Reports({storage:store},env);
+ try {
+   assert.equal((await reports.fetch(request('/submit',{...body,threadID:'222'}))).status,403);
+   await reports.fetch(request('/submit',body));
+   const update={...body, reference:'87654321-1234-1234-1234-123456789abc', threadID:'222'};
+   const response=await reports.fetch(request('/submit',update));
+   assert.equal(response.status,200);
+   assert.equal(new URL(posted.url).searchParams.get('thread_id'),'222');
+   assert.equal(posted.payload.thread_name,undefined);
+   assert.equal(posted.payload.applied_tags,undefined);
+   posted = null;
+   assert.equal((await reports.fetch(request('/submit',update))).status,200);
+   assert.equal(posted,null);
+   const other=new Reports({storage:storage()},env);
+   assert.equal((await other.fetch(request('/submit',update))).status,403);
+ } finally {globalThis.fetch=old;}
 });
