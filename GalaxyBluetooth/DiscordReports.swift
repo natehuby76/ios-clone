@@ -224,6 +224,8 @@ struct DiscordReportSheet: View {
                     if !discord.status.isEmpty { Text(discord.status).font(.callout).accessibilityIdentifier("discord-report-status") }
                 }
             }.scrollContentBackground(.hidden)
+                .listRowBackground(colorScheme == .dark ? Color(red: 0.09, green: 0.065, blue: 0.145) : Color(red: 0.91, green: 0.87, blue: 0.97))
+                .buttonBorderShape(.capsule)
                 .background(colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.97, green: 0.95, blue: 0.99))
                 .tint(brandPurple)
                 .navigationTitle("Report a problem")

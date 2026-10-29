@@ -803,66 +803,13 @@ struct GalaxyRootView: View {
     }
     private var editorFocused: Bool { model.tab == .galaxy && galaxyPage.landscapeEditor }
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     init(model: AppModel) {
         self.model = model; navigation = model.navigationServices.navigation; bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server; discovery = model.discovery; galaxyPage = model.galaxyPage
     }
     var body: some View {
         VStack(spacing: 0) {
-            if !model.navigationEnabled && !editorFocused && model.tab != .connections {
-            VStack(spacing: 14) {
-                HStack {
-                    if !model.developerMode && model.tab == .connections {
-                        if model.opened {
-                            Button { select(.galaxy) } label: {
-                                Image(systemName: "chevron.left").font(.body.weight(.semibold))
-                                    .frame(width: 36, height: 36)
-                            }.buttonStyle(.plain).accessibilityLabel("Back to Galaxy")
-                        }
-                        Text("Settings").font(.title3.bold())
-                    } else {
-                        Text("StarPilot BT").font(.title3.bold())
-                    }
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle().fill(model.transport.connected ? Color.green : Color.orange).frame(width: 6, height: 6)
-                        Text(model.transport.label).font(.caption.weight(.medium))
-                    }.padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                    if !model.developerMode && model.tab != .connections {
-                        Button { select(.connections) } label: {
-                            Image(systemName: "gearshape.fill").font(.body.weight(.semibold))
-                                .frame(width: 36, height: 36)
-                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                        }.buttonStyle(.plain).accessibilityLabel("Settings")
-                    }
-                }
-                if model.developerMode {
-                    HStack(spacing: 4) {
-                        ForEach(CompanionTab.allCases.filter { $0 != .connections && $0 != .navigation }) { tab in
-                            Button { select(tab) } label: {
-                                VStack(spacing: 5) {
-                                    Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
-                                    Text(tab.rawValue).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                                }.frame(maxWidth: .infinity).padding(.vertical, 10)
-                                    .foregroundStyle(model.tab == tab ? Color.white : Color.secondary)
-                                    .background(model.tab == tab ? brandPurple : Color.clear, in: RoundedRectangle(cornerRadius: 12))
-                            }.buttonStyle(.plain).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
-                        }
-                        Button { select(.connections) } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "gearshape.fill").font(.system(size: 17, weight: .semibold))
-                                    .frame(width: 36, height: 36)
-                                    .background(model.tab == .connections ? brandPurple : Color(uiColor: .tertiarySystemBackground), in: Circle())
-                                    .foregroundStyle(model.tab == .connections ? Color.white : Color.secondary)
-                                Text("Settings").font(.system(size: 10, weight: .semibold))
-                            }.frame(width: 60).padding(.vertical, 4)
-                                .foregroundStyle(model.tab == .connections ? Color.primary : Color.secondary)
-                        }.buttonStyle(.plain).accessibilityAddTraits(model.tab == .connections ? .isSelected : [])
-                    }.padding(4).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                }
-            }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
-            }
             ZStack {
                 if model.opened, let url = server.url {
                     GalaxyWebView(url: url, requestKey: server.localSecret, diagnostics: model.galaxyPage,
@@ -893,7 +840,7 @@ struct GalaxyRootView: View {
 
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.navigationEnabled && !editorFocused && model.tab != .navigation {
+            if !editorFocused && model.tab != .navigation {
                 CompanionNavigationBar(tab: model.tab, developerMode: model.developerMode,
                     navigation: model.navigationServices.navigation, expanded: $appTabsExpanded,
                     compactIconOnly: true, statusModel: model, select: select)
@@ -961,7 +908,7 @@ struct GalaxyRootView: View {
         if tab == .connections { appTabsExpanded = true }
         if tab != .connections { discovery.stop() }
         model.connectionLog.record("UI tab selected: \(model.tab.rawValue) → \(tab.rawValue)")
-        model.tab = tab
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { model.tab = tab }
         if tab == .galaxy { hasVisitedGalaxy = true; model.applyMatchedGalaxy() }
         model.diagnostics.live = tab == .live
     }
@@ -987,7 +934,7 @@ struct CompanionNavigationBar: View {
             // envelope and transforms animate; labels never squeeze and reflow.
             ZStack(alignment: .leading) {
                 HStack(spacing: 5) {
-                    ForEach([CompanionTab.galaxy, .navigation, .connections]) { item in
+                    ForEach(statusModel?.navigationEnabled == false ? [CompanionTab.galaxy, .connections] : [CompanionTab.galaxy, .navigation, .connections]) { item in
                         Button { select(item) } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: item.icon).font(.system(size: 15, weight: .semibold))
@@ -1002,16 +949,7 @@ struct CompanionNavigationBar: View {
                         }.buttonStyle(.plain).accessibilityIdentifier("main-tab-" + item.rawValue)
                             .accessibilityAddTraits(tab == item ? .isSelected : [])
                     }
-                    if developerMode {
-                        Menu {
-                            ForEach(CompanionTab.allCases.filter { $0.isDeveloperPage }) { item in
-                                Button(item.rawValue, systemImage: item.icon) { select(item) }
-                            }
-                        } label: {
-                            Image(systemName: "ladybug.fill").frame(width: 40, height: 44)
-                                .foregroundStyle(StarPilotTheme.accent)
-                        }.accessibilityLabel("Developer options")
-                    }
+
                 }.padding(5)
                     .padding(.trailing, statusModel == nil ? 0 : 32)
                     .frame(width: geometry.size.width)
@@ -1237,13 +1175,13 @@ private struct DeveloperLogsView: View {
                 HStack {
                     Button(log.copied ? "Copied" : "Copy report", systemImage: "doc.on.doc") {
                         UIPasteboard.general.string = selectedReport(); log.copied = true
-                    }.buttonStyle(.borderedProminent).tint(.purple)
+                    }.buttonStyle(.borderedProminent).tint(Color(red: 0.55, green: 0.36, blue: 0.90)).buttonBorderShape(.capsule)
                     Button("Refresh") { log.detail = previewReport(); log.copied = false }.buttonStyle(.bordered)
                 }
                 Button("Report a problem", systemImage: "bubble.left.and.exclamationmark.bubble.right") {
                     discordReport = allReports()
                     showDiscordReport = true
-                }.buttonStyle(.borderedProminent).tint(.purple)
+                }.buttonStyle(.borderedProminent).tint(Color(red: 0.55, green: 0.36, blue: 0.90)).buttonBorderShape(.capsule)
                 Button("Copy all reports") {
                     UIPasteboard.general.string = allReports()
                     log.copied = true
@@ -1272,18 +1210,18 @@ private struct DeveloperLogsView: View {
                         } catch { exportStatus = "Couldn’t prepare diagnostics. Try again or copy the report." }
                         exporting = false
                     }
-                }.buttonStyle(.bordered).disabled(exporting).accessibilityIdentifier("save-diagnostics-txt")
+                }.buttonStyle(.bordered).buttonBorderShape(.capsule).disabled(exporting).accessibilityIdentifier("save-diagnostics-txt")
                 if !exportStatus.isEmpty { Text(exportStatus).font(.caption).foregroundStyle(.secondary) }
                 Text("Preview shows the latest 150 connection events. Copy or share includes the full retained log.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(log.detail)
                     .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                 Button("Clear connection history") { log.clear(); log.detail = previewReport() }
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(20)
-        }.background(Color(uiColor: .systemBackground))
+        }.background(Color.purple.opacity(0.08).ignoresSafeArea())
             .sheet(isPresented: $showDiscordReport) {
                 DiscordReportSheet(logs: discordReport ?? "")
             }
