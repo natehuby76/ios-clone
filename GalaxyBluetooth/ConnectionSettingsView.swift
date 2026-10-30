@@ -18,6 +18,7 @@ struct ConnectionSettingsView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("galaxy.app.language") private var language = "en"
     @AppStorage("galaxy.app.followGalaxyLanguage") private var followGalaxyLanguage = true
+    @AppStorage("galaxy.location.hideIndicator") private var hideLocationIndicator = false
     @State private var showOrder = false
     @State private var showTunnel = false
     @State private var advanced = false
@@ -374,6 +375,10 @@ struct ConnectionSettingsView: View {
 
     private var advancedControls: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Toggle("Hide background location indicator", isOn: Binding(get: { hideLocationIndicator }, set: { hideLocationIndicator = $0; location.setHideBackgroundIndicator($0) }))
+            Text("Requires Always location access. iOS may still show the indicator with While Using access.")
+                .font(.system(size: 11)).foregroundStyle(muted)
+            Divider()
             Toggle("Follow Galaxy language", isOn: $followGalaxyLanguage)
             Text("Use Galaxy’s selected language after connecting.")
                 .font(.system(size: 11)).foregroundStyle(muted)

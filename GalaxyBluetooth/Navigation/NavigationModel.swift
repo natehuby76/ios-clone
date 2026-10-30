@@ -102,7 +102,7 @@ final class NavigationModel: NSObject, ObservableObject, @preconcurrency CLLocat
     }
     func requestLocation() {
         switch manager.authorizationStatus {
-        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .notDetermined: manager.requestAlwaysAuthorization()
         case .authorizedAlways, .authorizedWhenInUse: if foreground { manager.startUpdatingLocation() }
         default: locationMessage = "Enable location for StarPilot Nav in iPhone Settings."
         }

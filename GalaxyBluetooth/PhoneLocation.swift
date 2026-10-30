@@ -35,7 +35,7 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
         #if os(iOS)
         manager.activityType = .automotiveNavigation
         manager.pausesLocationUpdatesAutomatically = false
-        manager.showsBackgroundLocationIndicator = true
+        manager.showsBackgroundLocationIndicator = !UserDefaults.standard.bool(forKey: "galaxy.location.hideIndicator")
         #endif
         if sharing { begin() }
     }
@@ -49,10 +49,19 @@ final class PhoneLocation: NSObject, ObservableObject, @preconcurrency CLLocatio
         onSharingChanged?(value)
     }
 
+    func setHideBackgroundIndicator(_ hide: Bool) {
+        UserDefaults.standard.set(hide, forKey: "galaxy.location.hideIndicator")
+        #if os(iOS)
+        manager?.showsBackgroundLocationIndicator = !hide
+        if hide && sharing && manager?.authorizationStatus == .authorizedWhenInUse { manager?.requestAlwaysAuthorization() }
+        #endif
+    }
+
     private func begin() {
         guard let manager else { return }
         switch manager.authorizationStatus {
-        case .notDetermined: status = "Allow location to share GPS."; manager.requestWhenInUseAuthorization()
+        case .notDetermined:
+            status = "Allow location to share GPS."; manager.requestAlwaysAuthorization()
         case .denied, .restricted: status = "Location is off for this app. Turn it on in iPhone Settings."
         default:
             #if os(iOS)
