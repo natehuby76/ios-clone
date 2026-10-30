@@ -8,9 +8,10 @@ struct LocalRequest {
 
     // Package uploads stay on LAN; ordinary requests retain the Bluetooth-sized limit.
     static let maxPackageBody = 256 * 1024 * 1024
+    static let packageUploadTimeout: TimeInterval = 600
 
     static func isPackageUpload(method: String, target: String) -> Bool {
-        method == "POST" && ["/api/android-auto/upload", "/api/spotify/upload"].contains(target)
+        method == "POST" && ["/api/android-auto/upload", "/api/starport/upload", "/api/spotify/upload"].contains(target)
     }
 
     static func bodyLimit(method: String, target: String) -> Int {

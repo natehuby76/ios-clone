@@ -136,7 +136,11 @@ import Foundation
         precondition(uploaded.httpBody == package)
         precondition(uploaded.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
         precondition(uploaded.value(forHTTPHeaderField: "Origin") == "http://192.168.1.89:8082")
-        precondition(uploaded.timeoutInterval == 120)
+        precondition(uploaded.timeoutInterval == LocalRequest.packageUploadTimeout)
+        let starportHeader = Data("POST /api/starport/upload HTTP/1.1\r\nContent-Length: \(package.count)\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
+        let starportParsed = try LocalRequest.parse(starportHeader + package)
+        precondition(starportParsed?.body == package)
+        precondition(SecretGoodGalaxy.needsWiFi("/api/starport/upload"))
         for target in ["/api/settings/confirm", "/api/android-auto/upload/extra", "/api/android-auto/upload?x=1"] {
             let oversized = Data("POST \(target) HTTP/1.1\r\nContent-Length: 50331648\r\n\r\n".utf8)
             do { _ = try LocalRequest.parse(oversized); preconditionFailure("Ordinary requests must remain bounded") } catch {}

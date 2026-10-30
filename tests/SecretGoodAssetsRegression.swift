@@ -40,6 +40,19 @@ import CryptoKit
         let savedApp = try Data(contentsOf: store.readyRoot!.appendingPathComponent("js/app.js"))
         precondition(savedApp == Data("const galaxy = true".utf8))
         let first = store.readyRoot
+        let downloadedCount = comma.fileCalls
+        comma.commit = String(repeating: "b", count: 40)
+        await store.checkBluetoothManifest(fetch: fetch)
+        precondition(store.status == "Galaxy matches comma." && comma.fileCalls == downloadedCount, "Unrelated commits must not trigger updates or downloads")
+        comma.files["js/app.js"] = Data("changed over Bluetooth".utf8)
+        await store.checkBluetoothManifest(fetch: fetch)
+        precondition(store.status.contains("screens have changed") && comma.fileCalls == downloadedCount)
+        comma.manifestStatus = 404
+        await store.checkBluetoothManifest(fetch: fetch)
+        precondition(store.status.contains("Couldn’t check"))
+        comma.manifestStatus = 200
+        comma.files["js/app.js"] = savedApp
+        comma.commit = String(repeating: "a", count: 40)
         await store.check(fetch: fetch)
         precondition(comma.fileCalls == 5 && store.status == "Galaxy matches comma.", "Unchanged files must not download twice")
         comma.files["js/app.js"] = Data("hand patched, same commit".utf8)

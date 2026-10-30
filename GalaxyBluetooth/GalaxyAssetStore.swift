@@ -81,6 +81,28 @@ final class GalaxyAssetStore: ObservableObject {
     func noteCommaBuild(commit: String?) {
         if olderThan(commit: commit) { status = "Galaxy screens are from an older comma build. Connect over Local Wi-Fi or Tunnel to refresh." }
     }
+    /// Bluetooth compares only the manifest; it never downloads screen files.
+    func checkBluetoothManifest(fetch: @escaping GalaxyPageFetch, stillCurrent: () -> Bool = { true }) async {
+        guard !checking else { return }
+        checking = true
+        defer { checking = false }
+        do {
+            let (code, bytes) = try await fetch("/api/companion/web-manifest", 1_048_576)
+            guard code == 200 else { throw BridgeError.message("Screen version unavailable.") }
+            let listing = try JSONDecoder().decode(GalaxyListing.self, from: bytes)
+            let manifest = GalaxyAssetManifest(schema: listing.schema, nativeBridge: 1, files: listing.files.sorted { $0.path < $1.path })
+            try manifest.validate()
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            let hash = GalaxyAssetManifest.digest(try encoder.encode(manifest))
+            guard stillCurrent() else { return }
+            if readyRoot == nil { status = Self.notDownloaded }
+            else if readyRoot?.lastPathComponent == hash { status = "Galaxy matches comma." }
+            else { status = "Galaxy screens have changed. Connect over Local Wi-Fi or Tunnel to update." }
+        } catch {
+            guard stillCurrent() else { return }
+            status = "Couldn’t check Galaxy screens over Bluetooth. Connect over Local Wi-Fi or Tunnel to check."
+        }
+    }
     /// Compares comma's inventory with the saved copy and downloads only what changed. Never skips on an unchanged commit.
     func check(fetch: @escaping GalaxyPageFetch, stillCurrent: () -> Bool = { true }) async {
         guard !checking else { return }

@@ -394,7 +394,7 @@ private final class LocalConnection {
                 packageTimeout = true
                 headerTimeout?.cancel()
                 headerTimeout = Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 120_000_000_000)
+                    try? await Task.sleep(nanoseconds: UInt64(LocalRequest.packageUploadTimeout * 1_000_000_000))
                     if !Task.isCancelled { self?.close() }
                 }
             }

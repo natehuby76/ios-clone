@@ -344,15 +344,15 @@ struct ConnectionSettingsView: View {
                 Toggle("Share phone location", isOn: Binding(get: { location.sharing }, set: { location.setSharing($0) })).labelsHidden()
             }
             separator
-            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : checked && assets.readyRoot != nil ? "Up to date · just checked" : assets.readyRoot != nil ? "Saved from your comma" : "Not downloaded · needs Local Wi-Fi or Tunnel") {
+            row("rectangle.on.rectangle", title: "Galaxy screens", subtitle: pairing ? "Waiting for pairing" : checking ? "Checking version…" : assets.status == "Galaxy matches comma." ? "Up to date · just checked" : assets.status.contains("screens have changed") ? "Update available · connect over Wi-Fi or Tunnel" : assets.readyRoot != nil ? "Saved from your comma" : "Not downloaded · needs Local Wi-Fi or Tunnel") {
                 Button {
                     Task { await model.checkGalaxyUpdates(); checked = true }
                 } label: {
                     if checking { ProgressView().controlSize(.small).accessibilityLabel("Checking Galaxy") }
                     else { Text(checked ? assets.readyRoot != nil ? "✓ Checked" : "Retry" : "Check") }
-                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || !model.transport.usesNetwork || pairing)
+                }.font(.system(size: 12)).frame(minHeight: 44).disabled(checking || !connected || pairing)
             }
-            if checked && !checking { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
+            if !checking && (checked || assets.status.contains("screens have changed") || assets.status.contains("Couldn’t check Galaxy screens")) { message(assets.status).padding(.horizontal, 14).padding(.bottom, 10) }
             separator
             row("ladybug", title: "Logs & support", subtitle: "Report a problem or share diagnostics") {
                 Button { select(.logs) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("Open Logs & support")

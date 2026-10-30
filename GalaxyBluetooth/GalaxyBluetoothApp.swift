@@ -486,13 +486,12 @@ final class AppModel: ObservableObject {
                 let response = path.hasPrefix("/api/") ? try await lan.request(path: path, method: "GET", headers: [:], body: Data()) : try await lan.page(path: path)
                 return (response.status, response.bodyData)
             }, stillCurrent: stillCurrent)
-        } else if assets.readyRoot != nil {
-            // Over Bluetooth nothing can be downloaded; just say when the saved screens are behind comma.
-            guard let response = try? await transport.request(path: "/api/software/status?history=0", method: "GET", headers: [:], body: Data()),
-                  response.status == 200, stillCurrent(),
-                  let status = try? JSONSerialization.jsonObject(with: response.bodyData) as? [String: Any],
-                  let installed = status["installed"] as? [String: Any] else { return }
-            assets.noteCommaBuild(commit: installed["commit"] as? String)
+        } else {
+            let bluetooth = self.transport
+            await assets.checkBluetoothManifest(fetch: { path, _ in
+                let response = try await bluetooth.request(path: path, method: "GET", headers: [:], body: Data())
+                return (response.status, response.bodyData)
+            }, stillCurrent: stillCurrent)
         }
     }
     func openIfReady() {
