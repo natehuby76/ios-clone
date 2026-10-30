@@ -1,175 +1,205 @@
 {
-  "sourceLanguage" : "en",
-  "strings" : {
-    "CFBundleDisplayName" : {
-      "comment" : "Bundle display name",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "StarPilot BT"
+  "sourceLanguage": "en",
+  "strings": {
+    "CFBundleDisplayName": {
+      "comment": "Bundle display name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "StarPilot BT"
           }
         }
       }
     },
-    "CFBundleName" : {
-      "comment" : "Bundle name",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "StarPilot BT"
+    "CFBundleName": {
+      "comment": "Bundle name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "StarPilot BT"
           }
         }
       }
     },
-    "NSBluetoothAlwaysUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conéctate directamente al puente Bluetooth Galaxy de tu comma."
+    "NSBluetoothAlwaysUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conéctate directamente al puente Bluetooth Galaxy de tu comma."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connectez-vous directement au pont Bluetooth Galaxy de votre comma."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectez-vous directement au pont Bluetooth Galaxy de votre comma."
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "comma의 Galaxy Bluetooth 브리지에 직접 연결합니다."
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma의 Galaxy Bluetooth 브리지에 직접 연결합니다."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "直接连接到 comma 的 Galaxy 蓝牙桥接服务。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接连接到 comma 的 Galaxy 蓝牙桥接服务。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect directly to your comma's Galaxy Bluetooth bridge."
           }
         }
       }
     },
-    "NSCameraUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Escanea el código QR de Galaxy en tu comma para configurar el túnel."
+    "NSCameraUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escanea el código QR de Galaxy en tu comma para configurar el túnel."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scannez le code QR Galaxy sur votre comma pour configurer le tunnel."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scannez le code QR Galaxy sur votre comma pour configurer le tunnel."
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "터널 설정을 위해 comma에 표시된 Galaxy QR 코드를 스캔합니다."
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "터널 설정을 위해 comma에 표시된 Galaxy QR 코드를 스캔합니다."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "扫描 comma 上显示的 Galaxy 二维码以设置隧道。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描 comma 上显示的 Galaxy 二维码以设置隧道。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan the Galaxy link QR code displayed on your comma to set up Tunnel."
           }
         }
       }
     },
-    "NSLocalNetworkUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conéctate a Galaxy en tu comma mediante la red Wi-Fi local."
+    "NSLocalNetworkUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conéctate a Galaxy en tu comma mediante la red Wi-Fi local."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connectez-vous à Galaxy sur votre comma par le réseau Wi-Fi local."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectez-vous à Galaxy sur votre comma par le réseau Wi-Fi local."
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로컬 Wi-Fi 네트워크에서 comma의 Galaxy에 연결합니다."
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 Wi-Fi 네트워크에서 comma의 Galaxy에 연결합니다."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过本地 Wi-Fi 网络连接到 comma 上的 Galaxy。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过本地 Wi-Fi 网络连接到 comma 上的 Galaxy。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to Galaxy on your comma over your local Wi-Fi network."
           }
         }
       }
     },
-    "NSLocationAlwaysAndWhenInUseUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Muestra tu ubicación y guía tu ruta. Puedes compartir el GPS del iPhone con comma para la navegación."
+    "NSLocationAlwaysAndWhenInUseUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muestra tu ubicación y guía tu ruta. Puedes compartir el GPS del iPhone con comma para la navegación."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Affiche votre position et guide votre itinéraire. Vous pouvez partager le GPS de l’iPhone avec comma pour la navigation."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affiche votre position et guide votre itinéraire. Vous pouvez partager le GPS de l’iPhone avec comma pour la navigation."
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "위치를 표시하고 경로를 안내합니다. 내비게이션을 위해 iPhone GPS를 comma와 공유할 수 있습니다."
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "위치를 표시하고 경로를 안내합니다. 내비게이션을 위해 iPhone GPS를 comma와 공유할 수 있습니다."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示您的位置并提供路线指引。您可选择将 iPhone GPS 位置共享给 comma 用于导航。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示您的位置并提供路线指引。您可选择将 iPhone GPS 位置共享给 comma 用于导航。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show your location and guide your route. Optionally share iPhone GPS with comma for navigation."
           }
         }
       }
     },
-    "NSLocationWhenInUseUsageDescription" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Muestra tu ubicación y guía tu ruta. Puedes compartir el GPS del iPhone con comma para la navegación."
+    "NSLocationWhenInUseUsageDescription": {
+      "extractionState": "manual",
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muestra tu ubicación y guía tu ruta. Puedes compartir el GPS del iPhone con comma para la navegación."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Affiche votre position et guide votre itinéraire. Vous pouvez partager le GPS de l’iPhone avec comma pour la navigation."
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affiche votre position et guide votre itinéraire. Vous pouvez partager le GPS de l’iPhone avec comma pour la navigation."
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "위치를 표시하고 경로를 안내합니다. 내비게이션을 위해 iPhone GPS를 comma와 공유할 수 있습니다."
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "위치를 표시하고 경로를 안내합니다. 내비게이션을 위해 iPhone GPS를 comma와 공유할 수 있습니다."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示您的位置并提供路线指引。您可选择将 iPhone GPS 位置共享给 comma 用于导航。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示您的位置并提供路线指引。您可选择将 iPhone GPS 位置共享给 comma 用于导航。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show your location and guide your route. Optionally share iPhone GPS with comma for navigation."
           }
         }
       }
     }
   },
-  "version" : "1.0"
+  "version": "1.0"
 }
