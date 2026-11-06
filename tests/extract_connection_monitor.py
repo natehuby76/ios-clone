@@ -16,6 +16,11 @@ def method(signature):
 stubs = r'''
 import Foundation
 
+@MainActor final class SentryPush {
+    static let shared = SentryPush()
+    func synchronize() async {}
+}
+
 enum ConnectionMode: String { case automatic, bluetooth, lan }
 @MainActor final class Bluetooth {
     var connected = false, connecting = false, isScanning = false
