@@ -75,3 +75,5 @@ python3 tests/check_report_budget.py
 python3 tests/check_download_policy.py
 
 python3 tests/check_navigation_recovery.py
+
+python3 tests/check_sentry_push.py

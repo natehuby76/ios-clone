@@ -11,6 +11,8 @@ final class SentryPush: ObservableObject {
     @Published var openEvents = false
     private var token = ""
     private var busy = false
+    private var registeredDevice = ""
+    private var permissionRequest = UUID()
     private var lastAttempt = Date.distantPast
     var transport: (any GalaxyRequestTransport)?
     private let defaults: UserDefaults
@@ -41,6 +43,8 @@ final class SentryPush: ObservableObject {
     }
 
     func setEnabled(_ on: Bool) async {
+        let requestID = UUID()
+        permissionRequest = requestID
         if on {
             do {
                 guard try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) else {
@@ -48,6 +52,7 @@ final class SentryPush: ObservableObject {
                     return
                 }
             } catch { status = "Couldn’t request notification permission."; return }
+            guard permissionRequest == requestID else { return }
             enabled = true
             defaults.set(true, forKey: "galaxy.sentry.enabled")
             defaults.set(true, forKey: "galaxy.sentry.enrollRequested")
@@ -85,6 +90,7 @@ final class SentryPush: ObservableObject {
     }
 
     func synchronize() async {
+        if registeredDevice != identity { registered = false }
         guard !busy, let transport, transport.connected, !identity.isEmpty,
               now().timeIntervalSince(lastAttempt) >= 60 else { return }
         let device = identity
@@ -103,6 +109,7 @@ final class SentryPush: ObservableObject {
             var result = try await request(["action": "appSubscribe", "token": currentToken,
                 "appId": Bundle.main.bundleIdentifier ?? "", "label": "iPhone"], over: transport)
             var values = subscribed; values[device] = currentToken; subscribed = values
+            guard device == identity else { lastAttempt = .distantPast; return }
             if !enabled {
                 _ = try await request(["action": "appUnsubscribe", "token": currentToken], over: transport)
                 values.removeValue(forKey: device); subscribed = values
@@ -120,6 +127,7 @@ final class SentryPush: ObservableObject {
             }
             guard enabled, device == identity, token == currentToken else { lastAttempt = .distantPast; return }
             registered = true
+            registeredDevice = device
             let enrollment = (result["relayEnrollment"] as? [String: Any])?["state"] as? String
             switch enrollment {
             case "enrolling", "rotating", "confirming": status = "Phone registered. Waiting for relay enrollment in Galaxy → Sentry."
@@ -132,7 +140,7 @@ final class SentryPush: ObservableObject {
     }
 
     func test() async {
-        guard enabled, registered, let transport, transport.connected else { return }
+        guard enabled, registered, registeredDevice == identity, let transport, transport.connected else { return }
         do {
             _ = try await request(["action": "test", "target": "app", "id": id], over: transport)
             status = "Test queued. Check for a notification."

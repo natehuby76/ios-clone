@@ -36,4 +36,6 @@ Provider setup and launch checklist: https://github.com/dirwin31/StarPilotAndroi
 
 StarPilot enrollment: https://github.com/dirwin31/openpilot/pull/18
 
-The relay is live and StarPilot points at it, so enabling alerts works as soon as the iOS app is registered in Firebase.
+The hosted relay is configured in the clean `natehuby76/StarPilotBT` `work/dom-sentry` branch. Apple push capability, provisioning and Firebase APNs credentials must still be configured and verified with real-phone delivery before release.
+
+The relay currently uses Firebase's Instance ID APNs token import API. Google lists retirement on September 29, 2027; migrate to direct FCM SDK registration or another supported APNs delivery path before then: https://developers.google.com/instance-id/reference/server.

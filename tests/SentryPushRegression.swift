@@ -69,6 +69,13 @@ enum BridgeError: Error { case message(String) }
         precondition(sandbox.registered)
         await sandbox.test()
         precondition(transport.requests.last?["id"] as? String == sandbox.id)
+        let beforeDeviceChange = transport.requests.count
+        defaults.set("comma-two", forKey: "galaxy.comma.identity")
+        await sandbox.test()
+        precondition(transport.requests.count == beforeDeviceChange, "Do not test an enrollment belonging to another comma")
+        await sandbox.synchronize()
+        precondition(!sandbox.registered, "Changing comma clears registration even while throttled")
+        defaults.set("comma-one", forKey: "galaxy.comma.identity")
         transport.enrollment = "actionRequired"
         time = time.addingTimeInterval(61)
         await sandbox.synchronize()
