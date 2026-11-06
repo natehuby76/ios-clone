@@ -130,6 +130,7 @@ struct GalaxyFileShareSheet: UIViewControllerRepresentable {
 }
 
 private struct GalaxyPage: UIViewRepresentable {
+    @ObservedObject private var push = SentryPush.shared
     let url: URL
     let requestKey: String
 
@@ -153,6 +154,11 @@ private struct GalaxyPage: UIViewRepresentable {
         (() => {
           if (location.origin !== '\(url.scheme!)://\(url.host!):\(url.port!)') return;
           window.__galaxyNative = true;
+          window.__galaxyPushState = \(push.stateJSON);
+          window.StarPilotApp = Object.assign(window.StarPilotApp || {}, {
+            sentryPush: () => JSON.stringify(window.__galaxyPushState),
+            setSentryPush: enabled => window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind: 'sentryPush', enabled: !!enabled})
+          });
           // Galaxy writes this preference when its own language changes.
           const originalSetItem = Storage.prototype.setItem;
           Storage.prototype.setItem = function(key, value) {
@@ -349,6 +355,7 @@ private struct GalaxyPage: UIViewRepresentable {
         uiView.evaluateJavaScript("window.__galaxyBluetooth = \(bluetooth ? "true" : "false")", completionHandler: nil)
         context.coordinator.isVisible = isActive
         context.coordinator.syncVisibility(uiView)
+        context.coordinator.syncPush(uiView)
         if followGalaxyLanguage && !context.coordinator.wasFollowingLanguage {
             uiView.evaluateJavaScript("try { let code = localStorage.getItem('galaxy-language'); if (code) window.webkit.messageHandlers.galaxyDiagnostics.postMessage({kind:'language',code}); } catch (_) {}", completionHandler: nil)
         }
@@ -367,6 +374,14 @@ private struct GalaxyPage: UIViewRepresentable {
         var wasFollowingLanguage = false
         func syncVisibility(_ webView: WKWebView) {
             webView.evaluateJavaScript("window.__galaxySetVisible?.(\(isVisible ? "true" : "false"))", completionHandler: nil)
+        }
+        func syncPush(_ webView: WKWebView) {
+            webView.evaluateJavaScript("window.__galaxyPushState = \(SentryPush.shared.stateJSON)", completionHandler: nil)
+            if SentryPush.shared.openEvents && diagnostics.mounted && !webView.isLoading {
+                webView.evaluateJavaScript("location.hash = '/cameras/events'") { _, error in
+                    if error == nil { SentryPush.shared.openEvents = false }
+                }
+            }
         }
         let origin: URL
         let diagnostics: GalaxyPageDiagnostics
@@ -397,6 +412,13 @@ private struct GalaxyPage: UIViewRepresentable {
                       let code = body["code"] as? String else { break }
                 let supported = ["en": "en", "es": "es", "fr": "fr", "ko": "ko", "zh-CHS": "zh-Hans"]
                 if let language = supported[code] { UserDefaults.standard.set(language, forKey: "galaxy.app.language") }
+            case "sentryPush":
+                if message.frameInfo.isMainFrame, let enabled = body["enabled"] as? Bool {
+                    Task {
+                        await SentryPush.shared.setEnabled(enabled)
+                        if let webView = message.webView { self.syncPush(webView) }
+                    }
+                }
             case "theme":
                 if message.frameInfo.isMainFrame, let dark = body["dark"] as? Bool {
                     diagnostics.darkAppearance = dark
@@ -408,7 +430,7 @@ private struct GalaxyPage: UIViewRepresentable {
                 if message.frameInfo.isMainFrame, let active = body["active"] as? Bool {
                     diagnostics.landscapeEditor = active
                 }
-            case "rendered": if message.frameInfo.isMainFrame { diagnostics.rendered() }
+            case "rendered": if message.frameInfo.isMainFrame { diagnostics.rendered(); if let webView = message.webView { syncPush(webView) } }
             case "blank": if message.frameInfo.isMainFrame { diagnostics.begin() }
             case "resource": diagnostics.record("Resource failed: \(path)")
             case "script": diagnostics.record("JavaScript error: \(path), line \(body["code"] as? Int ?? 0)")
