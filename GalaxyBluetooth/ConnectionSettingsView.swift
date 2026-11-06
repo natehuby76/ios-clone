@@ -443,6 +443,8 @@ struct ConnectionSettingsView: View {
 
     private func preferences(extraSpacing: CGFloat = 0) -> some View {
         VStack(spacing: extraSpacing) {
+            SentrySettingsView()
+            separator
             row("music.note", title: "Phone music", subtitle: pairing ? "Waiting for app pairing" : audio.summary) {
                 Button("Set up") { model.startAudioPairing() }.disabled(!connected || pairing).font(.system(size: 12)).frame(minHeight: 44)
             }
