@@ -73,7 +73,7 @@ public final class StarPortVideoDecoder: @unchecked Sendable {
                     VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
                     var value: CFTypeRef?
                     let read = VTSessionCopyProperty(session, key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
-                        allocator: kCFAllocatorDefault, propertyValueOut: &value)
+                        allocator: kCFAllocatorDefault, valueOut: &value)
                     hardware = read == noErr ? (value as? NSNumber)?.boolValue : nil
                 }
                 guard let session else { throw StarPortVideoDecodeError.noPicture }

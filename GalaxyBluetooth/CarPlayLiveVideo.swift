@@ -409,6 +409,9 @@ final class CarPlayLiveVideoController: UIViewController {
                     case .failure(let error):
                         self.waitingForKeyframe = true
                         self.directDecoder?.stop(); self.directDecoder = nil
+                        self.directLayer.contents = nil
+                        self.status.text = "Direct display is recovering. Use the menu to return to Live View."
+                        self.status.isHidden = false
                         CarPlayLiveDiagnostics.shared.record("Direct decoder failed; waiting for next keyframe: \(error)")
                     }
                 }
