@@ -71,6 +71,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         controller = interfaceController
         sessionConfiguration = CPSessionConfiguration(delegate: self)
         let model = AppModel.shared
+        let bounds = window?.screen.bounds ?? .zero
+        let scale = window?.screen.scale ?? 0
+        model.connectionLog.record("CarPlay display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); map window available=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0). Maximum screen FPS is a display capability, not measured delivery FPS.")
         model.setCarPlayActive(true)
         model.$navigationAlpha.combineLatest(model.$developerMode)
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.configureMode() }
@@ -120,6 +123,11 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             template.trailingNavigationBarButtons = [settingsButton, statsButton]
             mapTemplate = template
             controller.setRootTemplate(template, animated: false, completion: nil)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-CarPlayFrameProbe") {
+                window?.rootViewController = CarPlayFrameProbe()
+            }
+            #endif
             refreshNavigation()
         } else {
             mapController = nil; mapTemplate = nil
@@ -140,6 +148,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func refreshNavigation() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-CarPlayFrameProbe") { return }
+        #endif
         guard AppModel.shared.navigationEnabled, let template = mapTemplate else { return }
         let nav = AppModel.shared.navigationServices.navigation
         nav.checkCommaFreshness()
@@ -240,6 +251,10 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             if style.contains(.light) && !style.contains(.dark) { return .light }
         }
         return controller?.carTraitCollection.userInterfaceStyle == .dark ? .dark : .light
+    }
+
+    func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, limitedUserInterfacesChanged limitedUserInterfaces: CPLimitableUserInterface) {
+        AppModel.shared.connectionLog.record("CarPlay interface limits changed: raw=\(limitedUserInterfaces.rawValue). Interface limits do not establish whether the vehicle is parked.")
     }
 
     func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, contentStyleChanged contentStyle: CPContentStyle) {
@@ -729,6 +744,66 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         controller?.presentTemplate(CPAlertTemplate(titleVariants: [String(message.prefix(240))], actions: [action]), animated: true, completion: nil)
     }
 }
+
+#if DEBUG
+/// Synthetic frames isolate CarPlay presentation from camera capture and network latency.
+/// Enable with the Xcode launch argument -CarPlayFrameProbe and navigation alpha enabled.
+@MainActor
+private final class CarPlayFrameProbe: UIViewController {
+    private let imageView = UIImageView()
+    private var timer: Timer?
+    private var frameNumber = 0
+    private var sampleStarted = Date()
+    private var sampleFrames = 0
+    private let renderer = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 360))
+
+    override func loadView() {
+        imageView.backgroundColor = .black
+        imageView.contentMode = .scaleAspectFit
+        view = imageView
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard timer == nil else { return }
+        sampleStarted = Date()
+        sampleFrames = 0
+        AppModel.shared.connectionLog.record("CarPlay frame probe started; synthetic images; target=20 FPS; dash delivery requires external measurement.")
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard self != nil else { timer.invalidate(); return }
+            Task { @MainActor in self?.renderFrame() }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        timer?.invalidate()
+        timer = nil
+        AppModel.shared.connectionLog.record("CarPlay frame probe stopped")
+    }
+
+    private func renderFrame() {
+        frameNumber += 1
+        imageView.image = renderer.image { context in
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 640, height: 360))
+            let text = "CarPlay frame test\nFrame \(frameNumber)\nTarget 20 fps · synthetic frames\nVerify motion with the vehicle parked"
+            (text as NSString).draw(in: CGRect(x: 30, y: 40, width: 580, height: 230),
+                                   withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 24, weight: .medium),
+                                                    .foregroundColor: UIColor.white])
+            StarPilotTheme.uiAccent.setFill()
+            context.fill(CGRect(x: CGFloat(frameNumber % 60) * 10, y: 300, width: 40, height: 30))
+        }
+        sampleFrames += 1
+        let elapsed = Date().timeIntervalSince(sampleStarted)
+        guard elapsed >= 10 else { return }
+        let rate = String(format: "%.1f", Double(sampleFrames) / elapsed)
+        AppModel.shared.connectionLog.record("CarPlay frame probe: image assignments=\(rate)/s; last frame=\(frameNumber); this does not measure receiver presentation FPS.")
+        sampleFrames = 0
+        sampleStarted = Date()
+    }
+}
+#endif
 
 @MainActor
 final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashboardSceneDelegate {
