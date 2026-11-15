@@ -815,6 +815,11 @@ final class AppModel: ObservableObject {
         guard !addresses.isEmpty else { return }
         triedLANAddresses.formUnion(addresses)
         let generation = lan.generation
+        // An old-address retry can invalidate the shared LAN generation while
+        // alternate addresses are being identity-checked. Give discovery the
+        // retry slot until it has exhausted this batch.
+        lanProbeTask?.cancel()
+        connectionLog.record("Automatic Local Wi-Fi recovery checking \(addresses.count) address candidate(s); saved-address retry paused")
         automaticLAN = Task { @MainActor in
             defer { self.automaticLAN = nil }
             let stillCurrent = {
@@ -827,7 +832,9 @@ final class AppModel: ObservableObject {
                 let candidate = LANTransport()
                 candidate.bind(to: identity)
                 guard (try? candidate.configure(address: address)) != nil else { return false }
+                self.connectionLog.record("Automatic Local Wi-Fi candidate \(address): checking saved comma identity")
                 let verified = await candidate.probe()
+                self.connectionLog.record("Automatic Local Wi-Fi candidate \(address): verified=\(verified); identity mismatch=\(candidate.pairingIdentityMismatch); cancelled=\(Task.isCancelled)")
                 if candidate.pairingIdentityMismatch { mismatchedAddress = address }
                 return verified
             }
@@ -851,7 +858,7 @@ final class AppModel: ObservableObject {
     }
 
     private func probeLocalConnection() {
-        guard !selectingDiscoveredComma, lanProbeTask == nil else { return }
+        guard !selectingDiscoveredComma, automaticLAN == nil, lanProbeTask == nil else { return }
         lanProbeTask = Task { @MainActor in
             defer { self.lanProbeTask = nil }
             await self.learnAddress()
