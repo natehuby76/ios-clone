@@ -156,15 +156,35 @@ final class CarPlayLiveVideoController: UIViewController {
         view = UIView()
         view.backgroundColor = .black
         video.videoGravity = .resizeAspect
-        if directDisplay {
-            directLayer.contentsGravity = .resizeAspect
-            view.layer.addSublayer(directLayer)
-        } else { view.layer.addSublayer(video) }
+        directLayer.contentsGravity = .resizeAspect
+        view.layer.addSublayer(video)
+        view.layer.addSublayer(directLayer)
+        video.isHidden = directDisplay
+        directLayer.isHidden = !directDisplay
         status.textColor = .white
         status.textAlignment = .center
         status.numberOfLines = 0
         status.font = .preferredFont(forTextStyle: .headline)
         view.addSubview(status)
+    }
+
+    func useRenderer(direct: Bool) {
+        guard directDisplay != direct else { return }
+        directDisplay = direct
+        videoEpoch = UUID()
+        directDecoder?.stop(); directDecoder = nil
+        video.flushAndRemoveImage()
+        directLayer.contents = nil; directPresented = 0
+        waitingForKeyframe = true; lastVideoFrame = nil
+        enqueued = 0; waitingDrops = 0; backpressureDrops = 0
+        previousRendererMetric = nil; metricsPending = false; lastMetricsAt = 0
+        guard isViewLoaded else { return }
+        video.isHidden = direct
+        directLayer.isHidden = !direct
+        status.text = "Switching display—waiting for a fresh video frame…"
+        status.isHidden = false
+        refreshVideoLayout()
+        CarPlayLiveDiagnostics.shared.record("Renderer changed in existing video connection: \(direct ? "direct" : "standard"); waiting for keyframe; TCP/TLS session preserved")
     }
 
     override func viewDidLayoutSubviews() {

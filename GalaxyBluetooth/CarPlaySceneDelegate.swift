@@ -157,6 +157,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 self?.controller?.dismissTemplate(animated: false) { [weak self] _, _ in
                     guard let self, let window = self.window else { return }
                     if frameTest { window.rootViewController = CarPlayFrameProbe() }
+                    else if let live = window.rootViewController as? CarPlayLiveVideoController {
+                        live.useRenderer(direct: direct ?? false)
+                    }
                     else {
                         let live = CarPlayLiveVideoController()
                         live.directDisplay = direct ?? false
