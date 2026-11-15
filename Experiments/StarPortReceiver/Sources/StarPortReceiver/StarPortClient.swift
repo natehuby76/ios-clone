@@ -6,6 +6,7 @@ public final class StarPortClient: @unchecked Sendable {
     private var connection: NWConnection?
     private var session: StarPortSession?
     private var stopped = false
+    private var finishing = false
     private var lastBytes = ProcessInfo.processInfo.systemUptime
     private var timer: DispatchSourceTimer?
     private let ended: (Error) -> Void
@@ -77,7 +78,17 @@ public final class StarPortClient: @unchecked Sendable {
         connection?.stateUpdateHandler = nil; connection?.cancel(); connection = nil; session = nil
     }
     private func finish(_ error: Error) {
-        guard !stopped else { return }; stopOnQueue(); ended(error)
+        guard !stopped, !finishing else { return }
+        finishing = true
+        if case StarPortReceiverError.closed = error, let connection {
+            // The protocol's shutdown response is already queued. Drain it
+            // before cancelling TCP, otherwise Dom sees an incomplete shutdown.
+            connection.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                completion: .contentProcessed { [weak self] _ in
+                    guard let self, !self.stopped else { return }
+                    self.stopOnQueue(); self.ended(error)
+                })
+        } else { stopOnQueue(); ended(error) }
     }
     static func privateIPv4(_ host: String) -> Bool {
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
