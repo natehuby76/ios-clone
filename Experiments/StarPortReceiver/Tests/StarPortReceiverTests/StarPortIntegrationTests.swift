@@ -1,4 +1,5 @@
 import XCTest
+import CoreMedia
 @testable import StarPortReceiver
 
 final class StarPortIntegrationTests: XCTestCase {
@@ -27,12 +28,13 @@ final class StarPortIntegrationTests: XCTestCase {
         let certificate = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(ready["certificate"] as? String)))
         let finished = expectation(description: "Official Dom received all ACKs and shutdown response")
         let lock = NSLock(); var received = 0; var failure: Error?; var receivedMedia = Data()
+        var mediaPackets: [Data] = []
         let trusted: Data? = mode == "approval" ? nil : (mode == "changed" ? Data([1]) : certificate)
         let client = StarPortClient(host: "127.0.0.1", port: UInt16(port), certificate: trusted,
             fragmentACKs: mode == "fragment" || mode == "media", allowLoopbackForTest: true, log: { print($0) },
             video: { bytes, number, timestamp, consumed in
                 lock.lock(); received += 1
-                if mode == "media" { receivedMedia.append(bytes) }
+                if mode == "media" { receivedMedia.append(bytes); mediaPackets.append(bytes) }
                 lock.unlock()
                 if mode != "media" {
                     XCTAssertEqual(bytes.count, 48005)
@@ -68,8 +70,79 @@ final class StarPortIntegrationTests: XCTestCase {
                 decode.arguments = ["python3", script.path, "decode", file.path]
                 try decode.run(); decode.waitUntilExit()
                 XCTAssertEqual(decode.terminationStatus, 0, "Real receiver output must decode into the ten expected pictures")
+                try verifyAppleDecoder(mediaPackets)
             }
         }
+    }
+
+    private func verifyAppleDecoder(_ packets: [Data]) throws {
+        var sps = Data(), pps = Data()
+        var format: CMVideoFormatDescription?
+        let decoder = StarPortVideoDecoder()
+        defer { decoder.stop() }
+        var decoded = 0
+        for packet in packets {
+            // Native Dom sends codec configuration separately from pictures.
+            let bytes = [UInt8](packet)
+            var starts: [(Int, Int)] = []; var offset = 0
+            while offset + 2 < bytes.count {
+                if offset + 3 < bytes.count && bytes[offset...offset+3].elementsEqual([0,0,0,1]) {
+                    starts.append((offset,4)); offset += 4
+                } else if bytes[offset...offset+2].elementsEqual([0,0,1]) {
+                    starts.append((offset,3)); offset += 3
+                } else { offset += 1 }
+            }
+            let units = starts.enumerated().compactMap { index, start -> Data? in
+                let end = index + 1 < starts.count ? starts[index+1].0 : bytes.count
+                let begin = start.0 + start.1
+                return end > begin ? Data(bytes[begin..<end]) : nil
+            }
+            if let value = units.first(where: { ($0.first ?? 0) & 31 == 7 }) { sps = value }
+            if let value = units.first(where: { ($0.first ?? 0) & 31 == 8 }) { pps = value }
+            var payload = Data()
+            for unit in units where ![7,8,9].contains(Int((unit.first ?? 0) & 31)) {
+                var length = UInt32(unit.count).bigEndian
+                withUnsafeBytes(of: &length) { payload.append(contentsOf: $0) }; payload.append(unit)
+            }
+            if payload.isEmpty { continue }
+            if format == nil {
+                XCTAssertFalse(sps.isEmpty); XCTAssertFalse(pps.isEmpty)
+                let result = sps.withUnsafeBytes { sequence in pps.withUnsafeBytes { picture in
+                    CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: 2,
+                        parameterSetPointers: [sequence.bindMemory(to: UInt8.self).baseAddress!, picture.bindMemory(to: UInt8.self).baseAddress!],
+                        parameterSetSizes: [sps.count, pps.count], nalUnitHeaderLength: 4, formatDescriptionOut: &format)
+                } }
+                XCTAssertEqual(result, noErr)
+            }
+            let description = try XCTUnwrap(format)
+            var block: CMBlockBuffer?
+            XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+                blockLength: payload.count, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+                offsetToData: 0, dataLength: payload.count, flags: 0, blockBufferOut: &block), noErr)
+            let data = try XCTUnwrap(block)
+            XCTAssertEqual(payload.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!,
+                blockBuffer: data, offsetIntoDestination: 0, dataLength: payload.count) }, noErr)
+            var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: CMTime(value: Int64(decoded), timescale: 30), decodeTimeStamp: .invalid)
+            var size = payload.count; var sample: CMSampleBuffer?
+            XCTAssertEqual(CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: data,
+                formatDescription: description, sampleCount: 1, sampleTimingEntryCount: 1,
+                sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample), noErr)
+            let ready = expectation(description: "Apple decoder produced frame \(decoded)")
+            decoder.decode(try XCTUnwrap(sample), frameID: UInt64(decoded + 1)) { result in
+                switch result {
+                case .success(let image):
+                    XCTAssertEqual(image.image.width, 1280); XCTAssertEqual(image.image.height, 720)
+                    XCTAssertGreaterThanOrEqual(image.decoded, image.decodeStarted)
+                    XCTAssertGreaterThanOrEqual(image.imageReady, image.decoded)
+                case .failure(let error): XCTFail("Apple decoder failed: \(error)")
+                }
+                ready.fulfill()
+            }
+            wait(for: [ready], timeout: 5)
+            decoded += 1
+        }
+        XCTAssertEqual(decoded, 10)
+        print("Apple VideoToolbox comparison decoder: ten generated pictures decoded and converted to CGImage")
     }
 
     func testLocalAddressRestrictionsAndMalformedProtobuf() throws {
