@@ -75,7 +75,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let scale = window?.screen.scale ?? 0
         model.connectionLog.record("CarPlay display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); map window available=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0). Maximum screen FPS is a display capability, not measured delivery FPS.")
         model.setCarPlayActive(true)
-        if Bundle.main.object(forInfoDictionaryKey: "StarPilotCarPlayFrameProbe") as? Bool == true, let window {
+        // This dedicated experiment build opens its standalone frame test on connection.
+        if let window {
             window.rootViewController = CarPlayFrameProbe()
             interfaceController.setRootTemplate(CPMapTemplate(), animated: false, completion: nil)
             return
@@ -743,7 +744,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 }
 
 /// Synthetic frames isolate CarPlay presentation from camera capture and network latency.
-/// Enabled by StarPilotCarPlayFrameProbe in this experiment branch's Info.plist.
+/// Opened automatically by this dedicated experiment build.
 @MainActor
 private final class CarPlayFrameProbe: UIViewController {
     private let imageView = UIImageView()
