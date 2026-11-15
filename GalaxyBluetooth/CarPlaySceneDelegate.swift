@@ -132,7 +132,9 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let menu = CPMapButton { [weak self] _ in self?.showLiveViewMenu() }
             menu.image = UIImage(systemName: "ellipsis")
             template.mapButtons = [menu]
-            interfaceController.setRootTemplate(template, animated: false, completion: nil)
+            interfaceController.setRootTemplate(template, animated: false) { [weak window] _, _ in
+                window?.rootViewController?.view.setNeedsLayout()
+            }
             return
         }
         model.$navigationAlpha.combineLatest(model.$developerMode)
@@ -907,6 +909,7 @@ private final class CarPlayFrameProbe: UIViewController {
 
     private func renderFrame(timerFiredAt: Double) {
         guard timer != nil else { return }
+        if frameNumber % 15 == 0 { imageView.frame = CarPlayVideoLayout.visibleRect(in: view) }
         let started = ProcessInfo.processInfo.systemUptime
         let timerGap = previousTick.map { timerFiredAt - $0 }
         previousTick = timerFiredAt

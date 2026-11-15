@@ -1,0 +1,20 @@
+import Foundation
+
+/// Only content safe-area rectangles belong here. CarPlay's map-button guide
+/// describes button placement and is not a viewport for video content.
+public enum StarPortVideoViewport {
+    public static func visibleRect(bounds: CGRect, contentSafeAreas: [CGRect]) -> CGRect {
+        guard valid(bounds) else { return .zero }
+        var visible = bounds
+        for safe in contentSafeAreas where valid(safe) {
+            let clipped = visible.intersection(safe)
+            if valid(clipped) { visible = clipped }
+        }
+        return visible
+    }
+
+    private static func valid(_ rect: CGRect) -> Bool {
+        !rect.isNull && !rect.isInfinite && rect.width > 0 && rect.height > 0 &&
+        rect.origin.x.isFinite && rect.origin.y.isFinite && rect.width.isFinite && rect.height.isFinite
+    }
+}

@@ -47,14 +47,12 @@ struct CarPlayVideoParser {
 @MainActor
 enum CarPlayVideoLayout {
     static func visibleRect(in view: UIView) -> CGRect {
-        var area = view.safeAreaLayoutGuide.layoutFrame.intersection(view.bounds)
-        if area.isNull || area.isEmpty { area = view.bounds.inset(by: view.safeAreaInsets) }
+        var contentSafeAreas = [view.safeAreaLayoutGuide.layoutFrame, view.bounds.inset(by: view.safeAreaInsets)]
         if let window = view.window as? CPWindow {
-            let controls = window.convert(window.mapButtonSafeAreaLayoutGuide.layoutFrame, to: view)
-            let visible = area.intersection(controls)
-            if !visible.isNull, !visible.isEmpty { area = visible }
+            contentSafeAreas.append(window.convert(window.safeAreaLayoutGuide.layoutFrame, to: view))
+            contentSafeAreas.append(window.convert(window.bounds.inset(by: window.safeAreaInsets), to: view))
         }
-        return area
+        return StarPortVideoViewport.visibleRect(bounds: view.bounds, contentSafeAreas: contentSafeAreas)
     }
 }
 
@@ -171,12 +169,17 @@ final class CarPlayLiveVideoController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        refreshVideoLayout()
+    }
+
+    private func refreshVideoLayout() {
+        guard isViewLoaded else { return }
         let area = CarPlayVideoLayout.visibleRect(in: view)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         video.frame = area; directLayer.frame = area
         CATransaction.commit()
         status.frame = area.insetBy(dx: 12, dy: 12)
-        let description = "bounds=\(view.bounds); safe insets=\(view.safeAreaInsets); unobscured video rect=\(area); renderer=\(directDisplay ? "direct" : "standard")"
+        let description = "bounds=\(view.bounds); view safe frame=\(view.safeAreaLayoutGuide.layoutFrame); view insets=\(view.safeAreaInsets); window safe frame=\(view.window?.safeAreaLayoutGuide.layoutFrame ?? .zero); window insets=\(view.window?.safeAreaInsets ?? .zero); content video rect=\(area); renderer=\(directDisplay ? "direct" : "standard"); map-button placement guide excluded"
         if description != layoutDescription {
             layoutDescription = description
             CarPlayLiveDiagnostics.shared.record("CarPlay video layout: " + description)
@@ -227,6 +230,9 @@ final class CarPlayLiveVideoController: UIViewController {
     }
 
     private func maintain() async {
+        // CarPlay can finish laying out its chrome after the root view first
+        // appears. Read current content insets even without a view resize.
+        refreshVideoLayout()
         let lan = AppModel.shared.lan
         guard lan.connected, let endpoint = lan.endpoint else {
             if connection != nil { stop() }
