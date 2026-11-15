@@ -43,7 +43,7 @@ final class CarPlayLiveDiagnostics {
         ([
             "StarPilot CarPlay Live diagnostics",
             "Revision: 1; retained session events=\(events.count); older session events dropped=\(discarded); retained frame samples=\(frameSamples.count); older frame samples dropped=\(discardedFrames)",
-            "Frame source: synthetic numbered images in the isolated CarPlay experiment.",
+            "Frame source: each start event identifies synthetic images or the native Dom H.264 stream.",
             "Image assignment and timer measurements describe the iPhone app. Receiver presentation FPS, encoder latency, and capture-to-dash latency require separate measurement.",
             events.isEmpty ? "No CarPlay Live events captured in this app session." : "Recent CarPlay Live events:"
         ] + events + ["Recent per-frame samples:"] + frameSamples).joined(separator: "\n")
@@ -121,10 +121,20 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let scale = window?.screen.scale ?? 0
         CarPlayLiveDiagnostics.shared.record("Display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); drawing window=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0); interface limits=\(sessionConfiguration?.limitedUserInterfaces.rawValue ?? 0); content style=\(sessionConfiguration?.contentStyle.rawValue ?? 0); phone state=\(UIApplication.shared.applicationState.rawValue). Maximum screen FPS is a reported capability.")
         model.setCarPlayActive(true)
-        // This dedicated experiment build opens its standalone frame test on connection.
+        // This isolated experiment opens local video, with a synthetic frame comparison.
         if let window {
-            window.rootViewController = CarPlayFrameProbe()
-            interfaceController.setRootTemplate(CPMapTemplate(), animated: false, completion: nil)
+            window.rootViewController = CarPlayLiveVideoController()
+            let template = CPMapTemplate()
+            template.automaticallyHidesNavigationBar = false
+            template.trailingNavigationBarButtons = [
+                CPBarButton(title: localizedCarPlay("Live View")) { [weak window] _ in
+                    window?.rootViewController = CarPlayLiveVideoController()
+                },
+                CPBarButton(title: localizedCarPlay("Frame test")) { [weak window] _ in
+                    window?.rootViewController = CarPlayFrameProbe()
+                }
+            ]
+            interfaceController.setRootTemplate(template, animated: false, completion: nil)
             return
         }
         model.$navigationAlpha.combineLatest(model.$developerMode)

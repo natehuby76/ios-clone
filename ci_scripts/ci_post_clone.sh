@@ -16,6 +16,10 @@ python3 tests/extract_carplay_navigation.py "$test_dir/NavigationProbe.swift"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/NavigationProbe.swift" -o "$test_dir/carplay-navigation-tests"
 "$test_dir/carplay-navigation-tests"
 
+python3 tests/extract_carplay_video.py "$test_dir/CarPlayVideoProbe.swift"
+swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/CarPlayVideoProbe.swift" -o "$test_dir/carplay-video-tests"
+"$test_dir/carplay-video-tests"
+
 python3 tests/extract_discovery_lifecycle.py "$test_dir/DiscoveryLifecycle.swift"
 swiftc -module-cache-path "$test_dir/module-cache" -swift-version 5 -parse-as-library "$test_dir/DiscoveryLifecycle.swift" -o "$test_dir/discovery-lifecycle-tests"
 "$test_dir/discovery-lifecycle-tests"
