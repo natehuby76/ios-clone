@@ -795,6 +795,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 /// Opened automatically by this dedicated experiment build.
 @MainActor
 private final class CarPlayFrameProbe: UIViewController {
+    private let targetFPS = 30.0
     private let imageView = UIImageView()
     private var timer: Timer?
     private var frameNumber = 0
@@ -832,7 +833,7 @@ private final class CarPlayFrameProbe: UIViewController {
         assignmentIntervals.removeAll()
         dispatchDelays.removeAll()
         lateFrames = 0
-        CarPlayLiveDiagnostics.shared.record("Frame test appeared: target=20 FPS; timer period=50 ms; logical source size=640x360; source=synthetic; network/decoder/encoder=unused; receiver delivery=unmeasured")
+        CarPlayLiveDiagnostics.shared.record("Frame test appeared: target=\(Int(targetFPS)) FPS; timer period ms=\(String(format: "%.2f", 1000 / targetFPS)); logical source size=640x360; source=synthetic; network/decoder/encoder=unused; receiver delivery=unmeasured")
         for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification,
                      UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification,
                      UIApplication.didReceiveMemoryWarningNotification] {
@@ -844,7 +845,7 @@ private final class CarPlayFrameProbe: UIViewController {
                 }
                 .store(in: &lifecycleSubscriptions)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / targetFPS, repeats: true) { [weak self] timer in
             guard self != nil else { timer.invalidate(); return }
             let firedAt = ProcessInfo.processInfo.systemUptime
             Task { @MainActor in self?.renderFrame(timerFiredAt: firedAt) }
@@ -878,7 +879,7 @@ private final class CarPlayFrameProbe: UIViewController {
         imageView.image = renderer.image { context in
             UIColor.black.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 640, height: 360))
-            let text = "CarPlay frame test\nFrame \(frameNumber)\nTarget 20 fps · synthetic frames\nVerify motion with the vehicle parked"
+            let text = "CarPlay frame test\nFrame \(frameNumber)\nTarget \(Int(targetFPS)) fps · synthetic frames\nVerify motion with the vehicle parked"
             (text as NSString).draw(in: CGRect(x: 30, y: 40, width: 580, height: 230),
                                    withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 24, weight: .medium),
                                                     .foregroundColor: UIColor.white])
@@ -893,7 +894,7 @@ private final class CarPlayFrameProbe: UIViewController {
         dispatchDelays.append(dispatchDelay)
         if let interval {
             assignmentIntervals.append(interval)
-            if interval > 0.075 {
+            if interval > 1.5 / targetFPS {
                 lateFrames += 1
                 CarPlayLiveDiagnostics.shared.record("Frame assignment gap: frame=\(frameNumber); interval ms=\(String(format: "%.2f", interval * 1000)); render ms=\(String(format: "%.2f", renderTime * 1000)); dispatch delay ms=\(String(format: "%.2f", dispatchDelay * 1000))")
             }
@@ -919,7 +920,7 @@ private final class CarPlayFrameProbe: UIViewController {
         let elapsed = ProcessInfo.processInfo.systemUptime - sampleStarted
         guard elapsed > 0, sampleFrames > 0 else { return }
         let rate = String(format: "%.2f", Double(sampleFrames) / elapsed)
-        CarPlayLiveDiagnostics.shared.record("Frame summary (\(reason)): window seconds=\(String(format: "%.3f", elapsed)); assignments=\(sampleFrames); assignments/s=\(rate); gaps over 75ms=\(lateFrames); render ms={\(timingStats(renderTimes))}; assignment interval ms={\(timingStats(assignmentIntervals))}; dispatch delay ms={\(timingStats(dispatchDelays))}; last frame=\(frameNumber); receiver FPS=unmeasured")
+        CarPlayLiveDiagnostics.shared.record("Frame summary (\(reason)): window seconds=\(String(format: "%.3f", elapsed)); target FPS=\(Int(targetFPS)); assignments=\(sampleFrames); assignments/s=\(rate); gaps over \(String(format: "%.2f", 1500 / targetFPS))ms=\(lateFrames); render ms={\(timingStats(renderTimes))}; assignment interval ms={\(timingStats(assignmentIntervals))}; dispatch delay ms={\(timingStats(dispatchDelays))}; last frame=\(frameNumber); receiver FPS=unmeasured")
         sampleFrames = 0
         sampleStarted = ProcessInfo.processInfo.systemUptime
         renderTimes.removeAll(keepingCapacity: true)
