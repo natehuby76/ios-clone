@@ -123,12 +123,16 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         model.setCarPlayActive(true)
         // This isolated experiment opens local video, with a synthetic frame comparison.
         if let window {
-            window.rootViewController = CarPlayLiveVideoController()
+            let live = CarPlayLiveVideoController()
+            live.interfaceController = interfaceController
+            window.rootViewController = live
             let template = CPMapTemplate()
             template.automaticallyHidesNavigationBar = false
             template.trailingNavigationBarButtons = [
-                CPBarButton(title: localizedCarPlay("Live View")) { [weak window] _ in
-                    window?.rootViewController = CarPlayLiveVideoController()
+                CPBarButton(title: localizedCarPlay("Live View")) { [weak window, weak interfaceController] _ in
+                    let live = CarPlayLiveVideoController()
+                    live.interfaceController = interfaceController
+                    window?.rootViewController = live
                 },
                 CPBarButton(title: localizedCarPlay("Frame test")) { [weak window] _ in
                     window?.rootViewController = CarPlayFrameProbe()

@@ -42,6 +42,10 @@ CAFE0000000000000000004B = {isa = PBXTargetDependency; target = 34A04005BCAF206E
 5A4E00000000000000000021 = {isa = PBXTargetDependency; target = 5A4E0000000000000000001B; targetProxy = 5A4E00000000000000000020; };
 
 /* Begin PBXBuildFile section */
+CE9020010000000000000008 = {isa = PBXBuildFile; fileRef = CE9020010000000000000007; };
+CE9020010000000000000006 = {isa = PBXBuildFile; fileRef = CE9020010000000000000005; };
+CE9020010000000000000004 = {isa = PBXBuildFile; fileRef = CE9020010000000000000003; };
+CE9020010000000000000002 = {isa = PBXBuildFile; fileRef = CE9020010000000000000001; };
         A19E00000000000000000003 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A19E00000000000000000004 /* InfoPlist.xcstrings */; };
         A19E00000000000000000001 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A19E00000000000000000002 /* Localizable.xcstrings */; };
 D15C00000000000000000901 = {isa = PBXBuildFile; fileRef = D15C00000000000000000902; };
@@ -89,6 +93,10 @@ D15C00000000000000000901 = {isa = PBXBuildFile; fileRef = D15C000000000000000009
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+CE9020010000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Experiments/StarPortReceiver/Sources/StarPortReceiver/StarPortClient.swift"; sourceTree = "<group>"; };
+CE9020010000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Experiments/StarPortReceiver/Sources/StarPortReceiver/StarPortSession.swift"; sourceTree = "<group>"; };
+CE9020010000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Experiments/StarPortReceiver/Sources/StarPortReceiver/StarPortTLS.swift"; sourceTree = "<group>"; };
+CE9020010000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Experiments/StarPortReceiver/Sources/StarPortReceiver/StarPortWire.swift"; sourceTree = "<group>"; };
 		5A4E00000000000000000002 /* SharedDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedDestination.swift; sourceTree = "<group>"; };
 		5A4E00000000000000000004 /* ShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInbox.swift; sourceTree = "<group>"; };
         A19E00000000000000000004 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
@@ -205,6 +213,10 @@ D15C00000000000000000902 /* DiscordReports.swift */,
 				8AD85D1A585138AF80FEADB9 /* CompanionDiagnostics.swift */,
 				8F213860FC7A532DBD355109 /* CarPlaySceneDelegate.swift */,
 				CE9010010000000000000002 /* CarPlayLiveVideo.swift */,
+CE9020010000000000000007,
+CE9020010000000000000005,
+CE9020010000000000000003,
+CE9020010000000000000001,
 				9F0B8B04FE0E80BA046C0042 /* Resources/Branding.xcassets */,
 			);
 			path = GalaxyBluetooth;
@@ -322,6 +334,10 @@ D15C00000000000000000902 /* DiscordReports.swift */,
 				28D504D2BD92FF8A8AEB68A7 /* CompanionDiagnostics.swift in Sources */,
 				A6D597850E6DD0CDFB754EF8 /* CarPlaySceneDelegate.swift in Sources */,
 				CE9010010000000000000001 /* CarPlayLiveVideo.swift in Sources */,
+CE9020010000000000000008,
+CE9020010000000000000006,
+CE9020010000000000000004,
+CE9020010000000000000002,
 				36EBF9BB2BE027F139572ADA /* GalaxyBluetoothApp.swift in Sources */,
 D15C00000000000000000901 /* DiscordReports.swift in Sources */,
 				5A4E00000000000000000001 /* SharedDestination.swift in Sources */,

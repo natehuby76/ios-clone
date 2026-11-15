@@ -1,6 +1,7 @@
 import AVFoundation
 import CarPlay
 import UIKit
+import CryptoKit
 
 struct CarPlayVideoPacket {
     let frameID: UInt64
@@ -44,87 +45,34 @@ struct CarPlayVideoParser {
 }
 
 @MainActor
-private final class CarPlayVideoConnection: NSObject, @preconcurrency URLSessionDataDelegate, @preconcurrency URLSessionTaskDelegate {
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
-    private var parser = CarPlayVideoParser()
-    private var stopped = false
-    private var lastNetworkSummary = 0.0
-    private var networkBytes = 0, networkCallbacks = 0
-    private let received: (CarPlayVideoPacket) throws -> Void
-    private let ended: (Error?) -> Void
-
-    init(request: URLRequest, received: @escaping (CarPlayVideoPacket) throws -> Void, ended: @escaping (Error?) -> Void) {
-        self.received = received
-        self.ended = ended
-        super.init()
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.allowsCellularAccess = false
-        configuration.waitsForConnectivity = false
-        configuration.httpCookieStorage = nil
-        configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 360
-        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
-        self.session = session
-        task = session.dataTask(with: request)
-        task?.resume()
-    }
-
-    func stop() {
-        stopped = true
-        task?.cancel()
-        task = nil
-        session?.invalidateAndCancel()
-        session = nil
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard !stopped else { completionHandler(.cancel); return }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        CarPlayLiveDiagnostics.shared.record("Video HTTP response: status=\(status); MIME=\(response.mimeType ?? "none"); transport=local LAN; cellular disabled")
-        guard status == 200, response.mimeType == "application/x-starpilot-h264" else {
-            completionHandler(.cancel)
-            finish(BridgeError.message("Local Live View request failed (HTTP \(status))."))
-            return
-        }
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard !stopped else { return }
-        do {
-            let began = ProcessInfo.processInfo.systemUptime
-            let packets = try parser.append(data)
-            let parsed = ProcessInfo.processInfo.systemUptime
-            networkBytes += data.count; networkCallbacks += 1
-            if parsed - lastNetworkSummary >= 2 {
-                CarPlayLiveDiagnostics.shared.record("Video receive delivery: uptime=\(parsed); bytes=\(networkBytes); callbacks=\(networkCallbacks); callback bytes=\(data.count); complete packets in callback=\(packets.count); incomplete parser bytes=\(parser.bufferedBytes); parse ms=\((parsed - began) * 1000). Delivery time is on the app main queue, not kernel arrival.")
-                lastNetworkSummary = parsed
+private final class CarPlayVideoConnection {
+    private var client: StarPortClient?
+    init(host: String, certificate: Data?, received: @escaping (CarPlayVideoPacket) throws -> Void,
+         ended: @escaping (Error?) -> Void) {
+        client = StarPortClient(host: host, certificate: certificate, log: { message in
+            Task { @MainActor in CarPlayLiveDiagnostics.shared.record("App-only receiver: " + message) }
+        }, video: { payload, number, timestamp, consumed in
+            let delivered = ProcessInfo.processInfo.systemUptime
+            Task { @MainActor in
+                defer { consumed() }
+                do {
+                    try received(CarPlayVideoPacket(frameID: number, captureClock: timestamp * 1000,
+                        encodeMicroseconds: 0, sourceAgeMicroseconds: 0, payload: payload))
+                    if number == 1 || number % 60 == 0 {
+                        CarPlayLiveDiagnostics.shared.record("Native receiver frame=\(number); sender timestamp us=\(timestamp); receive-to-main ms=\((ProcessInfo.processInfo.systemUptime-delivered)*1000); encode/source age unavailable in native protocol; capture and phone clocks are not synchronized")
+                    }
+                } catch { ended(error) }
             }
-            for packet in packets { try received(packet) }
-        } catch { finish(error) }
+        }, ended: { error in Task { @MainActor in ended(error) } })
     }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard !stopped else { return }
-        finish(error)
-    }
-
-    private func finish(_ error: Error?) {
-        stop()
-        ended(error)
-    }
+    func stop() { client?.stop(); client = nil }
 }
 
 @MainActor
 final class CarPlayLiveVideoController: UIViewController {
+    weak var interfaceController: CPInterfaceController?
+    private var awaitingTrust = false
+    private var trustRejected = false
     private let video = AVSampleBufferDisplayLayer()
     private let status = UILabel()
     private var connection: CarPlayVideoConnection?
@@ -191,7 +139,7 @@ final class CarPlayLiveVideoController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard maintenance == nil else { return }
-        CarPlayLiveDiagnostics.shared.record("Native Live View appeared; source=Dom hardware H.264; local LAN only; target=30 FPS")
+        CarPlayLiveDiagnostics.shared.record("Native Live View appeared; source=official Dom tablet protocol; APP ONLY; local LAN only; target=30 FPS")
         maintenance = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.maintain()
@@ -246,25 +194,36 @@ final class CarPlayLiveVideoController: UIViewController {
             status.text = "Waiting for fresh local video…"
             status.isHidden = false
         }
-        guard connection == nil, ProcessInfo.processInfo.systemUptime >= reconnectAt else { return }
+        guard connection == nil, !awaitingTrust, !trustRejected, ProcessInfo.processInfo.systemUptime >= reconnectAt else { return }
         do {
             let generation = lan.generation
-            let request = try await lan.carPlayLiveRequest()
-            try Task.checkCancellation()
+            guard let identity = lan.verifiedDeviceID, let host = endpoint.host else { return }
+            let pinKey = "StarPortVideoCertificate." + SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+            let certificate = UserDefaults.standard.data(forKey: pinKey)
             guard lan.connected, lan.endpoint == endpoint, lan.generation == generation else { return }
             sourceEndpoint = endpoint
             sourceGeneration = generation
             lastPacket = ProcessInfo.processInfo.systemUptime
             status.text = "Starting local Live View…"
             status.isHidden = false
-            CarPlayLiveDiagnostics.shared.record("Starting authenticated LAN video request; no tunnel or Bluetooth fallback")
-            connection = CarPlayVideoConnection(request: request, received: { [weak self] packet in
+            CarPlayLiveDiagnostics.shared.record("Starting APP-ONLY tablet TCP receiver on port 5277; no patched HTTP route; no comma setting writes; no tunnel or Bluetooth fallback")
+            connection = CarPlayVideoConnection(host: host, certificate: certificate, received: { [weak self] packet in
                 try self?.receive(packet)
             }, ended: { [weak self] error in
                 guard let self else { return }
                 CarPlayLiveDiagnostics.shared.record("Video connection ended: \(error.map { LANTransport.failureCode($0) } ?? "server closed stream")")
                 self.stop()
-                self.status.text = "Reconnecting local Live View…"
+                if case StarPortReceiverError.certificateApprovalRequired(let certificate) = error {
+                    self.requestCertificateApproval(certificate, pinKey: pinKey, identity: identity)
+                    return
+                }
+                if case StarPortReceiverError.certificateChanged = error {
+                    self.trustRejected = true
+                    self.status.text = "Local video certificate changed. Recheck the comma identity before trusting a replacement."
+                    self.status.isHidden = false
+                    return
+                }
+                self.status.text = "Local video unavailable. While parked, enable StarPort and select tablet / HeadunitPad mode in Galaxy."
                 self.status.isHidden = false
                 self.reconnectAt = ProcessInfo.processInfo.systemUptime + 3
             })
@@ -272,6 +231,31 @@ final class CarPlayLiveVideoController: UIViewController {
             if Task.isCancelled { return }
             CarPlayLiveDiagnostics.shared.record("Video setup failed: \(LANTransport.failureCode(error))")
             reconnectAt = ProcessInfo.processInfo.systemUptime + 3
+        }
+    }
+
+    private func requestCertificateApproval(_ certificate: Data, pinKey: String, identity: String) {
+        guard AppModel.shared.lan.connected, AppModel.shared.lan.verifiedDeviceID == identity,
+              view.window != nil, let interfaceController else { return }
+        awaitingTrust = true
+        let fingerprint = SHA256.hash(data: certificate).prefix(6).map { String(format: "%02X", $0) }.joined(separator: ":")
+        status.text = "Approve this comma’s local video certificate to continue."
+        status.isHidden = false
+        let approve = CPAlertAction(title: "Trust local comma", style: .default) { [weak self, weak interfaceController] _ in
+            guard let self else { return }
+            if AppModel.shared.lan.connected, AppModel.shared.lan.verifiedDeviceID == identity {
+                UserDefaults.standard.set(certificate, forKey: pinKey)
+                CarPlayLiveDiagnostics.shared.record("Local video certificate explicitly approved; fingerprint=\(fingerprint); pin follows paired identity across IP changes")
+            }
+            self.awaitingTrust = false
+            interfaceController?.dismissTemplate(animated: true, completion: nil)
+        }
+        let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self, weak interfaceController] _ in
+            self?.awaitingTrust = false; self?.trustRejected = true
+            interfaceController?.dismissTemplate(animated: true, completion: nil)
+        }
+        interfaceController.presentTemplate(CPAlertTemplate(titleVariants: ["Trust local video from your paired comma? Certificate \(fingerprint)"], actions: [cancel, approve]), animated: true) { [weak self] success, _ in
+            if !success { self?.awaitingTrust = false; self?.trustRejected = true }
         }
     }
 
