@@ -27,6 +27,22 @@ Galaxy; the app never changes it automatically.
 
 ## Validation and limits
 
+Build 140 was reported by its tester to show the actual live picture on the
+factory 2019 Corolla CarPlay display while moving. The tester described smooth,
+consistent video approximately half a second behind. Report A377CF10 captured
+the native app-only stream and CarPlay-active state on build 140. This is a
+user-observed technical demonstration, not a measured physical latency or an
+App Store eligibility determination.
+
+The subsequent comparison adds one ellipsis menu containing Live View, Low delay
+comparison, and Frame test. Live View retains the proven sample-buffer renderer.
+The optional comparison uses synchronous VideoToolbox decode on a dedicated
+worker and commits decoded CGImages to a normal layer, with acknowledgement
+after processing and at most two decode jobs. It records decoder and conversion
+timings. Whether it is faster on the actual head unit is not yet established.
+Both video modes fit inside the available CarPlay safe area. The system dock
+remains; the two large app navigation buttons are removed.
+
 The Mac workflow tests the same Swift transport used by the app against
 unchanged `ProjectionSession` from official Dom commit
 `f1aecc4770de33490131f1029fc4dc9026ab8c58`. Test certificates are generated for

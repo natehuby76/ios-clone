@@ -97,6 +97,7 @@ final class CarPlayLiveVideoController: UIViewController {
     private var enqueued = 0
     private var lastMetricsAt = 0.0
     private var metricsPending = false
+    private var previousRendererMetric: (frames: Int, delay: Double)?
     private var videoEpoch = UUID()
     private var waitingDrops = 0, backpressureDrops = 0
 
@@ -121,6 +122,13 @@ final class CarPlayLiveVideoController: UIViewController {
                     CarPlayLiveDiagnostics.shared.record("iOS video renderer metrics unavailable")
                     return
                 }
+                let frames = Int(metrics.totalNumberOfFrames)
+                let delay = metrics.totalAccumulatedFrameDelay
+                if let previous = self.previousRendererMetric, frames > previous.frames, delay >= previous.delay {
+                    let count = frames - previous.frames
+                    CarPlayLiveDiagnostics.shared.record("iOS renderer interval: frames=\(count); added accumulated delay seconds=\(delay-previous.delay); mean recorded delay per frame ms=\((delay-previous.delay)*1000/Double(count)). Renderer metric only; excludes physical head-unit latency.")
+                }
+                self.previousRendererMetric = (frames, delay)
                 CarPlayLiveDiagnostics.shared.record("iOS renderer metrics: total frames=\(metrics.totalNumberOfFrames); dropped=\(metrics.numberOfDroppedFrames); corrupted=\(metrics.numberOfCorruptedFrames); optimized-compositing frames=\(metrics.numberOfFramesDisplayedUsingOptimizedCompositing); accumulated presentation delay seconds=\(metrics.totalAccumulatedFrameDelay). These describe the iOS renderer, not capture-to-head-unit latency.")
             }
         }
@@ -205,6 +213,7 @@ final class CarPlayLiveVideoController: UIViewController {
         waitingForKeyframe = true
         lastVideoFrame = nil
         videoEpoch = UUID(); metricsPending = false
+        previousRendererMetric = nil
         enqueued = 0; waitingDrops = 0; backpressureDrops = 0
         lastMetricsAt = 0
     }
