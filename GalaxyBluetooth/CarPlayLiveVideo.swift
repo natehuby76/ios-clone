@@ -45,6 +45,20 @@ struct CarPlayVideoParser {
 }
 
 @MainActor
+enum CarPlayVideoLayout {
+    static func visibleRect(in view: UIView) -> CGRect {
+        var area = view.safeAreaLayoutGuide.layoutFrame.intersection(view.bounds)
+        if area.isNull || area.isEmpty { area = view.bounds.inset(by: view.safeAreaInsets) }
+        if let window = view.window as? CPWindow {
+            let controls = window.convert(window.mapButtonSafeAreaLayoutGuide.layoutFrame, to: view)
+            let visible = area.intersection(controls)
+            if !visible.isNull, !visible.isEmpty { area = visible }
+        }
+        return area
+    }
+}
+
+@MainActor
 private final class CarPlayVideoConnection {
     private var client: StarPortClient?
     private var stopped = false
@@ -157,13 +171,7 @@ final class CarPlayLiveVideoController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        var area = view.safeAreaLayoutGuide.layoutFrame.intersection(view.bounds)
-        if area.isNull || area.isEmpty { area = view.bounds.inset(by: view.safeAreaInsets) }
-        if let window = view.window as? CPWindow {
-            let controls = window.convert(window.mapButtonSafeAreaLayoutGuide.layoutFrame, to: view)
-            let visible = area.intersection(controls)
-            if !visible.isNull, !visible.isEmpty { area = visible }
-        }
+        let area = CarPlayVideoLayout.visibleRect(in: view)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         video.frame = area; directLayer.frame = area
         CATransaction.commit()

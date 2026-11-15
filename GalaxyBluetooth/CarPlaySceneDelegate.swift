@@ -852,7 +852,9 @@ private final class CarPlayFrameProbe: UIViewController {
     override func loadView() {
         imageView.backgroundColor = .black
         imageView.contentMode = .scaleAspectFit
-        view = imageView
+        view = UIView()
+        view.backgroundColor = .black
+        view.addSubview(imageView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -887,7 +889,8 @@ private final class CarPlayFrameProbe: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let description = "bounds=\(view.bounds); screen bounds=\(view.window?.screen.bounds ?? .zero); screen scale=\(view.window?.screen.scale ?? 0); safe area=\(view.safeAreaInsets); window attached=\(view.window != nil)"
+        imageView.frame = CarPlayVideoLayout.visibleRect(in: view)
+        let description = "bounds=\(view.bounds); screen bounds=\(view.window?.screen.bounds ?? .zero); screen scale=\(view.window?.screen.scale ?? 0); safe area=\(view.safeAreaInsets); unobscured frame rect=\(imageView.frame); window attached=\(view.window != nil)"
         guard description != lastLayout else { return }
         lastLayout = description
         CarPlayLiveDiagnostics.shared.record("Frame test layout: " + description)
