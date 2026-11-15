@@ -129,6 +129,11 @@ final class CarPlayLiveVideoController: UIViewController {
     private var reconnectAt = 0.0
     private var enqueued = 0
 
+    private var displayReady: Bool {
+        if #available(iOS 17.4, *) { return video.isReadyForDisplay }
+        return video.status == .rendering
+    }
+
     override func loadView() {
         view = UIView()
         view.backgroundColor = .black
@@ -310,9 +315,9 @@ final class CarPlayLiveVideoController: UIViewController {
         video.enqueue(sample)
         lastVideoFrame = ProcessInfo.processInfo.systemUptime
         waitingForKeyframe = false
-        status.isHidden = video.isReadyForDisplay
+        status.isHidden = displayReady
         enqueued += 1
-        CarPlayLiveDiagnostics.shared.record("H264 frame=\(packet.frameID); bytes=\(packet.payload.count); keyframe=\(keyframe); source age us=\(packet.sourceAgeMicroseconds); encode us=\(packet.encodeMicroseconds); layer status=\(video.status.rawValue); ready for display=\(video.isReadyForDisplay)", includeInConnectionLog: enqueued == 1 || enqueued % 30 == 0)
+        CarPlayLiveDiagnostics.shared.record("H264 frame=\(packet.frameID); bytes=\(packet.payload.count); keyframe=\(keyframe); source age us=\(packet.sourceAgeMicroseconds); encode us=\(packet.encodeMicroseconds); layer status=\(video.status.rawValue); display readiness indicator=\(displayReady)", includeInConnectionLog: enqueued == 1 || enqueued % 30 == 0)
     }
 
     static func nalUnits(_ data: Data) -> [Data] {
