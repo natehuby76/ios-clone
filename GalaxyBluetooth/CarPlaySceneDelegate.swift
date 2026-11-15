@@ -75,6 +75,13 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let scale = window?.screen.scale ?? 0
         model.connectionLog.record("CarPlay display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); map window available=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0). Maximum screen FPS is a display capability, not measured delivery FPS.")
         model.setCarPlayActive(true)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-CarPlayFrameProbe"), let window {
+            window.rootViewController = CarPlayFrameProbe()
+            interfaceController.setRootTemplate(CPMapTemplate(), animated: false, completion: nil)
+            return
+        }
+        #endif
         model.$navigationAlpha.combineLatest(model.$developerMode)
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.configureMode() }
             .store(in: &subscriptions)
@@ -123,11 +130,6 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             template.trailingNavigationBarButtons = [settingsButton, statsButton]
             mapTemplate = template
             controller.setRootTemplate(template, animated: false, completion: nil)
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-CarPlayFrameProbe") {
-                window?.rootViewController = CarPlayFrameProbe()
-            }
-            #endif
             refreshNavigation()
         } else {
             mapController = nil; mapTemplate = nil
@@ -148,9 +150,6 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func refreshNavigation() {
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-CarPlayFrameProbe") { return }
-        #endif
         guard AppModel.shared.navigationEnabled, let template = mapTemplate else { return }
         let nav = AppModel.shared.navigationServices.navigation
         nav.checkCommaFreshness()
@@ -747,7 +746,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
 
 #if DEBUG
 /// Synthetic frames isolate CarPlay presentation from camera capture and network latency.
-/// Enable with the Xcode launch argument -CarPlayFrameProbe and navigation alpha enabled.
+/// Enable independently with the Xcode launch argument -CarPlayFrameProbe.
 @MainActor
 private final class CarPlayFrameProbe: UIViewController {
     private let imageView = UIImageView()
