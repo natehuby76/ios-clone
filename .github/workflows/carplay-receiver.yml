@@ -24,7 +24,7 @@ jobs:
           git -C /tmp/official-dom sparse-checkout set openpilot/starpilot/system/starport
           git -C /tmp/official-dom checkout f1aecc4770de33490131f1029fc4dc9026ab8c58
           python3 -m venv /tmp/receiver-python
-          /tmp/receiver-python/bin/pip install cryptography
+          /tmp/receiver-python/bin/pip install cryptography av
       - name: Verify Swift receiver against unchanged official Dom
         env:
           STARPORT_OFFICIAL_SOURCE: /tmp/official-dom

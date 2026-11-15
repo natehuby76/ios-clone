@@ -10,7 +10,8 @@ the public app or treat a successful archive as proof of head-unit playback.
 
 While parked, connect the iPhone and comma over the same local network. In
 Galaxy's existing StarPort settings, enable StarPort, install its identity if
-needed, and select **HeadunitPad** tablet connection mode. Keep port 5277.
+needed, and select **HeadunitPad** tablet connection mode. Keep port 5277,
+then tap **Connect** in Galaxy to start its normal tablet listener.
 The receiver currently uses HeadunitPad fragment acknowledgements; do not
 select Open Headunit's different acknowledgement mode for the app test.
 
@@ -30,8 +31,12 @@ The Mac workflow tests the same Swift transport used by the app against
 unchanged `ProjectionSession` from official Dom commit
 `f1aecc4770de33490131f1029fc4dc9026ab8c58`. Test certificates are generated for
 each run. Large synthetic media tests encrypted fragmentation and both ACK
-modes; it does not establish image decoder correctness. The full iOS app is
-also compiled without signing before private Xcode Cloud distribution.
+modes. A separate test encodes ten generated pictures, sends their H264
+through the unchanged Dom server and the actual Swift receiver, then decodes
+the received bytes and verifies resolution and pixel values. It does not prove
+the physical CarPlay display. The actual iOS video display and receiver are
+compiled on GitHub's SDK with model stubs; the full app is built, archived and
+distributed using Xcode Cloud's newer SDK.
 
 The memory TLS adapter currently uses Apple's deprecated SecureTransport
 public API to put TLS inside Android Auto records. This is a private prototype
