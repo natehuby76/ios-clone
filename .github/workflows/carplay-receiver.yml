@@ -5,6 +5,8 @@ on:
     paths:
       - Experiments/StarPortReceiver/**
       - .github/workflows/carplay-receiver.yml
+      - GalaxyBluetooth/CarPlayLiveVideo.swift
+      - tests/CarPlayReceiverCompileStubs.swift
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,5 +31,10 @@ jobs:
         run: |
           export PATH="/tmp/receiver-python/bin:$PATH"
           swift test --package-path Experiments/StarPortReceiver
-      - name: Compile complete iOS app without signing
-        run: xcodebuild -project GalaxyBluetooth.xcodeproj -scheme GalaxyBluetooth -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+      - name: Compile iOS receiver and actual video display
+        run: |
+          xcrun --sdk iphonesimulator swiftc -swift-version 5 -parse-as-library -emit-module \
+            -target arm64-apple-ios17.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            Experiments/StarPortReceiver/Sources/StarPortReceiver/*.swift \
+            GalaxyBluetooth/CarPlayLiveVideo.swift tests/CarPlayReceiverCompileStubs.swift \
+            -module-name CarPlayReceiverProbe -o /tmp/CarPlayReceiverProbe.swiftmodule
