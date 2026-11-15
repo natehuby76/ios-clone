@@ -47,14 +47,16 @@ struct CarPlayVideoParser {
 @MainActor
 private final class CarPlayVideoConnection {
     private var client: StarPortClient?
+    private var stopped = false
     init(host: String, certificate: Data?, received: @escaping (CarPlayVideoPacket) throws -> Void,
          ended: @escaping (Error?) -> Void) {
         client = StarPortClient(host: host, certificate: certificate, log: { message in
             Task { @MainActor in CarPlayLiveDiagnostics.shared.record("App-only receiver: " + message) }
-        }, video: { payload, number, timestamp, consumed in
+        }, video: { [weak self] payload, number, timestamp, consumed in
             let delivered = ProcessInfo.processInfo.systemUptime
             Task { @MainActor in
                 defer { consumed() }
+                guard self?.stopped == false else { return }
                 do {
                     try received(CarPlayVideoPacket(frameID: number, captureClock: timestamp * 1000,
                         encodeMicroseconds: 0, sourceAgeMicroseconds: 0, payload: payload))
@@ -63,9 +65,11 @@ private final class CarPlayVideoConnection {
                     }
                 } catch { ended(error) }
             }
-        }, ended: { error in Task { @MainActor in ended(error) } })
+        }, ended: { [weak self] error in Task { @MainActor in
+            guard self?.stopped == false else { return }; ended(error)
+        } })
     }
-    func stop() { client?.stop(); client = nil }
+    func stop() { stopped = true; client?.stop(); client = nil }
 }
 
 @MainActor
@@ -213,11 +217,12 @@ final class CarPlayLiveVideoController: UIViewController {
                 guard let self else { return }
                 CarPlayLiveDiagnostics.shared.record("Video connection ended: \(error.map { LANTransport.failureCode($0) } ?? "server closed stream")")
                 self.stop()
-                if case StarPortReceiverError.certificateApprovalRequired(let certificate) = error {
+                if let receiverError = error as? StarPortReceiverError,
+                   case .certificateApprovalRequired(let certificate) = receiverError {
                     self.requestCertificateApproval(certificate, pinKey: pinKey, identity: identity)
                     return
                 }
-                if case StarPortReceiverError.certificateChanged = error {
+                if let receiverError = error as? StarPortReceiverError, case .certificateChanged = receiverError {
                     self.trustRejected = true
                     self.status.text = "Local video certificate changed. Recheck the comma identity before trusting a replacement."
                     self.status.isHidden = false

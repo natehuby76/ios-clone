@@ -4,6 +4,8 @@ import XCTest
 final class StarPortIntegrationTests: XCTestCase {
     func testOfficialDomFrameAcknowledgements() throws { try run("frame") }
     func testOfficialDomFragmentAcknowledgements() throws { try run("fragment") }
+    func testUnapprovedCertificateRequiresExplicitApproval() throws { try run("approval") }
+    func testChangedCertificateIsRejected() throws { try run("changed") }
 
     private func run(_ mode: String) throws {
         guard ProcessInfo.processInfo.environment["STARPORT_OFFICIAL_SOURCE"] != nil else {
@@ -24,7 +26,8 @@ final class StarPortIntegrationTests: XCTestCase {
         let certificate = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(ready["certificate"] as? String)))
         let finished = expectation(description: "Official Dom received all ACKs and shutdown response")
         let lock = NSLock(); var received = 0; var failure: Error?
-        let client = StarPortClient(host: "127.0.0.1", port: UInt16(port), certificate: certificate,
+        let trusted: Data? = mode == "approval" ? nil : (mode == "changed" ? Data([1]) : certificate)
+        let client = StarPortClient(host: "127.0.0.1", port: UInt16(port), certificate: trusted,
             fragmentACKs: mode == "fragment", allowLoopbackForTest: true, log: { print($0) },
             video: { bytes, number, timestamp, consumed in
                 lock.lock(); received += 1; lock.unlock()
@@ -33,17 +36,26 @@ final class StarPortIntegrationTests: XCTestCase {
                 XCTAssertEqual(timestamp, (number - 1) * 33333)
                 consumed()
             }, ended: { error in
-                if case StarPortReceiverError.closed = error {} else { failure = error }
+                if mode == "approval", case StarPortReceiverError.certificateApprovalRequired(let presented) = error {
+                    XCTAssertEqual(presented, certificate)
+                } else if mode == "changed", case StarPortReceiverError.certificateChanged = error {
+                } else if mode == "frame" || mode == "fragment", case StarPortReceiverError.closed = error {
+                } else { failure = error }
                 finished.fulfill()
             })
         wait(for: [finished], timeout: 25)
         client.stop()
         server.waitUntilExit()
-        XCTAssertEqual(server.terminationStatus, 0)
         XCTAssertNil(failure)
-        XCTAssertEqual(received, 10)
         let result = try output.fileHandleForReading.readToEnd() ?? Data()
-        XCTAssertTrue(String(decoding: result, as: UTF8.self).contains("\"acked\": 10"))
+        if mode == "approval" || mode == "changed" {
+            XCTAssertNotEqual(server.terminationStatus, 0)
+            XCTAssertEqual(received, 0)
+        } else {
+            XCTAssertEqual(server.terminationStatus, 0)
+            XCTAssertEqual(received, 10)
+            XCTAssertTrue(String(decoding: result, as: UTF8.self).contains("\"acked\": 10"))
+        }
     }
 
     func testLocalAddressRestrictionsAndMalformedProtobuf() throws {
