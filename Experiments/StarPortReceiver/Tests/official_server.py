@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory() as directory:
     session.fragment_acks = sys.argv[1] == 'fragment'
     session.authenticate()
     mode = session.start('Unmodified Dom integration fixture', 'comma.ai')
-    assert (mode.width, mode.height, mode.codec) == (1280, 720, 1), mode
+    assert (mode.width, mode.height, mode.codec) == (1280, 720, 3), mode
     deadline = time.monotonic() + 10
     def pump_until(predicate):
         while not predicate():

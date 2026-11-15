@@ -27,7 +27,6 @@ final class StarPortTLS {
         try check(SSLSetSessionOption(context, .breakOnServerAuth, true))
         try check(SSLSetConnection(context, Unmanaged.passUnretained(self).toOpaque()))
         try check(SSLSetIOFuncs(context, { connection, bytes, length in
-            guard let connection else { return errSecParam }
             let owner = Unmanaged<StarPortTLS>.fromOpaque(connection).takeUnretainedValue()
             let count = min(length.pointee, owner.incoming.count)
             if count > 0 {
@@ -38,7 +37,6 @@ final class StarPortTLS {
             length.pointee = count
             return count == requested ? noErr : errSSLWouldBlock
         }, { connection, bytes, length in
-            guard let connection else { return errSecParam }
             let owner = Unmanaged<StarPortTLS>.fromOpaque(connection).takeUnretainedValue()
             guard owner.outgoing.count + length.pointee <= 256 * 1024 else { return errSSLBufferOverflow }
             owner.outgoing.append(bytes.assumingMemoryBound(to: UInt8.self), count: length.pointee)
@@ -54,7 +52,7 @@ final class StarPortTLS {
         incoming.append(bytes)
         for _ in 0..<8 {
             let result = SSLHandshake(context)
-            if result == errSSLServerAuthCompleted {
+            if result == errSSLPeerAuthCompleted {
                 var trust: SecTrust?
                 try check(SSLCopyPeerTrust(context, &trust))
                 guard let trust, let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {

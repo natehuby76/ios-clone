@@ -32,6 +32,9 @@ final class StarPortSession {
                 guard let tls, tls.complete else { throw StarPortReceiverError.protocolFailure("Media before TLS") }
                 plain = try tls.decrypt(frame.payload)
             } else { plain = frame.payload }
+            if !frame.encrypted, tls?.complete == true {
+                throw StarPortReceiverError.protocolFailure("Plaintext after TLS authentication")
+            }
             if frame.channel == 3 { fragments += 1 }
             if let message = try assembler.accept(frame, plaintext: plain) {
                 let count = fragments; if frame.channel == 3 { fragments = 0 }
