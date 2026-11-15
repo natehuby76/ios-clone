@@ -13,6 +13,7 @@ struct CarPlayVideoPacket {
 struct CarPlayVideoParser {
     static let maximumFrameBytes = 2 * 1024 * 1024
     private var pending = Data()
+    var bufferedBytes: Int { pending.count }
 
     mutating func append(_ data: Data) throws -> [CarPlayVideoPacket] {
         pending.append(data)
@@ -48,6 +49,8 @@ private final class CarPlayVideoConnection: NSObject, @preconcurrency URLSession
     private var task: URLSessionDataTask?
     private var parser = CarPlayVideoParser()
     private var stopped = false
+    private var lastNetworkSummary = 0.0
+    private var networkBytes = 0, networkCallbacks = 0
     private let received: (CarPlayVideoPacket) throws -> Void
     private let ended: (Error?) -> Void
 
@@ -97,7 +100,15 @@ private final class CarPlayVideoConnection: NSObject, @preconcurrency URLSession
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         guard !stopped else { return }
         do {
-            for packet in try parser.append(data) { try received(packet) }
+            let began = ProcessInfo.processInfo.systemUptime
+            let packets = try parser.append(data)
+            let parsed = ProcessInfo.processInfo.systemUptime
+            networkBytes += data.count; networkCallbacks += 1
+            if parsed - lastNetworkSummary >= 2 {
+                CarPlayLiveDiagnostics.shared.record("Video receive delivery: uptime=\(parsed); bytes=\(networkBytes); callbacks=\(networkCallbacks); callback bytes=\(data.count); complete packets in callback=\(packets.count); incomplete parser bytes=\(parser.bufferedBytes); parse ms=\((parsed - began) * 1000). Delivery time is on the app main queue, not kernel arrival.")
+                lastNetworkSummary = parsed
+            }
+            for packet in packets { try received(packet) }
         } catch { finish(error) }
     }
 
@@ -128,6 +139,31 @@ final class CarPlayLiveVideoController: UIViewController {
     private var lastVideoFrame: Double?
     private var reconnectAt = 0.0
     private var enqueued = 0
+    private var lastMetricsAt = 0.0
+    private var metricsPending = false
+    private var videoEpoch = UUID()
+    private var waitingDrops = 0, backpressureDrops = 0
+
+    private func logRendererMetrics() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastMetricsAt >= 2, !metricsPending else { return }
+        lastMetricsAt = now
+        CarPlayLiveDiagnostics.shared.record("Video pipeline: enqueued=\(enqueued); waiting-for-IDR drops=\(waitingDrops); backpressure drops=\(backpressureDrops); enqueue ready=\(video.isReadyForMoreMediaData); display ready=\(displayReady); layer status=\(video.status.rawValue); window attached=\(view.window != nil); screen max FPS=\(view.window?.screen.maximumFramesPerSecond ?? 0); phone thermal=\(ProcessInfo.processInfo.thermalState.rawValue). Enqueued frames are not head-unit presentation frames.")
+        guard #available(iOS 17.4, *) else { return }
+        metricsPending = true
+        let epoch = videoEpoch
+        video.sampleBufferRenderer.loadVideoPerformanceMetrics { [weak self] metrics in
+            Task { @MainActor in
+                guard let self, self.videoEpoch == epoch else { return }
+                self.metricsPending = false
+                guard let metrics else {
+                    CarPlayLiveDiagnostics.shared.record("iOS video renderer metrics unavailable")
+                    return
+                }
+                CarPlayLiveDiagnostics.shared.record("iOS renderer metrics: total frames=\(metrics.totalNumberOfFrames); dropped=\(metrics.numberOfDroppedFrames); corrupted=\(metrics.numberOfCorruptedFrames); optimized-compositing frames=\(metrics.numberOfFramesDisplayedUsingOptimizedCompositing); accumulated presentation delay seconds=\(metrics.totalAccumulatedFrameDelay). These describe the iOS renderer, not capture-to-head-unit latency.")
+            }
+        }
+    }
 
     private var displayReady: Bool {
         if #available(iOS 17.4, *) { return video.isReadyForDisplay }
@@ -181,6 +217,9 @@ final class CarPlayLiveVideoController: UIViewController {
         pps = Data()
         waitingForKeyframe = true
         lastVideoFrame = nil
+        videoEpoch = UUID(); metricsPending = false
+        enqueued = 0; waitingDrops = 0; backpressureDrops = 0
+        lastMetricsAt = 0
     }
 
     private func maintain() async {
@@ -237,6 +276,7 @@ final class CarPlayLiveVideoController: UIViewController {
     }
 
     private func receive(_ packet: CarPlayVideoPacket) throws {
+        let deliveryUptime = ProcessInfo.processInfo.systemUptime
         let lan = AppModel.shared.lan
         guard lan.connected, lan.endpoint == sourceEndpoint, lan.generation == sourceGeneration else {
             throw CancellationError()
@@ -260,8 +300,12 @@ final class CarPlayLiveVideoController: UIViewController {
             video.flushAndRemoveImage()
             waitingForKeyframe = true
         }
-        guard !waitingForKeyframe || keyframe else { return }
+        guard !waitingForKeyframe || keyframe else {
+            waitingDrops += 1
+            return
+        }
         guard video.isReadyForMoreMediaData else {
+            backpressureDrops += 1
             waitingForKeyframe = true
             CarPlayLiveDiagnostics.shared.record("Video layer backpressure; discarding dependent frames until next keyframe")
             return
@@ -312,12 +356,15 @@ final class CarPlayLiveVideoController: UIViewController {
            let first = attachments.first {
             first[kCMSampleAttachmentKey_DisplayImmediately] = true
         }
+        let beforeEnqueue = ProcessInfo.processInfo.systemUptime
         video.enqueue(sample)
+        let afterEnqueue = ProcessInfo.processInfo.systemUptime
         lastVideoFrame = ProcessInfo.processInfo.systemUptime
         waitingForKeyframe = false
         status.isHidden = displayReady
         enqueued += 1
-        CarPlayLiveDiagnostics.shared.record("H264 frame=\(packet.frameID); bytes=\(packet.payload.count); keyframe=\(keyframe); source age us=\(packet.sourceAgeMicroseconds); encode us=\(packet.encodeMicroseconds); layer status=\(video.status.rawValue); display readiness indicator=\(displayReady)", includeInConnectionLog: enqueued == 1 || enqueued % 30 == 0)
+        CarPlayLiveDiagnostics.shared.record("H264 frame=\(packet.frameID); bytes=\(packet.payload.count); keyframe=\(keyframe); source age us=\(packet.sourceAgeMicroseconds); encode us=\(packet.encodeMicroseconds); source capture clock ns=\(packet.captureClock); app delivery uptime=\(deliveryUptime); sample build ms=\((beforeEnqueue - deliveryUptime) * 1000); enqueue call ms=\((afterEnqueue - beforeEnqueue) * 1000); layer status=\(video.status.rawValue); display readiness indicator=\(displayReady)", includeInConnectionLog: enqueued == 1 || enqueued % 60 == 0)
+        logRendererMetrics()
     }
 
     static func nalUnits(_ data: Data) -> [Data] {
