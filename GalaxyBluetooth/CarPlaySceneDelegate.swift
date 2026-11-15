@@ -127,17 +127,11 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             live.interfaceController = interfaceController
             window.rootViewController = live
             let template = CPMapTemplate()
-            template.automaticallyHidesNavigationBar = false
-            template.trailingNavigationBarButtons = [
-                CPBarButton(title: localizedCarPlay("Live View")) { [weak window, weak interfaceController] _ in
-                    let live = CarPlayLiveVideoController()
-                    live.interfaceController = interfaceController
-                    window?.rootViewController = live
-                },
-                CPBarButton(title: localizedCarPlay("Frame test")) { [weak window] _ in
-                    window?.rootViewController = CarPlayFrameProbe()
-                }
-            ]
+            template.automaticallyHidesNavigationBar = true
+            template.hidesButtonsWithNavigationBar = false
+            let menu = CPMapButton { [weak self] _ in self?.showLiveViewMenu() }
+            menu.image = UIImage(systemName: "ellipsis")
+            template.mapButtons = [menu]
             interfaceController.setRootTemplate(template, animated: false, completion: nil)
             return
         }
@@ -152,6 +146,31 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 self?.refreshNavigation()
             }
         }
+    }
+
+    private func showLiveViewMenu() {
+        guard let controller else { return }
+        func action(_ title: String, direct: Bool?, frameTest: Bool = false) -> CPAlertAction {
+            CPAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.controller?.dismissTemplate(animated: false) { [weak self] _, _ in
+                    guard let self, let window = self.window else { return }
+                    if frameTest { window.rootViewController = CarPlayFrameProbe() }
+                    else {
+                        let live = CarPlayLiveVideoController()
+                        live.directDisplay = direct ?? false
+                        live.interfaceController = self.controller
+                        window.rootViewController = live
+                    }
+                }
+            }
+        }
+        let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+            self?.controller?.dismissTemplate(animated: true, completion: nil)
+        }
+        controller.presentTemplate(CPActionSheetTemplate(title: "View", message: nil, actions: [
+            action("Live View", direct: false), action("Low delay comparison", direct: true),
+            action("Frame test", direct: nil, frameTest: true), cancel
+        ]), animated: true, completion: nil)
     }
 
     private func configureMode() {

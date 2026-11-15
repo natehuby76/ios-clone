@@ -48,18 +48,17 @@ struct CarPlayVideoParser {
 private final class CarPlayVideoConnection {
     private var client: StarPortClient?
     private var stopped = false
-    init(host: String, certificate: Data?, received: @escaping (CarPlayVideoPacket) throws -> Void,
+    init(host: String, certificate: Data?, received: @escaping (CarPlayVideoPacket, @escaping () -> Void) throws -> Void,
          ended: @escaping (Error?) -> Void) {
         client = StarPortClient(host: host, certificate: certificate, log: { message in
             Task { @MainActor in CarPlayLiveDiagnostics.shared.record("App-only receiver: " + message) }
         }, video: { [weak self] payload, number, timestamp, consumed in
             let delivered = ProcessInfo.processInfo.systemUptime
             Task { @MainActor in
-                defer { consumed() }
-                guard self?.stopped == false else { return }
+                guard self?.stopped == false else { consumed(); return }
                 do {
                     try received(CarPlayVideoPacket(frameID: number, captureClock: timestamp * 1000,
-                        encodeMicroseconds: 0, sourceAgeMicroseconds: 0, payload: payload))
+                        encodeMicroseconds: 0, sourceAgeMicroseconds: 0, payload: payload), consumed)
                     if number == 1 || number % 60 == 0 {
                         CarPlayLiveDiagnostics.shared.record("Native receiver frame=\(number); sender timestamp us=\(timestamp); receive-to-main ms=\((ProcessInfo.processInfo.systemUptime-delivered)*1000); encode/source age unavailable in native protocol; capture and phone clocks are not synchronized")
                     }
@@ -75,6 +74,11 @@ private final class CarPlayVideoConnection {
 @MainActor
 final class CarPlayLiveVideoController: UIViewController {
     weak var interfaceController: CPInterfaceController?
+    var directDisplay = false
+    private let directLayer = CALayer()
+    private var directDecoder: StarPortVideoDecoder?
+    private var directPresented: UInt64 = 0
+    private var layoutDescription = ""
     private var awaitingTrust = false
     private var trustRejected = false
     private let video = AVSampleBufferDisplayLayer()
@@ -99,6 +103,11 @@ final class CarPlayLiveVideoController: UIViewController {
     private func logRendererMetrics() {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastMetricsAt >= 2, !metricsPending else { return }
+        if directDisplay {
+            lastMetricsAt = now
+            CarPlayLiveDiagnostics.shared.record("Direct video pipeline: presented-to-layer=\(enqueued); last frame=\(directPresented); waiting-for-IDR drops=\(waitingDrops); maximum decoder jobs=2; no sample-buffer display renderer; phone thermal=\(ProcessInfo.processInfo.thermalState.rawValue). Layer commits are not physical head-unit presentation timestamps.")
+            return
+        }
         lastMetricsAt = now
         CarPlayLiveDiagnostics.shared.record("Video pipeline: enqueued=\(enqueued); waiting-for-IDR drops=\(waitingDrops); backpressure drops=\(backpressureDrops); enqueue ready=\(video.isReadyForMoreMediaData); display ready=\(displayReady); layer status=\(video.status.rawValue); window attached=\(view.window != nil); screen max FPS=\(view.window?.screen.maximumFramesPerSecond ?? 0); phone thermal=\(ProcessInfo.processInfo.thermalState.rawValue). Enqueued frames are not head-unit presentation frames.")
         guard #available(iOS 17.4, *) else { return }
@@ -118,6 +127,7 @@ final class CarPlayLiveVideoController: UIViewController {
     }
 
     private var displayReady: Bool {
+        if directDisplay { return directLayer.contents != nil }
         if #available(iOS 17.4, *) { return video.isReadyForDisplay }
         return video.status == .rendering
     }
@@ -126,7 +136,10 @@ final class CarPlayLiveVideoController: UIViewController {
         view = UIView()
         view.backgroundColor = .black
         video.videoGravity = .resizeAspect
-        view.layer.addSublayer(video)
+        if directDisplay {
+            directLayer.contentsGravity = .resizeAspect
+            view.layer.addSublayer(directLayer)
+        } else { view.layer.addSublayer(video) }
         status.textColor = .white
         status.textAlignment = .center
         status.numberOfLines = 0
@@ -136,14 +149,34 @@ final class CarPlayLiveVideoController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        video.frame = view.bounds
-        status.frame = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: 20, dy: 20)
+        var area = view.safeAreaLayoutGuide.layoutFrame.intersection(view.bounds)
+        if area.isNull || area.isEmpty { area = view.bounds.inset(by: view.safeAreaInsets) }
+        if let window = view.window as? CPWindow {
+            let controls = window.convert(window.mapButtonSafeAreaLayoutGuide.layoutFrame, to: view)
+            let visible = area.intersection(controls)
+            if !visible.isNull, !visible.isEmpty { area = visible }
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        video.frame = area; directLayer.frame = area
+        CATransaction.commit()
+        status.frame = area.insetBy(dx: 12, dy: 12)
+        let description = "bounds=\(view.bounds); safe insets=\(view.safeAreaInsets); unobscured video rect=\(area); renderer=\(directDisplay ? "direct" : "standard")"
+        if description != layoutDescription {
+            layoutDescription = description
+            CarPlayLiveDiagnostics.shared.record("CarPlay video layout: " + description)
+        }
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        view.setNeedsLayout()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard maintenance == nil else { return }
         CarPlayLiveDiagnostics.shared.record("Native Live View appeared; source=official Dom tablet protocol; APP ONLY; local LAN only; target=30 FPS")
+        CarPlayLiveDiagnostics.shared.record("Live View renderer selected: \(directDisplay ? "direct VT decode / latest CGImage" : "standard sample-buffer display layer")")
         maintenance = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.maintain()
@@ -164,6 +197,8 @@ final class CarPlayLiveVideoController: UIViewController {
         connection?.stop()
         connection = nil
         video.flushAndRemoveImage()
+        directDecoder?.stop(); directDecoder = nil
+        directLayer.contents = nil; directPresented = 0
         format = nil
         sps = Data()
         pps = Data()
@@ -211,8 +246,9 @@ final class CarPlayLiveVideoController: UIViewController {
             status.text = "Starting local Live View…"
             status.isHidden = false
             CarPlayLiveDiagnostics.shared.record("Starting APP-ONLY tablet TCP receiver on port 5277; no patched HTTP route; no comma setting writes; no tunnel or Bluetooth fallback")
-            connection = CarPlayVideoConnection(host: host, certificate: certificate, received: { [weak self] packet in
-                try self?.receive(packet)
+            connection = CarPlayVideoConnection(host: host, certificate: certificate, received: { [weak self] packet, consumed in
+                guard let self else { consumed(); return }
+                try self.receive(packet, consumed: consumed)
             }, ended: { [weak self] error in
                 guard let self else { return }
                 CarPlayLiveDiagnostics.shared.record("Video connection ended: \(error.map { LANTransport.failureCode($0) } ?? "server closed stream")")
@@ -264,7 +300,9 @@ final class CarPlayLiveVideoController: UIViewController {
         }
     }
 
-    private func receive(_ packet: CarPlayVideoPacket) throws {
+    private func receive(_ packet: CarPlayVideoPacket, consumed: @escaping () -> Void) throws {
+        var acknowledgeAfterDecode = false
+        defer { if !acknowledgeAfterDecode { consumed() } }
         let deliveryUptime = ProcessInfo.processInfo.systemUptime
         let lan = AppModel.shared.lan
         guard lan.connected, lan.endpoint == sourceEndpoint, lan.generation == sourceGeneration else {
@@ -284,7 +322,7 @@ final class CarPlayLiveVideoController: UIViewController {
             format = nil
             waitingForKeyframe = true
         }
-        if video.status == .failed {
+        if !directDisplay && video.status == .failed {
             CarPlayLiveDiagnostics.shared.record("Video layer failed; waiting for keyframe; error=\(video.error.map { LANTransport.failureCode($0) } ?? "none")")
             video.flushAndRemoveImage()
             waitingForKeyframe = true
@@ -293,7 +331,7 @@ final class CarPlayLiveVideoController: UIViewController {
             waitingDrops += 1
             return
         }
-        guard video.isReadyForMoreMediaData else {
+        guard directDisplay || video.isReadyForMoreMediaData else {
             backpressureDrops += 1
             waitingForKeyframe = true
             CarPlayLiveDiagnostics.shared.record("Video layer backpressure; discarding dependent frames until next keyframe")
@@ -346,6 +384,37 @@ final class CarPlayLiveVideoController: UIViewController {
             first[kCMSampleAttachmentKey_DisplayImmediately] = true
         }
         let beforeEnqueue = ProcessInfo.processInfo.systemUptime
+        if directDisplay {
+            if directDecoder == nil { directDecoder = StarPortVideoDecoder() }
+            let epoch = videoEpoch
+            acknowledgeAfterDecode = true
+            waitingForKeyframe = false
+            directDecoder?.decode(sample, frameID: packet.frameID) { [weak self] result in
+                Task { @MainActor in
+                    defer { consumed() }
+                    guard let self, self.videoEpoch == epoch else { return }
+                    switch result {
+                    case .success(let picture):
+                        guard picture.frameID > self.directPresented else { return }
+                        let commit = ProcessInfo.processInfo.systemUptime
+                        CATransaction.begin(); CATransaction.setDisableActions(true)
+                        self.directLayer.contents = picture.image
+                        CATransaction.commit()
+                        self.directPresented = picture.frameID
+                        self.lastVideoFrame = commit
+                        self.enqueued += 1
+                        self.status.isHidden = true
+                        CarPlayLiveDiagnostics.shared.record("Direct frame=\(picture.frameID); sender media clock ns=\(packet.captureClock); delivery uptime=\(deliveryUptime); decode queue ms=\((picture.decodeStarted-picture.submitted)*1000); decode ms=\((picture.decoded-picture.decodeStarted)*1000); image conversion ms=\((picture.imageReady-picture.decoded)*1000); decoded-to-main ms=\((commit-picture.imageReady)*1000); hardware decoder=\(picture.hardware.map(String.init) ?? "unknown"); layer commit uptime=\(commit). Not physical head-unit presentation.", includeInConnectionLog: self.enqueued == 1 || self.enqueued % 60 == 0)
+                        self.logRendererMetrics()
+                    case .failure(let error):
+                        self.waitingForKeyframe = true
+                        self.directDecoder?.stop(); self.directDecoder = nil
+                        CarPlayLiveDiagnostics.shared.record("Direct decoder failed; waiting for next keyframe: \(error)")
+                    }
+                }
+            }
+            return
+        }
         video.enqueue(sample)
         let afterEnqueue = ProcessInfo.processInfo.systemUptime
         lastVideoFrame = ProcessInfo.processInfo.systemUptime
