@@ -5,6 +5,52 @@ import MapKit
 import Combine
 
 @MainActor
+final class CarPlayLiveDiagnostics {
+    static let shared = CarPlayLiveDiagnostics()
+    private var events: [String] = []
+    private var frameSamples: [String] = []
+    private var discarded = 0
+    private var discardedFrames = 0
+    private var sequence = 0
+    private let started = ProcessInfo.processInfo.systemUptime
+    private let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    func record(_ message: String, includeInConnectionLog: Bool = true) {
+        sequence += 1
+        let elapsed = String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started)
+        let entry = "\(formatter.string(from: Date())) #\(sequence) +\(elapsed)s \(message.prefix(1000))"
+        if !includeInConnectionLog {
+            frameSamples.append(entry)
+            if frameSamples.count > 120 {
+                discardedFrames += frameSamples.count - 120
+                frameSamples.removeFirst(frameSamples.count - 120)
+            }
+            return
+        }
+        events.append(entry)
+        if events.count > 120 {
+            discarded += events.count - 120
+            events.removeFirst(events.count - 120)
+        }
+        AppModel.shared.connectionLog.record("CarPlay Live: " + message)
+    }
+
+    func report() -> String {
+        ([
+            "StarPilot CarPlay Live diagnostics",
+            "Revision: 1; retained session events=\(events.count); older session events dropped=\(discarded); retained frame samples=\(frameSamples.count); older frame samples dropped=\(discardedFrames)",
+            "Frame source: synthetic numbered images in the isolated CarPlay experiment.",
+            "Image assignment and timer measurements describe the iPhone app. Receiver presentation FPS, encoder latency, and capture-to-dash latency require separate measurement.",
+            events.isEmpty ? "No CarPlay Live events captured in this app session." : "Recent CarPlay Live events:"
+        ] + events + ["Recent per-frame samples:"] + frameSamples).joined(separator: "\n")
+    }
+}
+
+@MainActor
 final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate, CPSessionConfigurationDelegate, CPMapTemplateDelegate {
     private final class GridAction: NSObject {
         var perform: @MainActor () -> Void
@@ -73,7 +119,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         let model = AppModel.shared
         let bounds = window?.screen.bounds ?? .zero
         let scale = window?.screen.scale ?? 0
-        model.connectionLog.record("CarPlay display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); map window available=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0). Maximum screen FPS is a display capability, not measured delivery FPS.")
+        CarPlayLiveDiagnostics.shared.record("Display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); drawing window=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0); interface limits=\(sessionConfiguration?.limitedUserInterfaces.rawValue ?? 0); content style=\(sessionConfiguration?.contentStyle.rawValue ?? 0); phone state=\(UIApplication.shared.applicationState.rawValue). Maximum screen FPS is a reported capability.")
         model.setCarPlayActive(true)
         // This dedicated experiment build opens its standalone frame test on connection.
         if let window {
@@ -225,6 +271,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func disconnect() {
+        CarPlayLiveDiagnostics.shared.record("Display disconnected; controller present=\(controller != nil); drawing window present=\(window != nil)")
         timer?.invalidate(); timer = nil
         subscriptions.removeAll()
         work?.cancel(); work = nil
@@ -252,10 +299,11 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, limitedUserInterfacesChanged limitedUserInterfaces: CPLimitableUserInterface) {
-        AppModel.shared.connectionLog.record("CarPlay interface limits changed: raw=\(limitedUserInterfaces.rawValue). Interface limits do not establish whether the vehicle is parked.")
+        CarPlayLiveDiagnostics.shared.record("Interface limits changed: raw=\(limitedUserInterfaces.rawValue). Interface limits do not establish whether the vehicle is parked.")
     }
 
     func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, contentStyleChanged contentStyle: CPContentStyle) {
+        CarPlayLiveDiagnostics.shared.record("Content style changed: raw=\(contentStyle.rawValue)")
         let appearance: UIUserInterfaceStyle = contentStyle.contains(.dark) && !contentStyle.contains(.light) ? .dark :
             contentStyle.contains(.light) && !contentStyle.contains(.dark) ? .light : carAppearance
         let traits = UITraitCollection(userInterfaceStyle: appearance)
@@ -750,9 +798,22 @@ private final class CarPlayFrameProbe: UIViewController {
     private let imageView = UIImageView()
     private var timer: Timer?
     private var frameNumber = 0
-    private var sampleStarted = Date()
+    private var sampleStarted = ProcessInfo.processInfo.systemUptime
     private var sampleFrames = 0
-    private let renderer = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 360))
+    private var lastAssignment: Double?
+    private var previousTick: Double?
+    private var renderTimes: [Double] = []
+    private var assignmentIntervals: [Double] = []
+    private var dispatchDelays: [Double] = []
+    private var lateFrames = 0
+    private var lastLayout = ""
+    private var lifecycleSubscriptions = Set<AnyCancellable>()
+    private let renderer: UIGraphicsImageRenderer = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: 640, height: 360), format: format)
+    }()
 
     override func loadView() {
         imageView.backgroundColor = .black
@@ -763,23 +824,56 @@ private final class CarPlayFrameProbe: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard timer == nil else { return }
-        sampleStarted = Date()
+        sampleStarted = ProcessInfo.processInfo.systemUptime
         sampleFrames = 0
-        AppModel.shared.connectionLog.record("CarPlay frame probe started; synthetic images; target=20 FPS; dash delivery requires external measurement.")
+        lastAssignment = nil
+        previousTick = nil
+        renderTimes.removeAll()
+        assignmentIntervals.removeAll()
+        dispatchDelays.removeAll()
+        lateFrames = 0
+        CarPlayLiveDiagnostics.shared.record("Frame test appeared: target=20 FPS; timer period=50 ms; logical source size=640x360; source=synthetic; network/decoder/encoder=unused; receiver delivery=unmeasured")
+        for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification,
+                     UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification,
+                     UIApplication.didReceiveMemoryWarningNotification] {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] notification in
+                    guard self != nil else { return }
+                    CarPlayLiveDiagnostics.shared.record("Phone lifecycle: \(notification.name.rawValue); application state=\(UIApplication.shared.applicationState.rawValue)")
+                }
+                .store(in: &lifecycleSubscriptions)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
             guard self != nil else { timer.invalidate(); return }
-            Task { @MainActor in self?.renderFrame() }
+            let firedAt = ProcessInfo.processInfo.systemUptime
+            Task { @MainActor in self?.renderFrame(timerFiredAt: firedAt) }
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let description = "bounds=\(view.bounds); screen bounds=\(view.window?.screen.bounds ?? .zero); screen scale=\(view.window?.screen.scale ?? 0); safe area=\(view.safeAreaInsets); window attached=\(view.window != nil)"
+        guard description != lastLayout else { return }
+        lastLayout = description
+        CarPlayLiveDiagnostics.shared.record("Frame test layout: " + description)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         timer?.invalidate()
         timer = nil
-        AppModel.shared.connectionLog.record("CarPlay frame probe stopped")
+        lifecycleSubscriptions.removeAll()
+        logSummary(reason: "view disappeared")
+        CarPlayLiveDiagnostics.shared.record("Frame test stopped; last assigned frame=\(frameNumber)")
     }
 
-    private func renderFrame() {
+    private func renderFrame(timerFiredAt: Double) {
+        guard timer != nil else { return }
+        let started = ProcessInfo.processInfo.systemUptime
+        let timerGap = previousTick.map { timerFiredAt - $0 }
+        previousTick = timerFiredAt
+        let dispatchDelay = max(0, started - timerFiredAt)
         frameNumber += 1
         imageView.image = renderer.image { context in
             UIColor.black.setFill()
@@ -791,13 +885,47 @@ private final class CarPlayFrameProbe: UIViewController {
             StarPilotTheme.uiAccent.setFill()
             context.fill(CGRect(x: CGFloat(frameNumber % 60) * 10, y: 300, width: 40, height: 30))
         }
+        let assigned = ProcessInfo.processInfo.systemUptime
+        let renderTime = assigned - started
+        let interval = lastAssignment.map { assigned - $0 }
+        lastAssignment = assigned
+        renderTimes.append(renderTime)
+        dispatchDelays.append(dispatchDelay)
+        if let interval {
+            assignmentIntervals.append(interval)
+            if interval > 0.075 {
+                lateFrames += 1
+                CarPlayLiveDiagnostics.shared.record("Frame assignment gap: frame=\(frameNumber); interval ms=\(String(format: "%.2f", interval * 1000)); render ms=\(String(format: "%.2f", renderTime * 1000)); dispatch delay ms=\(String(format: "%.2f", dispatchDelay * 1000))")
+            }
+        }
+        let pixels = imageView.image?.cgImage
+        let timerGapText = timerGap.map { String(format: "%.2f", $0 * 1000) } ?? "first"
+        let intervalText = interval.map { String(format: "%.2f", $0 * 1000) } ?? "first"
+        CarPlayLiveDiagnostics.shared.record("Frame \(frameNumber): timer gap ms=\(timerGapText); dispatch ms=\(String(format: "%.2f", dispatchDelay * 1000)); render ms=\(String(format: "%.2f", renderTime * 1000)); assignment interval ms=\(intervalText); image pixels=\(pixels?.width ?? 0)x\(pixels?.height ?? 0); row bytes=\(pixels?.bytesPerRow ?? 0); window attached=\(view.window != nil)", includeInConnectionLog: false)
         sampleFrames += 1
-        let elapsed = Date().timeIntervalSince(sampleStarted)
-        guard elapsed >= 10 else { return }
-        let rate = String(format: "%.1f", Double(sampleFrames) / elapsed)
-        AppModel.shared.connectionLog.record("CarPlay frame probe: image assignments=\(rate)/s; last frame=\(frameNumber); this does not measure receiver presentation FPS.")
+        guard assigned - sampleStarted >= 1 else { return }
+        logSummary(reason: "periodic")
+    }
+
+    private func timingStats(_ values: [Double]) -> String {
+        guard !values.isEmpty else { return "none" }
+        let sorted = values.sorted()
+        let median = sorted[sorted.count / 2] * 1000
+        let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))] * 1000
+        return String(format: "min=%.2f,p50=%.2f,p95=%.2f,max=%.2f", sorted[0] * 1000, median, p95, sorted[sorted.count - 1] * 1000)
+    }
+
+    private func logSummary(reason: String) {
+        let elapsed = ProcessInfo.processInfo.systemUptime - sampleStarted
+        guard elapsed > 0, sampleFrames > 0 else { return }
+        let rate = String(format: "%.2f", Double(sampleFrames) / elapsed)
+        CarPlayLiveDiagnostics.shared.record("Frame summary (\(reason)): window seconds=\(String(format: "%.3f", elapsed)); assignments=\(sampleFrames); assignments/s=\(rate); gaps over 75ms=\(lateFrames); render ms={\(timingStats(renderTimes))}; assignment interval ms={\(timingStats(assignmentIntervals))}; dispatch delay ms={\(timingStats(dispatchDelays))}; last frame=\(frameNumber); receiver FPS=unmeasured")
         sampleFrames = 0
-        sampleStarted = Date()
+        sampleStarted = ProcessInfo.processInfo.systemUptime
+        renderTimes.removeAll(keepingCapacity: true)
+        assignmentIntervals.removeAll(keepingCapacity: true)
+        dispatchDelays.removeAll(keepingCapacity: true)
+        lateFrames = 0
     }
 }
 @MainActor

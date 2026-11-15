@@ -93,6 +93,8 @@ final class CompanionDiagnostics: ObservableObject {
         } else { lines.append("Comma capture details unavailable; update the comma fork if telemetry is connected.") }
         lines.append("Recent events:")
         lines.append(contentsOf: events)
+        lines.append("Native full-display stream receiver: inactive in this app revision; legacy /api/companion/stream is not requested.")
+        lines.append(CarPlayLiveDiagnostics.shared.report())
         return lines.joined(separator: "\n")
     }
 
