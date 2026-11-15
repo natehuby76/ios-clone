@@ -32,7 +32,14 @@ There is no Tunnel, Bluetooth, cellular, or patched HTTP video fallback.
 Do not switch to Open Headunit mode for this test: build 140 uses HeadunitPad's
 fragment acknowledgement mode.
 
-## Device evidence still needed
+## Device checks
+
+**Result recorded November 15:** the tester confirmed that build 140's live
+picture was visible on the factory receiver while moving, with smooth,
+consistent video approximately half a second behind. Report A377CF10 contains
+the app-only stream diagnostics. See [the findings](CARPLAY-FINDINGS.md) for
+evidence and limits. The additional reliability checks below remain useful;
+they have not all been completed.
 
 | Check | What to observe | What it establishes |
 | --- | --- | --- |
