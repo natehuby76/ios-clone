@@ -97,30 +97,37 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         overview = nil; temperatures = nil; rates = nil; toggles = nil
         navigating = false
         refreshTelemetry()
+        catalog = localCatalogue()
+        toggles = CPListTemplate(title: localizedCarPlay("Toggles"), sections: [])
         if alpha {
             let map = CompanionCarPlayMap()
             mapController = map
             window?.rootViewController = map
             let template = CPMapTemplate()
             template.mapDelegate = self
-            template.guidanceBackgroundColor = StarPilotTheme.uiAccent
+            template.guidanceBackgroundColor = StarPilotTheme.uiGuidance
             template.automaticallyHidesNavigationBar = false
-            template.trailingNavigationBarButtons = [CPBarButton(title: localizedCarPlay("Stats"), handler: { [weak self] _ in
+            let settingsButton = CPBarButton(title: localizedCarPlay("Toggles")) { [weak self] _ in
+                guard let self, let toggles = self.toggles else { return }
+                self.pushTemplate(toggles, animated: true) { [weak self] opened, _ in
+                    if opened { self?.loadGalaxy() }
+                }
+            }
+            let statsButton = CPBarButton(title: localizedCarPlay("Stats")) { [weak self] _ in
                 guard let self, let overview = self.overview else { return }
                 self.pushTemplate(overview, animated: true, completion: nil)
-            })]
+            }
+            template.trailingNavigationBarButtons = [settingsButton, statsButton]
             mapTemplate = template
             controller.setRootTemplate(template, animated: false, completion: nil)
             refreshNavigation()
         } else {
             mapController = nil; mapTemplate = nil
             window?.rootViewController = UIViewController()
-            catalog = localCatalogue()
-            toggles = CPListTemplate(title: localizedCarPlay("Toggles"), sections: [])
             toggles?.tabTitle = localizedCarPlay("Toggles")
             toggles?.tabImage = UIImage(systemName: "switch.2")
             guard let overview, let temperatures, let rates, let toggles else { return }
-            let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
+            let tabs = CPTabBarTemplate(templates: [overview, toggles, temperatures, rates])
             tabs.delegate = self
             controller.setRootTemplate(tabs, animated: false, completion: nil)
             showCategories()
@@ -557,7 +564,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
     private func settingsItem(_ title: String, detail: String? = nil, icon: String,
                               enabled: Bool = true, action: @escaping @MainActor () -> Void = {}) -> CPListItem {
-        let item = CPListItem(text: localizedCarPlay(title), detailText: detail.map(localizedCarPlay), image: UIImage(systemName: icon))
+        let image = UIImage(systemName: icon)?.withTintColor(enabled ? StarPilotTheme.uiAccent : .secondaryLabel, renderingMode: .alwaysOriginal)
+        let item = CPListItem(text: localizedCarPlay(title), detailText: detail.map(localizedCarPlay), image: image)
         item.isEnabled = enabled
         item.handler = { _, completion in
             action()
@@ -605,14 +613,19 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let child = row["page"] as? String ?? ""
             let value = row["value"].map { String(describing: $0) }
             let enabled = row["available"] as? Bool == true && (!child.isEmpty || row["action"] as? Bool == true) && !busy
+            let binary = child.isEmpty && isOnOffSetting(row)
+            let icon: String
+            if binary && value == "On" { icon = "checkmark.circle.fill" }
+            else if binary && value == "Off" { icon = "circle" }
+            else { icon = child.isEmpty ? "slider.horizontal.3" : "folder" }
             let item = settingsItem(row["label"] as? String ?? "Setting", detail: child.isEmpty ? value : nil,
-                                    icon: child.isEmpty ? "slider.horizontal.3" : "folder", enabled: enabled) { [weak self, weak page] in
+                                    icon: icon, enabled: enabled) { [weak self, weak page] in
                 guard let self, let page else { return }
                 guard state.session == self.session else { self.loadSettings(page); return }
                 if !child.isEmpty { self.openSettings(child, title: row["label"] as? String ?? "Toggles") }
                 else { self.editSetting(page, index: index, row: row) }
             }
-            item.accessoryType = .disclosureIndicator
+            if enabled && !binary { item.accessoryType = .disclosureIndicator }
             return item
         }
         page.updateSections([CPListSection(items: items.isEmpty ? [settingsItem("No settings available", icon: "info.circle", enabled: false)] : items)])
@@ -620,9 +633,14 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             guard let page else { return }; state.index = next; self?.drawSettings(page)
         }
     }
+    private func isOnOffSetting(_ row: [String: Any]) -> Bool {
+        guard let choices = row["choices"] as? [String] else { return false }
+        return choices.count == 2 && choices.contains("On") && choices.contains("Off")
+    }
+
     private func editSetting(_ parent: CPListTemplate, index: Int, row: [String: Any]) {
         let choices = row["choices"] as? [String] ?? []
-        if choices.count == 2, choices.contains("On"), choices.contains("Off") {
+        if isOnOffSetting(row) {
             preview(parent, index: index, selection: row["value"] as? String == "On" ? "Off" : "On")
             return
         }
