@@ -26,9 +26,15 @@ jobs:
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')
           xcodebuild test -project tests/ReportEditorHarness/ReportEditorHarness.xcodeproj \
             -scheme ReportEditorHarness -destination "platform=iOS Simulator,id=$DEVICE" \
+            -parallel-testing-enabled NO -destination-timeout 90 \
             -resultBundlePath /tmp/report-editor.xcresult CODE_SIGNING_ALLOWED=NO
+      - name: Export report editor screenshots
+        if: always()
+        run: xcrun xcresulttool export attachments --path /tmp/report-editor.xcresult --output-path /tmp/report-editor-screenshots || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: report-editor-result
-          path: /tmp/report-editor.xcresult
+          path: |
+            /tmp/report-editor.xcresult
+            /tmp/report-editor-screenshots

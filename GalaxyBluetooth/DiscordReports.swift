@@ -368,11 +368,13 @@ struct DiscordReportSheet: View {
                 }
             }
             Section("What happened?") {
-                TextEditor(text: $description)
+                TextField("Describe what happened", text: $description, axis: .vertical)
                     .focused($descriptionFocused)
                     .disabled(attempted || discord.busy)
-                    .frame(height: 140)
-                    .scrollContentBackground(.hidden)
+                    .lineLimit(4...6)
+                    .frame(minHeight: 120, alignment: .topLeading)
+                    .submitLabel(.done)
+                    .onSubmit { descriptionFocused = false }
                     .id("report-description")
                     .accessibilityLabel("Describe what happened")
                     .accessibilityIdentifier("report-description")
@@ -461,11 +463,6 @@ struct DiscordReportSheet: View {
                 .navigationTitle("Report a problem")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down") { descriptionFocused = false }
-                            .labelStyle(.iconOnly)
-                    }
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(discord.busy) }
                     ToolbarItem(placement: .confirmationAction) {
                         Button(discord.threadURL != nil ? "Done" : (attempted ? "Retry" : "Send")) {
