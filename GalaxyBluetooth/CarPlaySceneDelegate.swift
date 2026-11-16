@@ -127,11 +127,15 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             live.interfaceController = interfaceController
             window.rootViewController = live
             let template = CPMapTemplate()
-            template.automaticallyHidesNavigationBar = true
-            template.hidesButtonsWithNavigationBar = false
-            let menu = CPMapButton { [weak self] _ in self?.showLiveViewMenu() }
-            menu.image = UIImage(systemName: "ellipsis")
-            template.mapButtons = [menu]
+            template.automaticallyHidesNavigationBar = false
+            template.leadingNavigationBarButtons = [
+                CPBarButton(title: "Live View") { [weak self] _ in self?.selectLiveView(direct: false) },
+                CPBarButton(title: "Low delay") { [weak self] _ in self?.selectLiveView(direct: true) }
+            ]
+            template.trailingNavigationBarButtons = [
+                CPBarButton(title: "Frame test") { [weak self] _ in self?.selectLiveView(frameTest: true) }
+            ]
+            template.mapButtons = []
             interfaceController.setRootTemplate(template, animated: false) { [weak window] _, _ in
                 window?.rootViewController?.view.setNeedsLayout()
             }
@@ -150,32 +154,17 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         }
     }
 
-    private func showLiveViewMenu() {
-        guard let controller else { return }
-        func action(_ title: String, direct: Bool?, frameTest: Bool = false) -> CPAlertAction {
-            CPAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.controller?.dismissTemplate(animated: false) { [weak self] _, _ in
-                    guard let self, let window = self.window else { return }
-                    if frameTest { window.rootViewController = CarPlayFrameProbe() }
-                    else if let live = window.rootViewController as? CarPlayLiveVideoController {
-                        live.useRenderer(direct: direct ?? false)
-                    }
-                    else {
-                        let live = CarPlayLiveVideoController()
-                        live.directDisplay = direct ?? false
-                        live.interfaceController = self.controller
-                        window.rootViewController = live
-                    }
-                }
-            }
+    private func selectLiveView(direct: Bool = false, frameTest: Bool = false) {
+        guard let window else { return }
+        if frameTest { window.rootViewController = CarPlayFrameProbe() }
+        else if let live = window.rootViewController as? CarPlayLiveVideoController {
+            live.useRenderer(direct: direct)
+        } else {
+            let live = CarPlayLiveVideoController()
+            live.directDisplay = direct
+            live.interfaceController = controller
+            window.rootViewController = live
         }
-        let cancel = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
-            self?.controller?.dismissTemplate(animated: true, completion: nil)
-        }
-        controller.presentTemplate(CPActionSheetTemplate(title: "View", message: nil, actions: [
-            action("Live View", direct: false), action("Low delay comparison", direct: true),
-            action("Frame test", direct: nil, frameTest: true), cancel
-        ]), animated: true, completion: nil)
     }
 
     private func configureMode() {
@@ -894,7 +883,8 @@ private final class CarPlayFrameProbe: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        imageView.frame = CarPlayVideoLayout.visibleRect(in: view)
+        imageView.frame = StarPortVideoViewport.bottomAlignedFrame(
+            in: CarPlayVideoLayout.visibleRect(in: view), sourceSize: CGSize(width: 640, height: 360))
         let description = "bounds=\(view.bounds); screen bounds=\(view.window?.screen.bounds ?? .zero); screen scale=\(view.window?.screen.scale ?? 0); safe area=\(view.safeAreaInsets); unobscured frame rect=\(imageView.frame); window attached=\(view.window != nil)"
         guard description != lastLayout else { return }
         lastLayout = description
@@ -912,7 +902,10 @@ private final class CarPlayFrameProbe: UIViewController {
 
     private func renderFrame(timerFiredAt: Double) {
         guard timer != nil else { return }
-        if frameNumber % 15 == 0 { imageView.frame = CarPlayVideoLayout.visibleRect(in: view) }
+        if frameNumber % 15 == 0 {
+            imageView.frame = StarPortVideoViewport.bottomAlignedFrame(
+                in: CarPlayVideoLayout.visibleRect(in: view), sourceSize: CGSize(width: 640, height: 360))
+        }
         let started = ProcessInfo.processInfo.systemUptime
         let timerGap = previousTick.map { timerFiredAt - $0 }
         previousTick = timerFiredAt

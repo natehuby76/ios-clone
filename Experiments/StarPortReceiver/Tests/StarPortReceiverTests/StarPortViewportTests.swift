@@ -2,6 +2,30 @@ import XCTest
 @testable import StarPortReceiver
 
 final class StarPortViewportTests: XCTestCase {
+    func testBottomAlignedPictureMeetsDockAndBottomBelowMenu() {
+        let area = CGRect(x: 50, y: 44, width: 412, height: 233)
+        let picture = StarPortVideoViewport.bottomAlignedFrame(in: area, sourceSize: CGSize(width: 1280, height: 720))
+        XCTAssertEqual(picture.minX, 50, accuracy: 0.001)
+        XCTAssertEqual(picture.maxX, 462, accuracy: 0.001)
+        XCTAssertEqual(picture.maxY, 277, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(picture.minY, 44)
+        XCTAssertEqual(picture.width / picture.height, 16 / 9, accuracy: 0.001)
+    }
+
+    func testTallerSourceFitsBelowMenuWithoutCropping() {
+        let area = CGRect(x: 50, y: 44, width: 412, height: 233)
+        let picture = StarPortVideoViewport.bottomAlignedFrame(in: area, sourceSize: CGSize(width: 640, height: 480))
+        XCTAssertEqual(picture.minY, area.minY, accuracy: 0.001)
+        XCTAssertEqual(picture.maxY, area.maxY, accuracy: 0.001)
+        XCTAssertEqual(picture.midX, area.midX, accuracy: 0.001)
+        XCTAssertEqual(picture.width / picture.height, 4 / 3, accuracy: 0.001)
+    }
+
+    func testInvalidSourceOrAreaDoesNotProduceInvalidLayerFrame() {
+        XCTAssertEqual(StarPortVideoViewport.bottomAlignedFrame(in: .zero, sourceSize: CGSize(width: 16, height: 9)), .zero)
+        XCTAssertEqual(StarPortVideoViewport.bottomAlignedFrame(in: CGRect(x: 0, y: 0, width: 462, height: 277), sourceSize: .zero), .zero)
+    }
+
     func testMissingSystemInsetsReserveConfirmedLeftDockOnly() {
         let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
         let visible = StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [bounds, bounds], fallbackLeftInset: 60)

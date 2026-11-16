@@ -52,11 +52,12 @@ enum CarPlayVideoLayout {
             contentSafeAreas.append(window.convert(window.safeAreaLayoutGuide.layoutFrame, to: view))
             contentSafeAreas.append(window.convert(window.bounds.inset(by: window.safeAreaInsets), to: view))
         }
-        // Build 142 on the factory Corolla reports zero insets on both the
-        // root view and CPWindow, despite a roughly 50-point dock overlay.
-        // The user confirmed the left-side dock on this private test head unit.
-        // Reserve only that edge when insets are missing; the menu may overlay.
-        return StarPortVideoViewport.visibleRect(bounds: view.bounds, contentSafeAreas: contentSafeAreas, fallbackLeftInset: 60)
+        // The factory Corolla reports zero content insets despite its 49pt
+        // left dock. Reserve its edge, plus a persistent native top menu bar.
+        let visible = StarPortVideoViewport.visibleRect(bounds: view.bounds, contentSafeAreas: contentSafeAreas, fallbackLeftInset: 50)
+        let menuBottom = max(visible.minY, view.bounds.minY + 44)
+        guard menuBottom < visible.maxY else { return .zero }
+        return CGRect(x: visible.minX, y: menuBottom, width: visible.width, height: visible.maxY - menuBottom)
     }
 }
 
@@ -199,11 +200,15 @@ final class CarPlayLiveVideoController: UIViewController {
     private func refreshVideoLayout() {
         guard isViewLoaded else { return }
         let area = CarPlayVideoLayout.visibleRect(in: view)
+        let dimensions = format.map { CMVideoFormatDescriptionGetDimensions($0) }
+        let sourceSize = dimensions.map { CGSize(width: Int($0.width), height: Int($0.height)) }
+            ?? CGSize(width: 16, height: 9)
+        let picture = StarPortVideoViewport.bottomAlignedFrame(in: area, sourceSize: sourceSize)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        video.frame = area; directLayer.frame = area
+        video.frame = picture; directLayer.frame = picture
         CATransaction.commit()
         status.frame = area.insetBy(dx: 12, dy: 12)
-        let description = "bounds=\(view.bounds); view safe frame=\(view.safeAreaLayoutGuide.layoutFrame); view insets=\(view.safeAreaInsets); window safe frame=\(view.window?.safeAreaLayoutGuide.layoutFrame ?? .zero); window insets=\(view.window?.safeAreaInsets ?? .zero); content video rect=\(area); renderer=\(directDisplay ? "direct" : "standard"); missing horizontal insets use left-only 60pt sidebar gutter; menu overlay allowed; map-button guide diagnostic only=\((view.window as? CPWindow)?.mapButtonSafeAreaLayoutGuide.layoutFrame ?? .zero)"
+        let description = "bounds=\(view.bounds); view safe frame=\(view.safeAreaLayoutGuide.layoutFrame); view insets=\(view.safeAreaInsets); window insets=\(view.window?.safeAreaInsets ?? .zero); available video rect=\(area); picture rect=\(picture); source size=\(sourceSize); renderer=\(directDisplay ? "direct" : "standard"); bottom aligned full frame; fallback left dock=50pt; native top menu reserve=44pt; map-button guide diagnostic only=\((view.window as? CPWindow)?.mapButtonSafeAreaLayoutGuide.layoutFrame ?? .zero)"
         if description != layoutDescription {
             layoutDescription = description
             CarPlayLiveDiagnostics.shared.record("CarPlay video layout: " + description)
@@ -397,6 +402,7 @@ final class CarPlayLiveVideoController: UIViewController {
                 }
             }
             guard result == noErr else { throw BridgeError.message("H.264 format failed (\(result)).") }
+            refreshVideoLayout()
         }
         guard let format else { return }
         var payload = Data()
