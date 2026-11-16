@@ -298,6 +298,18 @@ struct DiscordReportSheet: View {
             $0.hasPrefix("Installed app at Send:") || $0.hasPrefix("Captured at Send (UTC):") || $0.hasPrefix("App:") || $0.hasSuffix("Z")
         }.joined(separator: " · ")
     }
+    private func reloadReports() {
+        Task { await discord.loadReports() }
+    }
+    private func loadReportsIfNeeded() {
+        guard !discord.busy, discord.connected, !loadedReports else { return }
+        loadedReports = true
+        reloadReports()
+    }
+    private func prepareReport() {
+        if preparedLogs == nil { preparedLogs = DiagnosticReportBudget.fit(logs) }
+        loadReportsIfNeeded()
+    }
     private func submitReport() {
         guard !discord.busy, !visitEnded, discord.connected else { return }
         if !attempted {
@@ -403,7 +415,7 @@ struct DiscordReportSheet: View {
                         }
                     }.pickerStyle(.inline)
                     Button("Refresh your reports", systemImage: "arrow.clockwise") {
-                        Task { await discord.loadReports() }
+                                reloadReports()
                     }.disabled(discord.busy)
                     Text("Choose an existing thread for a follow-up, or start a new thread for a different problem. Older reports may not be listed.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -493,7 +505,7 @@ struct DiscordReportSheet: View {
                     }
                 }
                 .onChange(of: discord.busy) { _, busy in
-                    if !busy && discord.connected && !loadedReports { loadedReports = true; Task { await discord.loadReports() } }
+                    if !busy { loadReportsIfNeeded() }
                 }
                 .onChange(of: discord.connected) { _, connected in
                     if !connected { loadedReports = false; if !attempted { selectedThread = "" } }
@@ -507,11 +519,7 @@ struct DiscordReportSheet: View {
                         dismiss()
                     }
                 }
-                .onAppear {
-                    if preparedLogs == nil { preparedLogs = DiagnosticReportBudget.fit(logs) }
-                    if discord.connected { loadedReports = true; Task { await discord.loadReports() } }
-
-                }
+                .onAppear(perform: prepareReport)
             }
         }
     }
