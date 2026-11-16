@@ -328,69 +328,107 @@ struct DiscordReportSheet: View {
         }
     }
 
+    private var reportForm: some View {
+        Form {
+            Section {
+                Label("StarPilot support", systemImage: "bubble.left.and.text.bubble.right.fill")
+                    .font(.headline).foregroundStyle(brandPurple)
+                Text("Tell us what happened. Your description goes to the support forum; diagnostics go to a private support channel.")
+                Text("Your Discord username, description and a private-diagnostics link are visible in the forum. Only people with access to the private channel can open the diagnostics.").font(.footnote).foregroundStyle(.secondary)
+                if discord.connected {
+                    Label("Discord connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Button("Disconnect Discord", role: .destructive) { Task { await discord.disconnect() } }.disabled(discord.busy)
+                } else {
+                    Button { explainDiscord = true } label: {
+                        HStack(spacing: 10) {
+                            Image("DiscordSymbol").resizable().scaledToFit().frame(width: 24, height: 18).accessibilityHidden(true)
+                            Text("Connect Discord")
+                        }
+                            .frame(maxWidth: .infinity).padding(.vertical, 5)
+                    }.buttonStyle(.borderedProminent).disabled(discord.busy)
+                }
+            }
+            if attempted {
+                Section("Current attempt — original diagnostics") {
+                    Text(captureDetails).font(.footnote)
+                    Text("Retry uses this attempt’s original description and logs. Closing this form or leaving the app clears the draft; your next report starts fresh.")
+                    Button("Start new report with fresh logs") { confirmDiscard = true }.disabled(discord.busy)
+                }
+            }
+            Section("What happened?") {
+                TextEditor(text: $description)
+                    .focused($descriptionFocused)
+                    .disabled(attempted || discord.busy)
+                    .frame(height: 140)
+                    .scrollContentBackground(.hidden)
+                    .id("report-description")
+                    .accessibilityLabel("Describe what happened")
+                    .accessibilityIdentifier("report-description")
+                Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                DisclosureGroup("Review attached diagnostics") {
+                    Text(String(reportLogs.prefix(24000))).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    if reportLogs.count > 24000 { Text("Preview shortened. The full diagnostics file will be attached.").font(.caption) }
+                }
+                Label("Diagnostics are always included", systemImage: "checkmark.circle.fill").disabled(attempted)
+                if !attempted {
+                    Text("Send captures fresh diagnostics and the installed app version. This preview will be refreshed when you send.").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Diagnostics can include device names, local network addresses and connection or navigation status. Review the preview before sending.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                if let url = discord.threadURL {
+                    Link("Open in Discord", destination: url)
+                } else if attempted {
+                    Text("Use Retry to check or retry the original report.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if attempted && discord.threadURL == nil {
+                    Button("Start new report with fresh logs") { confirmDiscard = true }.disabled(discord.busy)
+                }
+                if !discord.status.isEmpty { Text(LocalizedStringKey(discord.status)).font(.callout).accessibilityIdentifier("discord-report-status") }
+            }
+        }
+    }
+
+    private var destinationSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Where should this report go?") {
+                    Picker("Send to", selection: $selectedThread) {
+                        Text("New thread").tag("")
+                        ForEach(discord.reports) { report in Text(report.title).tag(report.id) }
+                        if !selectedThread.isEmpty && !discord.reports.contains(where: { $0.id == selectedThread }) {
+                            Text("Saved report thread").tag(selectedThread)
+                        }
+                    }.pickerStyle(.inline)
+                    Button("Refresh your reports", systemImage: "arrow.clockwise") {
+                        Task { await discord.loadReports() }
+                    }.disabled(discord.busy)
+                    Text("Choose an existing thread for a follow-up, or start a new thread for a different problem. Older reports may not be listed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Choose report thread")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showDestination = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Send report") {
+                        sendAfterDestination = true
+                        showDestination = false
+                    }.disabled(discord.busy || !discord.connected)
+                }
+            }
+        }.presentationDetents([.medium, .large])
+    }
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { scroll in
-            Form {
-                Section {
-                    Label("StarPilot support", systemImage: "bubble.left.and.text.bubble.right.fill")
-                        .font(.headline).foregroundStyle(brandPurple)
-                    Text("Tell us what happened. Your description goes to the support forum; diagnostics go to a private support channel.")
-                    Text("Your Discord username, description and a private-diagnostics link are visible in the forum. Only people with access to the private channel can open the diagnostics.").font(.footnote).foregroundStyle(.secondary)
-                    if discord.connected {
-                        Label("Discord connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                        Button("Disconnect Discord", role: .destructive) { Task { await discord.disconnect() } }.disabled(discord.busy)
-                    } else {
-                        Button { explainDiscord = true } label: {
-                            HStack(spacing: 10) {
-                                Image("DiscordSymbol").resizable().scaledToFit().frame(width: 24, height: 18).accessibilityHidden(true)
-                                Text("Connect Discord")
-                            }
-                                .frame(maxWidth: .infinity).padding(.vertical, 5)
-                        }.buttonStyle(.borderedProminent).disabled(discord.busy)
-                    }
-                }
-                if attempted {
-                    Section("Current attempt — original diagnostics") {
-                        Text(captureDetails).font(.footnote)
-                        Text("Retry uses this attempt’s original description and logs. Closing this form or leaving the app clears the draft; your next report starts fresh.")
-                        Button("Start new report with fresh logs") { confirmDiscard = true }.disabled(discord.busy)
-                    }
-                }
-                Section("What happened?") {
-                    TextEditor(text: $description)
-                        .focused($descriptionFocused)
-                        .disabled(attempted || discord.busy)
-                        .frame(height: 140)
-                        .scrollContentBackground(.hidden)
-                        .id("report-description")
-                        .accessibilityLabel("Describe what happened")
-                        .accessibilityIdentifier("report-description")
-                    Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
-                }
-                Section {
-                    DisclosureGroup("Review attached diagnostics") {
-                        Text(String(reportLogs.prefix(24000))).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                        if reportLogs.count > 24000 { Text("Preview shortened. The full diagnostics file will be attached.").font(.caption) }
-                    }
-                    Label("Diagnostics are always included", systemImage: "checkmark.circle.fill").disabled(attempted)
-                    if !attempted {
-                        Text("Send captures fresh diagnostics and the installed app version. This preview will be refreshed when you send.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("Diagnostics can include device names, local network addresses and connection or navigation status. Review the preview before sending.").font(.caption).foregroundStyle(.secondary)
-                }
-                Section {
-                    if let url = discord.threadURL {
-                        Link("Open in Discord", destination: url)
-                    } else if attempted {
-                        Text("Use Retry to check or retry the original report.").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if attempted && discord.threadURL == nil {
-                        Button("Start new report with fresh logs") { confirmDiscard = true }.disabled(discord.busy)
-                    }
-                    if !discord.status.isEmpty { Text(LocalizedStringKey(discord.status)).font(.callout).accessibilityIdentifier("discord-report-status") }
-                }
-            }.scrollContentBackground(.hidden)
+            reportForm.scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: descriptionFocused) { _, focused in
                     if focused {
@@ -432,37 +470,7 @@ struct DiscordReportSheet: View {
                     sendAfterDestination = false
                     submitReport()
                 }) {
-                    NavigationStack {
-                        Form {
-                            Section("Where should this report go?") {
-                                Picker("Send to", selection: $selectedThread) {
-                                    Text("New thread").tag("")
-                                    ForEach(discord.reports) { report in Text(report.title).tag(report.id) }
-                                    if !selectedThread.isEmpty && !discord.reports.contains(where: { $0.id == selectedThread }) {
-                                        Text("Saved report thread").tag(selectedThread)
-                                    }
-                                }.pickerStyle(.inline)
-                                Button("Refresh your reports", systemImage: "arrow.clockwise") {
-                                    Task { await discord.loadReports() }
-                                }.disabled(discord.busy)
-                                Text("Choose an existing thread for a follow-up, or start a new thread for a different problem. Older reports may not be listed.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .navigationTitle("Choose report thread")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Cancel") { showDestination = false }
-                            }
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("Send report") {
-                                    sendAfterDestination = true
-                                    showDestination = false
-                                }.disabled(discord.busy || !discord.connected)
-                            }
-                        }
-                    }.presentationDetents([.medium, .large])
+                    destinationSheet
                 }
                 .interactiveDismissDisabled(discord.busy)
                 .alert("Report not confirmed", isPresented: $showSendError) {

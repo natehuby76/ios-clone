@@ -22,7 +22,7 @@ final class ReportEditorUITests: XCTestCase {
         let done = app.buttons["Hide keyboard"]
         XCTAssertTrue(done.isHittable)
         done.tap()
-        XCTAssertTrue(app.keyboards.allElementsBoundByIndex.isEmpty)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)], timeout: 5), .completed)
         XCTAssertTrue((editor.value as? String ?? "").contains("Connection drops"))
         editor.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
