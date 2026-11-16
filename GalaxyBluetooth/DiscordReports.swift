@@ -268,45 +268,6 @@ private extension Data {
     var base64URL: String { base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
 }
 
-private struct ReportTextEditor: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var isFocused: Bool
-    let editable: Bool
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
-        view.delegate = context.coordinator
-        view.font = .preferredFont(forTextStyle: .body)
-        view.adjustsFontForContentSizeCategory = true
-        view.backgroundColor = .clear
-        view.isScrollEnabled = true
-        view.accessibilityLabel = "Describe what happened"
-        let bar = UIToolbar()
-        bar.sizeToFit()
-        let hide = UIBarButtonItem(image: UIImage(systemName: "keyboard.chevron.compact.down"), style: .plain, target: context.coordinator, action: #selector(Coordinator.hideKeyboard))
-        hide.accessibilityLabel = "Hide keyboard"
-        bar.items = [UIBarButtonItem(systemItem: .flexibleSpace), hide]
-        view.inputAccessoryView = bar
-        return view
-    }
-    func updateUIView(_ view: UITextView, context: Context) {
-        context.coordinator.parent = self
-        if view.text != text { view.text = text }
-        view.isEditable = editable
-        if !isFocused && view.isFirstResponder { view.resignFirstResponder() }
-    }
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: ReportTextEditor
-        weak var textView: UITextView?
-        init(_ parent: ReportTextEditor) { self.parent = parent }
-        func textViewDidBeginEditing(_ textView: UITextView) { self.textView = textView; parent.isFocused = true }
-        func textViewDidEndEditing(_ textView: UITextView) { parent.isFocused = false }
-        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text }
-        @objc func hideKeyboard() { textView?.resignFirstResponder() }
-    }
-}
-
 struct DiscordReportSheet: View {
     @StateObject private var discord = DiscordReports()
     @Environment(\.colorScheme) private var colorScheme
@@ -315,7 +276,7 @@ struct DiscordReportSheet: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var visitEnded = false
     @State private var description = ""
-    @State private var descriptionFocused = false
+    @FocusState private var descriptionFocused: Bool
     @State private var attempted = false
     @State private var reference = UUID().uuidString
     let logs: String
@@ -369,6 +330,7 @@ struct DiscordReportSheet: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroll in
             Form {
                 Section {
                     Label("StarPilot support", systemImage: "bubble.left.and.text.bubble.right.fill")
@@ -396,9 +358,14 @@ struct DiscordReportSheet: View {
                     }
                 }
                 Section("What happened?") {
-                    ReportTextEditor(text: $description, isFocused: $descriptionFocused, editable: !attempted)
-                        .frame(minHeight: 120)
+                    TextEditor(text: $description)
+                        .focused($descriptionFocused)
+                        .disabled(attempted || discord.busy)
+                        .frame(height: 140)
+                        .scrollContentBackground(.hidden)
+                        .id("report-description")
                         .accessibilityLabel("Describe what happened")
+                        .accessibilityIdentifier("report-description")
                     Text("The post title is created from your description.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
@@ -424,6 +391,19 @@ struct DiscordReportSheet: View {
                     if !discord.status.isEmpty { Text(LocalizedStringKey(discord.status)).font(.callout).accessibilityIdentifier("discord-report-status") }
                 }
             }.scrollContentBackground(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: descriptionFocused) { _, focused in
+                    if focused {
+                        withAnimation { scroll.scrollTo("report-description", anchor: .center) }
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    // Scroll again after the keyboard has reduced the form's visible
+                    // height. A wrapped UITextView did not participate in Form focus.
+                    if descriptionFocused {
+                        withAnimation { scroll.scrollTo("report-description", anchor: .center) }
+                    }
+                }
                 .listRowBackground(colorScheme == .dark ? Color(red: 0.09, green: 0.065, blue: 0.145) : Color(red: 0.91, green: 0.87, blue: 0.97))
                 .buttonBorderShape(.capsule)
                 .background(colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.97, green: 0.95, blue: 0.99))
@@ -431,6 +411,11 @@ struct DiscordReportSheet: View {
                 .navigationTitle("Report a problem")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down") { descriptionFocused = false }
+                            .labelStyle(.iconOnly)
+                    }
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(discord.busy) }
                     ToolbarItem(placement: .confirmationAction) {
                         Button(discord.threadURL != nil ? "Done" : (attempted ? "Retry" : "Send")) {
@@ -519,6 +504,7 @@ struct DiscordReportSheet: View {
                     if discord.connected { loadedReports = true; Task { await discord.loadReports() } }
 
                 }
+            }
         }
     }
 }

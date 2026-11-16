@@ -2,6 +2,25 @@ import XCTest
 @testable import StarPortReceiver
 
 final class StarPortViewportTests: XCTestCase {
+    func testMissingSystemInsetsReserveBothPossibleDockEdges() {
+        let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
+        let visible = StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [bounds, bounds], fallbackSideInset: 60)
+        XCTAssertEqual(visible, CGRect(x: 60, y: 0, width: 342, height: 277))
+        XCTAssertGreaterThan(visible.minX, 49) // Measured dock in the build142 photo.
+        XCTAssertLessThan(visible.maxX, bounds.maxX - 49)
+    }
+
+    func testReportedDockInsetsTakePriorityOverFallback() {
+        let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
+        let reported = CGRect(x: 49, y: 0, width: 413, height: 277)
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [reported], fallbackSideInset: 60), reported)
+    }
+
+    func testFallbackKeepsPositiveViewportOnSmallScreens() {
+        let bounds = CGRect(x: 20, y: 30, width: 100, height: 80)
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [], fallbackSideInset: 60), CGRect(x: 45, y: 30, width: 50, height: 80))
+    }
+
     func testCarPlayContentReservesDockWithoutShrinkingToButtonColumn() {
         let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
         let dockExcluded = CGRect(x: 49, y: 0, width: 413, height: 277)
