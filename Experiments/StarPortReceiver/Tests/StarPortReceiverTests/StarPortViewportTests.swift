@@ -2,23 +2,31 @@ import XCTest
 @testable import StarPortReceiver
 
 final class StarPortViewportTests: XCTestCase {
-    func testMissingSystemInsetsReserveBothPossibleDockEdges() {
+    func testMissingSystemInsetsReserveConfirmedLeftDockOnly() {
         let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
-        let visible = StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [bounds, bounds], fallbackSideInset: 60)
-        XCTAssertEqual(visible, CGRect(x: 60, y: 0, width: 342, height: 277))
+        let visible = StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [bounds, bounds], fallbackLeftInset: 60)
+        XCTAssertEqual(visible, CGRect(x: 60, y: 0, width: 402, height: 277))
         XCTAssertGreaterThan(visible.minX, 49) // Measured dock in the build142 photo.
-        XCTAssertLessThan(visible.maxX, bounds.maxX - 49)
+        XCTAssertEqual(visible.maxX, bounds.maxX) // Menu may overlay; no right gutter.
     }
 
     func testReportedDockInsetsTakePriorityOverFallback() {
         let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
         let reported = CGRect(x: 49, y: 0, width: 413, height: 277)
-        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [reported], fallbackSideInset: 60), reported)
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [reported], fallbackLeftInset: 60), reported)
+        let rightDock = CGRect(x: 0, y: 0, width: 413, height: 277)
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [rightDock], fallbackLeftInset: 60), rightDock)
     }
 
     func testFallbackKeepsPositiveViewportOnSmallScreens() {
         let bounds = CGRect(x: 20, y: 30, width: 100, height: 80)
-        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [], fallbackSideInset: 60), CGRect(x: 45, y: 30, width: 50, height: 80))
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [], fallbackLeftInset: 60), CGRect(x: 45, y: 30, width: 75, height: 80))
+    }
+
+    func testLeftFallbackPreservesReportedVerticalInsets() {
+        let bounds = CGRect(x: 0, y: 0, width: 462, height: 277)
+        let belowToolbar = CGRect(x: 0, y: 20, width: 462, height: 257)
+        XCTAssertEqual(StarPortVideoViewport.visibleRect(bounds: bounds, contentSafeAreas: [belowToolbar], fallbackLeftInset: 60), CGRect(x: 60, y: 20, width: 402, height: 257))
     }
 
     func testCarPlayContentReservesDockWithoutShrinkingToButtonColumn() {

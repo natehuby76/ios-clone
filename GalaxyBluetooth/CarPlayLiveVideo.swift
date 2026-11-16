@@ -54,8 +54,9 @@ enum CarPlayVideoLayout {
         }
         // Build 142 on the factory Corolla reports zero insets on both the
         // root view and CPWindow, despite a roughly 50-point dock overlay.
-        // Use a conservative 60-point gutter only for this missing-inset case.
-        return StarPortVideoViewport.visibleRect(bounds: view.bounds, contentSafeAreas: contentSafeAreas, fallbackSideInset: 60)
+        // The user confirmed the left-side dock on this private test head unit.
+        // Reserve only that edge when insets are missing; the menu may overlay.
+        return StarPortVideoViewport.visibleRect(bounds: view.bounds, contentSafeAreas: contentSafeAreas, fallbackLeftInset: 60)
     }
 }
 
@@ -202,7 +203,7 @@ final class CarPlayLiveVideoController: UIViewController {
         video.frame = area; directLayer.frame = area
         CATransaction.commit()
         status.frame = area.insetBy(dx: 12, dy: 12)
-        let description = "bounds=\(view.bounds); view safe frame=\(view.safeAreaLayoutGuide.layoutFrame); view insets=\(view.safeAreaInsets); window safe frame=\(view.window?.safeAreaLayoutGuide.layoutFrame ?? .zero); window insets=\(view.window?.safeAreaInsets ?? .zero); content video rect=\(area); renderer=\(directDisplay ? "direct" : "standard"); missing horizontal insets use symmetric 60pt sidebar gutters; map-button guide diagnostic only=\((view.window as? CPWindow)?.mapButtonSafeAreaLayoutGuide.layoutFrame ?? .zero)"
+        let description = "bounds=\(view.bounds); view safe frame=\(view.safeAreaLayoutGuide.layoutFrame); view insets=\(view.safeAreaInsets); window safe frame=\(view.window?.safeAreaLayoutGuide.layoutFrame ?? .zero); window insets=\(view.window?.safeAreaInsets ?? .zero); content video rect=\(area); renderer=\(directDisplay ? "direct" : "standard"); missing horizontal insets use left-only 60pt sidebar gutter; menu overlay allowed; map-button guide diagnostic only=\((view.window as? CPWindow)?.mapButtonSafeAreaLayoutGuide.layoutFrame ?? .zero)"
         if description != layoutDescription {
             layoutDescription = description
             CarPlayLiveDiagnostics.shared.record("CarPlay video layout: " + description)
