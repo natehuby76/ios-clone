@@ -268,6 +268,47 @@ private extension Data {
     var base64URL: String { base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
 }
 
+private struct ReportTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let editable: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.textColor = .label
+        view.backgroundColor = .clear
+        view.returnKeyType = .done
+        view.enablesReturnKeyAutomatically = false
+        view.accessibilityLabel = "Describe what happened"
+        view.accessibilityIdentifier = "report-description"
+        // No inputAccessoryView: Done belongs to the system keyboard itself.
+        return view
+    }
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if view.text != text { view.text = text }
+        view.isEditable = editable
+        if !isFocused && view.isFirstResponder { view.resignFirstResponder() }
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ReportTextEditor
+        init(_ parent: ReportTextEditor) { self.parent = parent }
+        func textViewDidBeginEditing(_ textView: UITextView) { parent.isFocused = true }
+        func textViewDidEndEditing(_ textView: UITextView) { parent.isFocused = false }
+        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text }
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard text == "\n" else { return true } // Multiline paste remains supported.
+            parent.isFocused = false
+            textView.resignFirstResponder()
+            return false
+        }
+    }
+}
+
 struct DiscordReportSheet: View {
     @StateObject private var discord = DiscordReports()
     @Environment(\.colorScheme) private var colorScheme
@@ -276,7 +317,7 @@ struct DiscordReportSheet: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var visitEnded = false
     @State private var description = ""
-    @FocusState private var descriptionFocused: Bool
+    @State private var descriptionFocused = false
     @State private var attempted = false
     @State private var reference = UUID().uuidString
     let logs: String
@@ -368,13 +409,8 @@ struct DiscordReportSheet: View {
                 }
             }
             Section("What happened?") {
-                TextField("Describe what happened", text: $description, axis: .vertical)
-                    .focused($descriptionFocused)
-                    .disabled(attempted || discord.busy)
-                    .lineLimit(4...6)
-                    .frame(minHeight: 120, alignment: .topLeading)
-                    .submitLabel(.done)
-                    .onSubmit { descriptionFocused = false }
+                ReportTextEditor(text: $description, isFocused: $descriptionFocused, editable: !attempted && !discord.busy)
+                    .frame(height: 140)
                     .id("report-description")
                     .accessibilityLabel("Describe what happened")
                     .accessibilityIdentifier("report-description")
