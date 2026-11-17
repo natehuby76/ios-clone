@@ -1,0 +1,40 @@
+name: App-only CarPlay receiver
+on:
+  push:
+    branches: [research/carplay-app-only]
+    paths:
+      - Experiments/StarPortReceiver/**
+      - .github/workflows/carplay-receiver.yml
+      - GalaxyBluetooth/CarPlayLiveVideo.swift
+      - tests/CarPlayReceiverCompileStubs.swift
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  receiver-wire:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test bounded tablet protocol framing
+        run: swift test --package-path Experiments/StarPortReceiver
+      - name: Fetch exact official Dom protocol fixture
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/StarPilotHQ/StarPilot.git /tmp/official-dom
+          git -C /tmp/official-dom sparse-checkout set openpilot/starpilot/system/starport
+          git -C /tmp/official-dom checkout f1aecc4770de33490131f1029fc4dc9026ab8c58
+          python3 -m venv /tmp/receiver-python
+          /tmp/receiver-python/bin/pip install cryptography av
+      - name: Verify Swift receiver against unchanged official Dom
+        env:
+          STARPORT_OFFICIAL_SOURCE: /tmp/official-dom
+        run: |
+          export PATH="/tmp/receiver-python/bin:$PATH"
+          swift test --package-path Experiments/StarPortReceiver
+      - name: Compile iOS receiver and actual video display
+        run: |
+          xcrun --sdk iphonesimulator swiftc -swift-version 5 -parse-as-library -emit-module \
+            -target arm64-apple-ios17.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            Experiments/StarPortReceiver/Sources/StarPortReceiver/*.swift \
+            GalaxyBluetooth/CarPlayLiveVideo.swift tests/CarPlayReceiverCompileStubs.swift \
+            -module-name CarPlayReceiverProbe -o /tmp/CarPlayReceiverProbe.swiftmodule

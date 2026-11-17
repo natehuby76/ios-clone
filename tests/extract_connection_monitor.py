@@ -80,6 +80,7 @@ enum ConnectionMode: String { case automatic, bluetooth, lan }
     var tunnelProbeTask: Task<Void, Never>?
     var phoneActive = true, carPlayActive = false
     var lanProbeTask: Task<Void, Never>?
+    var automaticLAN: Task<Void, Never>?
     func learnAddress() async {}
     func discoverAutomaticLAN() {}
     func logConnection(_ reason: String) {}
@@ -128,6 +129,18 @@ tests = r'''
         timeout.probeLocalConnection()
         await timeout.lanProbeTask?.value
         precondition(!timeout.pairingResetNeeded, "An unsuccessful probe alone must not request a pairing reset")
+        let recovering = MonitorProbe()
+        recovering.automaticLAN = Task { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        recovering.probeLocalConnection()
+        precondition(recovering.lanProbeTask == nil && recovering.lan.probes == 0,
+                     "A saved-address retry must not invalidate alternate-address identity recovery")
+        recovering.automaticLAN?.cancel()
+        await recovering.automaticLAN?.value
+        recovering.automaticLAN = nil
+        recovering.lan.probeDelay = 0
+        recovering.probeLocalConnection()
+        await recovering.lanProbeTask?.value
+        precondition(recovering.lan.probes == 1, "Normal retries must resume when address recovery finishes")
         let cancelled = MonitorProbe()
         cancelled.lan.pairingIdentityMismatch = true
         cancelled.probeLocalConnection()

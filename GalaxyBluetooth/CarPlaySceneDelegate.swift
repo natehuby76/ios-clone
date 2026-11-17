@@ -5,6 +5,52 @@ import MapKit
 import Combine
 
 @MainActor
+final class CarPlayLiveDiagnostics {
+    static let shared = CarPlayLiveDiagnostics()
+    private var events: [String] = []
+    private var frameSamples: [String] = []
+    private var discarded = 0
+    private var discardedFrames = 0
+    private var sequence = 0
+    private let started = ProcessInfo.processInfo.systemUptime
+    private let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    func record(_ message: String, includeInConnectionLog: Bool = true) {
+        sequence += 1
+        let elapsed = String(format: "%.3f", ProcessInfo.processInfo.systemUptime - started)
+        let entry = "\(formatter.string(from: Date())) #\(sequence) +\(elapsed)s \(message.prefix(1000))"
+        if !includeInConnectionLog {
+            frameSamples.append(entry)
+            if frameSamples.count > 120 {
+                discardedFrames += frameSamples.count - 120
+                frameSamples.removeFirst(frameSamples.count - 120)
+            }
+            return
+        }
+        events.append(entry)
+        if events.count > 120 {
+            discarded += events.count - 120
+            events.removeFirst(events.count - 120)
+        }
+        AppModel.shared.connectionLog.record("CarPlay Live: " + message)
+    }
+
+    func report() -> String {
+        ([
+            "StarPilot CarPlay Live diagnostics",
+            "Revision: 1; retained session events=\(events.count); older session events dropped=\(discarded); retained frame samples=\(frameSamples.count); older frame samples dropped=\(discardedFrames)",
+            "Frame source: each start event identifies synthetic images or the native Dom H.264 stream.",
+            "Image assignment and timer measurements describe the iPhone app. Receiver presentation FPS, encoder latency, and capture-to-dash latency require separate measurement.",
+            events.isEmpty ? "No CarPlay Live events captured in this app session." : "Recent CarPlay Live events:"
+        ] + events + ["Recent per-frame samples:"] + frameSamples).joined(separator: "\n")
+    }
+}
+
+@MainActor
 final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, CPTabBarTemplateDelegate, CPSessionConfigurationDelegate, CPMapTemplateDelegate {
     private final class GridAction: NSObject {
         var perform: @MainActor () -> Void
@@ -71,7 +117,30 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         controller = interfaceController
         sessionConfiguration = CPSessionConfiguration(delegate: self)
         let model = AppModel.shared
+        let bounds = window?.screen.bounds ?? .zero
+        let scale = window?.screen.scale ?? 0
+        CarPlayLiveDiagnostics.shared.record("Display connected: points=\(Int(bounds.width))x\(Int(bounds.height)); scale=\(scale); drawing window=\(window != nil); maximum screen FPS=\(window?.screen.maximumFramesPerSecond ?? 0); interface limits=\(sessionConfiguration?.limitedUserInterfaces.rawValue ?? 0); content style=\(sessionConfiguration?.contentStyle.rawValue ?? 0); phone state=\(UIApplication.shared.applicationState.rawValue). Maximum screen FPS is a reported capability.")
         model.setCarPlayActive(true)
+        // This isolated experiment opens local video, with a synthetic frame comparison.
+        if let window {
+            let live = CarPlayLiveVideoController()
+            live.interfaceController = interfaceController
+            window.rootViewController = live
+            let template = CPMapTemplate()
+            template.automaticallyHidesNavigationBar = false
+            template.leadingNavigationBarButtons = [
+                CPBarButton(title: "Live View") { [weak self] _ in self?.selectLiveView(direct: false) },
+                CPBarButton(title: "Low delay") { [weak self] _ in self?.selectLiveView(direct: true) }
+            ]
+            template.trailingNavigationBarButtons = [
+                CPBarButton(title: "Frame test") { [weak self] _ in self?.selectLiveView(frameTest: true) }
+            ]
+            template.mapButtons = []
+            interfaceController.setRootTemplate(template, animated: false) { [weak window] _, _ in
+                window?.rootViewController?.view.setNeedsLayout()
+            }
+            return
+        }
         model.$navigationAlpha.combineLatest(model.$developerMode)
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.configureMode() }
             .store(in: &subscriptions)
@@ -82,6 +151,19 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
                 self?.refreshTelemetry()
                 self?.refreshNavigation()
             }
+        }
+    }
+
+    private func selectLiveView(direct: Bool = false, frameTest: Bool = false) {
+        guard let window else { return }
+        if frameTest { window.rootViewController = CarPlayFrameProbe() }
+        else if let live = window.rootViewController as? CarPlayLiveVideoController {
+            live.useRenderer(direct: direct)
+        } else {
+            let live = CarPlayLiveVideoController()
+            live.directDisplay = direct
+            live.interfaceController = controller
+            window.rootViewController = live
         }
     }
 
@@ -97,30 +179,37 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         overview = nil; temperatures = nil; rates = nil; toggles = nil
         navigating = false
         refreshTelemetry()
+        catalog = localCatalogue()
+        toggles = CPListTemplate(title: localizedCarPlay("Toggles"), sections: [])
         if alpha {
             let map = CompanionCarPlayMap()
             mapController = map
             window?.rootViewController = map
             let template = CPMapTemplate()
             template.mapDelegate = self
-            template.guidanceBackgroundColor = StarPilotTheme.uiAccent
+            template.guidanceBackgroundColor = StarPilotTheme.uiGuidance
             template.automaticallyHidesNavigationBar = false
-            template.trailingNavigationBarButtons = [CPBarButton(title: localizedCarPlay("Stats"), handler: { [weak self] _ in
+            let settingsButton = CPBarButton(title: localizedCarPlay("Toggles")) { [weak self] _ in
+                guard let self, let toggles = self.toggles else { return }
+                self.pushTemplate(toggles, animated: true) { [weak self] opened, _ in
+                    if opened { self?.loadGalaxy() }
+                }
+            }
+            let statsButton = CPBarButton(title: localizedCarPlay("Stats")) { [weak self] _ in
                 guard let self, let overview = self.overview else { return }
                 self.pushTemplate(overview, animated: true, completion: nil)
-            })]
+            }
+            template.trailingNavigationBarButtons = [settingsButton, statsButton]
             mapTemplate = template
             controller.setRootTemplate(template, animated: false, completion: nil)
             refreshNavigation()
         } else {
             mapController = nil; mapTemplate = nil
             window?.rootViewController = UIViewController()
-            catalog = localCatalogue()
-            toggles = CPListTemplate(title: localizedCarPlay("Toggles"), sections: [])
             toggles?.tabTitle = localizedCarPlay("Toggles")
             toggles?.tabImage = UIImage(systemName: "switch.2")
             guard let overview, let temperatures, let rates, let toggles else { return }
-            let tabs = CPTabBarTemplate(templates: [overview, temperatures, rates, toggles])
+            let tabs = CPTabBarTemplate(templates: [overview, toggles, temperatures, rates])
             tabs.delegate = self
             controller.setRootTemplate(tabs, animated: false, completion: nil)
             showCategories()
@@ -209,6 +298,7 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 
     private func disconnect() {
+        CarPlayLiveDiagnostics.shared.record("Display disconnected; controller present=\(controller != nil); drawing window present=\(window != nil)")
         timer?.invalidate(); timer = nil
         subscriptions.removeAll()
         work?.cancel(); work = nil
@@ -235,7 +325,12 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
         return controller?.carTraitCollection.userInterfaceStyle == .dark ? .dark : .light
     }
 
+    func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, limitedUserInterfacesChanged limitedUserInterfaces: CPLimitableUserInterface) {
+        CarPlayLiveDiagnostics.shared.record("Interface limits changed: raw=\(limitedUserInterfaces.rawValue). Interface limits do not establish whether the vehicle is parked.")
+    }
+
     func sessionConfiguration(_ sessionConfiguration: CPSessionConfiguration, contentStyleChanged contentStyle: CPContentStyle) {
+        CarPlayLiveDiagnostics.shared.record("Content style changed: raw=\(contentStyle.rawValue)")
         let appearance: UIUserInterfaceStyle = contentStyle.contains(.dark) && !contentStyle.contains(.light) ? .dark :
             contentStyle.contains(.light) && !contentStyle.contains(.dark) ? .light : carAppearance
         let traits = UITraitCollection(userInterfaceStyle: appearance)
@@ -557,7 +652,8 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
     private func settingsItem(_ title: String, detail: String? = nil, icon: String,
                               enabled: Bool = true, action: @escaping @MainActor () -> Void = {}) -> CPListItem {
-        let item = CPListItem(text: localizedCarPlay(title), detailText: detail.map(localizedCarPlay), image: UIImage(systemName: icon))
+        let image = UIImage(systemName: icon)?.withTintColor(enabled ? StarPilotTheme.uiAccent : .secondaryLabel, renderingMode: .alwaysOriginal)
+        let item = CPListItem(text: localizedCarPlay(title), detailText: detail.map(localizedCarPlay), image: image)
         item.isEnabled = enabled
         item.handler = { _, completion in
             action()
@@ -605,14 +701,19 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             let child = row["page"] as? String ?? ""
             let value = row["value"].map { String(describing: $0) }
             let enabled = row["available"] as? Bool == true && (!child.isEmpty || row["action"] as? Bool == true) && !busy
+            let binary = child.isEmpty && isOnOffSetting(row)
+            let icon: String
+            if binary && value == "On" { icon = "checkmark.circle.fill" }
+            else if binary && value == "Off" { icon = "circle" }
+            else { icon = child.isEmpty ? "slider.horizontal.3" : "folder" }
             let item = settingsItem(row["label"] as? String ?? "Setting", detail: child.isEmpty ? value : nil,
-                                    icon: child.isEmpty ? "slider.horizontal.3" : "folder", enabled: enabled) { [weak self, weak page] in
+                                    icon: icon, enabled: enabled) { [weak self, weak page] in
                 guard let self, let page else { return }
                 guard state.session == self.session else { self.loadSettings(page); return }
                 if !child.isEmpty { self.openSettings(child, title: row["label"] as? String ?? "Toggles") }
                 else { self.editSetting(page, index: index, row: row) }
             }
-            item.accessoryType = .disclosureIndicator
+            if enabled && !binary { item.accessoryType = .disclosureIndicator }
             return item
         }
         page.updateSections([CPListSection(items: items.isEmpty ? [settingsItem("No settings available", icon: "info.circle", enabled: false)] : items)])
@@ -620,9 +721,14 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
             guard let page else { return }; state.index = next; self?.drawSettings(page)
         }
     }
+    private func isOnOffSetting(_ row: [String: Any]) -> Bool {
+        guard let choices = row["choices"] as? [String] else { return false }
+        return choices.count == 2 && choices.contains("On") && choices.contains("Off")
+    }
+
     private func editSetting(_ parent: CPListTemplate, index: Int, row: [String: Any]) {
         let choices = row["choices"] as? [String] ?? []
-        if choices.count == 2, choices.contains("On"), choices.contains("Off") {
+        if isOnOffSetting(row) {
             preview(parent, index: index, selection: row["value"] as? String == "On" ? "Off" : "On")
             return
         }
@@ -712,6 +818,152 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate, 
     }
 }
 
+/// Synthetic frames isolate CarPlay presentation from camera capture and network latency.
+/// Opened automatically by this dedicated experiment build.
+@MainActor
+private final class CarPlayFrameProbe: UIViewController {
+    private let targetFPS = 30.0
+    private let imageView = UIImageView()
+    private var timer: Timer?
+    private var frameNumber = 0
+    private var sampleStarted = ProcessInfo.processInfo.systemUptime
+    private var sampleFrames = 0
+    private var lastAssignment: Double?
+    private var previousTick: Double?
+    private var renderTimes: [Double] = []
+    private var assignmentIntervals: [Double] = []
+    private var dispatchDelays: [Double] = []
+    private var lateFrames = 0
+    private var lastLayout = ""
+    private var lifecycleSubscriptions = Set<AnyCancellable>()
+    private let renderer: UIGraphicsImageRenderer = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: 640, height: 360), format: format)
+    }()
+
+    override func loadView() {
+        imageView.backgroundColor = .black
+        imageView.contentMode = .scaleAspectFit
+        view = UIView()
+        view.backgroundColor = .black
+        view.addSubview(imageView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard timer == nil else { return }
+        sampleStarted = ProcessInfo.processInfo.systemUptime
+        sampleFrames = 0
+        lastAssignment = nil
+        previousTick = nil
+        renderTimes.removeAll()
+        assignmentIntervals.removeAll()
+        dispatchDelays.removeAll()
+        lateFrames = 0
+        CarPlayLiveDiagnostics.shared.record("Frame test appeared: target=\(Int(targetFPS)) FPS; timer period ms=\(String(format: "%.2f", 1000 / targetFPS)); logical source size=640x360; source=synthetic; network/decoder/encoder=unused; receiver delivery=unmeasured")
+        for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification,
+                     UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification,
+                     UIApplication.didReceiveMemoryWarningNotification] {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] notification in
+                    guard self != nil else { return }
+                    CarPlayLiveDiagnostics.shared.record("Phone lifecycle: \(notification.name.rawValue); application state=\(UIApplication.shared.applicationState.rawValue)")
+                }
+                .store(in: &lifecycleSubscriptions)
+        }
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / targetFPS, repeats: true) { [weak self] timer in
+            guard self != nil else { timer.invalidate(); return }
+            let firedAt = ProcessInfo.processInfo.systemUptime
+            Task { @MainActor in self?.renderFrame(timerFiredAt: firedAt) }
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        imageView.frame = StarPortVideoViewport.bottomAlignedFrame(
+            in: CarPlayVideoLayout.visibleRect(in: view), sourceSize: CGSize(width: 640, height: 360))
+        let description = "bounds=\(view.bounds); screen bounds=\(view.window?.screen.bounds ?? .zero); screen scale=\(view.window?.screen.scale ?? 0); safe area=\(view.safeAreaInsets); unobscured frame rect=\(imageView.frame); window attached=\(view.window != nil)"
+        guard description != lastLayout else { return }
+        lastLayout = description
+        CarPlayLiveDiagnostics.shared.record("Frame test layout: " + description)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        timer?.invalidate()
+        timer = nil
+        lifecycleSubscriptions.removeAll()
+        logSummary(reason: "view disappeared")
+        CarPlayLiveDiagnostics.shared.record("Frame test stopped; last assigned frame=\(frameNumber)")
+    }
+
+    private func renderFrame(timerFiredAt: Double) {
+        guard timer != nil else { return }
+        if frameNumber % 15 == 0 {
+            imageView.frame = StarPortVideoViewport.bottomAlignedFrame(
+                in: CarPlayVideoLayout.visibleRect(in: view), sourceSize: CGSize(width: 640, height: 360))
+        }
+        let started = ProcessInfo.processInfo.systemUptime
+        let timerGap = previousTick.map { timerFiredAt - $0 }
+        previousTick = timerFiredAt
+        let dispatchDelay = max(0, started - timerFiredAt)
+        frameNumber += 1
+        imageView.image = renderer.image { context in
+            UIColor.black.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 640, height: 360))
+            let text = "CarPlay frame test\nFrame \(frameNumber)\nTarget \(Int(targetFPS)) fps · synthetic frames\nVerify motion with the vehicle parked"
+            (text as NSString).draw(in: CGRect(x: 30, y: 40, width: 580, height: 230),
+                                   withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 24, weight: .medium),
+                                                    .foregroundColor: UIColor.white])
+            StarPilotTheme.uiAccent.setFill()
+            context.fill(CGRect(x: CGFloat(frameNumber % 60) * 10, y: 300, width: 40, height: 30))
+        }
+        let assigned = ProcessInfo.processInfo.systemUptime
+        let renderTime = assigned - started
+        let interval = lastAssignment.map { assigned - $0 }
+        lastAssignment = assigned
+        renderTimes.append(renderTime)
+        dispatchDelays.append(dispatchDelay)
+        if let interval {
+            assignmentIntervals.append(interval)
+            if interval > 1.5 / targetFPS {
+                lateFrames += 1
+                CarPlayLiveDiagnostics.shared.record("Frame assignment gap: frame=\(frameNumber); interval ms=\(String(format: "%.2f", interval * 1000)); render ms=\(String(format: "%.2f", renderTime * 1000)); dispatch delay ms=\(String(format: "%.2f", dispatchDelay * 1000))")
+            }
+        }
+        let pixels = imageView.image?.cgImage
+        let timerGapText = timerGap.map { String(format: "%.2f", $0 * 1000) } ?? "first"
+        let intervalText = interval.map { String(format: "%.2f", $0 * 1000) } ?? "first"
+        CarPlayLiveDiagnostics.shared.record("Frame \(frameNumber): timer gap ms=\(timerGapText); dispatch ms=\(String(format: "%.2f", dispatchDelay * 1000)); render ms=\(String(format: "%.2f", renderTime * 1000)); assignment interval ms=\(intervalText); image pixels=\(pixels?.width ?? 0)x\(pixels?.height ?? 0); row bytes=\(pixels?.bytesPerRow ?? 0); window attached=\(view.window != nil)", includeInConnectionLog: false)
+        sampleFrames += 1
+        guard assigned - sampleStarted >= 1 else { return }
+        logSummary(reason: "periodic")
+    }
+
+    private func timingStats(_ values: [Double]) -> String {
+        guard !values.isEmpty else { return "none" }
+        let sorted = values.sorted()
+        let median = sorted[sorted.count / 2] * 1000
+        let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))] * 1000
+        return String(format: "min=%.2f,p50=%.2f,p95=%.2f,max=%.2f", sorted[0] * 1000, median, p95, sorted[sorted.count - 1] * 1000)
+    }
+
+    private func logSummary(reason: String) {
+        let elapsed = ProcessInfo.processInfo.systemUptime - sampleStarted
+        guard elapsed > 0, sampleFrames > 0 else { return }
+        let rate = String(format: "%.2f", Double(sampleFrames) / elapsed)
+        CarPlayLiveDiagnostics.shared.record("Frame summary (\(reason)): window seconds=\(String(format: "%.3f", elapsed)); target FPS=\(Int(targetFPS)); assignments=\(sampleFrames); assignments/s=\(rate); gaps over \(String(format: "%.2f", 1500 / targetFPS))ms=\(lateFrames); render ms={\(timingStats(renderTimes))}; assignment interval ms={\(timingStats(assignmentIntervals))}; dispatch delay ms={\(timingStats(dispatchDelays))}; last frame=\(frameNumber); receiver FPS=unmeasured")
+        sampleFrames = 0
+        sampleStarted = ProcessInfo.processInfo.systemUptime
+        renderTimes.removeAll(keepingCapacity: true)
+        assignmentIntervals.removeAll(keepingCapacity: true)
+        dispatchDelays.removeAll(keepingCapacity: true)
+        lateFrames = 0
+    }
+}
 @MainActor
 final class CarPlayDashboardSceneDelegate: NSObject, CPTemplateApplicationDashboardSceneDelegate {
     private var window: UIWindow?

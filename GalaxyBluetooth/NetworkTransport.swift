@@ -337,6 +337,21 @@ final class LANTransport: ObservableObject, GalaxyRequestTransport {
         throw BridgeError.message("Galaxy session expired. Reconnect to comma.")
     }
 
+    func carPlayLiveRequest() async throws -> URLRequest {
+        guard connected, let endpoint else { throw URLError(.notConnectedToInternet) }
+        let original = generation
+        let usedCookie = try await sessionCookie(endpoint: endpoint, generation: original)
+        try Task.checkCancellation()
+        guard connected, generation == original, self.endpoint == endpoint else { throw CancellationError() }
+        var request = URLRequest(url: endpoint.appendingPathComponent("api/companion/carplay-live"))
+        request.timeoutInterval = 60
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.allowsCellularAccess = false
+        request.setValue(usedCookie, forHTTPHeaderField: "Cookie")
+        request.setValue("application/x-starpilot-h264", forHTTPHeaderField: "Accept")
+        return request
+    }
+
     func page(path: String) async throws -> BridgeResponse {
         guard connected else { throw URLError(.notConnectedToInternet) }
         guard SecretGoodGalaxy.validPage(path) else { throw BridgeError.message("Invalid Galaxy page request.") }

@@ -1,4 +1,10 @@
-# StarPilot BT CarPlay testing
+# Historical phone-capture guide — not for build 140
+
+**The setup below is obsolete for `research/carplay-app-only`. Do not run its
+fork installation, capture-flag, or service restart commands for build 140.**
+Use [the app-only device test guide](docs/CARPLAY-APP-ONLY-TEST.md) instead.
+This older document describes a different phone JPEG capture implementation
+and is retained only as historical context.
 
 The phone receives a continuous JPEG stream of the full comma display over local Wi-Fi, targeting 20 FPS at 960 pixels wide. The actual received FPS is shown on the phone. Bluetooth carries diagnostics only. Hardware throughput and capture overhead still need measurement.
 
