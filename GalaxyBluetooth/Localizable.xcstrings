@@ -357,6 +357,34 @@
         }
       }
     },
+    "Asking comma to get ready…": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pidiendo a comma que se prepare…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation de comma…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma 준비 요청 중…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在让 comma 做好准备…"
+          }
+        }
+      }
+    },
     "Automatic": {
       "extractionState": "stale",
       "localizations": {
@@ -1079,6 +1107,62 @@
         }
       }
     },
+    "Comma couldn't start setup. Try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma no pudo iniciar la configuración. Vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma n’a pas pu démarrer la configuration. Réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma에서 설정을 시작하지 못했습니다. 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma 无法开始设置。请重试。"
+          }
+        }
+      }
+    },
+    "Comma disconnected during setup. Reconnect over Bluetooth and try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma se desconectó durante la configuración. Vuelve a conectarte por Bluetooth e inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma s’est déconnecté pendant la configuration. Reconnectez-vous par Bluetooth et réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 중에 comma 연결이 끊어졌습니다. Bluetooth로 다시 연결한 후 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置过程中 comma 已断开连接。请重新通过蓝牙连接后重试。"
+          }
+        }
+      }
+    },
     "Comma Hotspot": {
       "extractionState": "stale",
       "localizations": {
@@ -1137,6 +1221,62 @@
         }
       }
     },
+    "Comma is busy pairing another device. Wait a minute, then try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma está enlazando otro dispositivo. Espera un minuto y vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma est en train de jumeler un autre appareil. Patientez une minute, puis réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma가 다른 기기와 페어링 중입니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma 正在与其他设备配对。请稍等一分钟后重试。"
+          }
+        }
+      }
+    },
+    "Comma's Bluetooth isn't ready. Try again in a moment.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El Bluetooth de comma no está listo. Vuelve a intentarlo en un momento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le Bluetooth de comma n’est pas prêt. Réessayez dans un instant."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma의 Bluetooth가 준비되지 않았습니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma 的蓝牙尚未就绪。请稍后重试。"
+          }
+        }
+      }
+    },
     "Connect": {
       "extractionState": "stale",
       "localizations": {
@@ -1190,6 +1330,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "连接 Discord"
+          }
+        }
+      }
+    },
+    "Connect to comma over Bluetooth to set this up.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conéctate a comma por Bluetooth para configurarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectez-vous à comma par Bluetooth pour configurer cette fonction."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정하려면 Bluetooth로 comma에 연결하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请通过蓝牙连接 comma 后再进行设置。"
           }
         }
       }
@@ -2723,6 +2891,34 @@
         }
       }
     },
+    "iOS didn't finish pairing in time. Try again and tap **Pair** when iOS asks.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS no terminó el enlace a tiempo. Vuelve a intentarlo y toca **Enlazar** cuando iOS lo pida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS n’a pas terminé le jumelage à temps. Réessayez et touchez **Jumeler** lorsque iOS le demande."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS가 제시간에 페어링을 완료하지 못했습니다. 다시 시도하고 iOS에서 요청하면 **페어링**을 탭하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS 未能及时完成配对。请重试，并在 iOS 询问时轻点**配对**。"
+          }
+        }
+      }
+    },
     "Korean": {
       "extractionState": "stale",
       "localizations": {
@@ -3734,6 +3930,34 @@
         }
       }
     },
+    "Needs a StarPilot update on comma": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requiere actualizar StarPilot en comma"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nécessite une mise à jour de StarPilot sur comma"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma에서 StarPilot 업데이트 필요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要在 comma 上更新 StarPilot"
+          }
+        }
+      }
+    },
     "New report": {
       "localizations": {
         "es": {
@@ -3758,6 +3982,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "新报告"
+          }
+        }
+      }
+    },
+    "Next, set up **Phone notifications** in Settings to see iPhone notifications on your car screen.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Después, configura **Notificaciones del teléfono** en Ajustes para ver las notificaciones del iPhone en la pantalla del coche."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ensuite, configurez **Notifications du téléphone** dans Réglages pour voir les notifications de l’iPhone sur l’écran de la voiture."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음으로 설정에서 **휴대폰 알림**을 설정하면 차량 화면에서 iPhone 알림을 볼 수 있습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接下来，在设置中设置**手机通知**，即可在车辆屏幕上查看 iPhone 通知。"
           }
         }
       }
@@ -3958,6 +4210,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "暂不"
+          }
+        }
+      }
+    },
+    "Not set up": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin configurar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non configuré"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 안 됨"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未设置"
+          }
+        }
+      }
+    },
+    "Notifications are shared with comma. To change this later, open **Settings → Bluetooth**, tap ⓘ next to your comma and switch **Share System Notifications**. Choose which apps appear in Galaxy → Toggles → Phone.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las notificaciones se comparten con comma. Para cambiarlo más tarde, abre **Ajustes → Bluetooth**, toca ⓘ junto a tu comma y cambia **Compartir notificaciones del sistema**. Elige qué apps aparecen en Galaxy → Toggles → Phone."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les notifications sont partagées avec comma. Pour modifier ce choix, ouvrez **Réglages → Bluetooth**, touchez ⓘ à côté de votre comma et changez **Partager les notifications du système**. Choisissez les apps affichées dans Galaxy → Toggles → Phone."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림이 comma와 공유됩니다. 나중에 변경하려면 **설정 → Bluetooth**를 열고 comma 옆의 ⓘ를 탭한 다음 **시스템 알림 공유**를 전환하세요. 표시할 앱은 Galaxy → Toggles → Phone에서 선택하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知已与 comma 共享。以后如需更改，请打开**设置 → 蓝牙**，轻点 comma 旁边的 ⓘ，然后切换**共享系统通知**。在 Galaxy → Toggles → Phone 中选择要显示的 App。"
           }
         }
       }
@@ -4222,6 +4530,62 @@
         }
       }
     },
+    "Pairing didn't finish. Try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El enlace no terminó. Vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le jumelage n’a pas abouti. Réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링이 완료되지 않았습니다. 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对未完成。请重试。"
+          }
+        }
+      }
+    },
+    "Pairing wasn't completed. Try again and tap **Pair** when iOS asks.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se completó el enlace. Vuelve a intentarlo y toca **Enlazar** cuando iOS lo pida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le jumelage n’a pas abouti. Réessayez et touchez **Jumeler** lorsque iOS le demande."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페어링이 완료되지 않았습니다. 다시 시도하고 iOS에서 요청하면 **페어링**을 탭하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配对未完成。请重试，并在 iOS 询问时轻点**配对**。"
+          }
+        }
+      }
+    },
     "Pairing…": {
       "extractionState": "stale",
       "localizations": {
@@ -4247,6 +4611,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在配对…"
+          }
+        }
+      }
+    },
+    "Park the car to set up phone notifications.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estaciona el coche para configurar las notificaciones del teléfono."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Garez la voiture pour configurer les notifications du téléphone."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 알림을 설정하려면 차량을 주차하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先停车，再设置手机通知。"
           }
         }
       }
@@ -4305,6 +4697,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "手机音乐"
+          }
+        }
+      }
+    },
+    "Phone notifications": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notificaciones del teléfono"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications du téléphone"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 알림"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手机通知"
           }
         }
       }
@@ -5603,6 +6023,34 @@
         }
       }
     },
+    "Set up on this comma": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuradas en este comma"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configurées sur ce comma"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 comma에 설정됨"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已在此 comma 上设置"
+          }
+        }
+      }
+    },
     "Settings": {
       "extractionState": "stale",
       "localizations": {
@@ -5628,6 +6076,90 @@
           "stringUnit": {
             "state": "translated",
             "value": "设置"
+          }
+        }
+      }
+    },
+    "Setup in progress": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuración en curso"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuration en cours"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 진행 중"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在设置"
+          }
+        }
+      }
+    },
+    "Setup is already running.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuración ya está en curso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuration est déjà en cours."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미 설정이 진행 중입니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置已在进行中。"
+          }
+        }
+      }
+    },
+    "Setup needs attention": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuración requiere atención"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuration demande votre attention"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정을 확인해야 함"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置需要处理"
           }
         }
       }
@@ -5661,6 +6193,34 @@
         }
       }
     },
+    "Shared with comma": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compartidas con comma"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partagées avec comma"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "comma와 공유됨"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已与 comma 共享"
+          }
+        }
+      }
+    },
     "Show app tabs": {
       "extractionState": "stale",
       "localizations": {
@@ -5686,6 +6246,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "显示应用标签"
+          }
+        }
+      }
+    },
+    "Show iPhone notifications on your car screen. Your comma reads them directly over Bluetooth, so this works even when the app is closed. Messages are shown for a few seconds and never stored.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muestra las notificaciones del iPhone en la pantalla del coche. Tu comma las lee directamente por Bluetooth, así que funciona incluso con la app cerrada. Los mensajes se muestran unos segundos y nunca se guardan."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affichez les notifications de l’iPhone sur l’écran de la voiture. Votre comma les lit directement par Bluetooth, même lorsque l’app est fermée. Les messages s’affichent quelques secondes et ne sont jamais enregistrés."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "차량 화면에 iPhone 알림을 표시합니다. comma가 Bluetooth로 직접 읽기 때문에 앱이 닫혀 있어도 작동합니다. 메시지는 몇 초 동안 표시되며 저장되지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在车辆屏幕上显示 iPhone 通知。comma 通过蓝牙直接读取通知，因此即使 App 已关闭也能使用。消息仅显示几秒钟，从不存储。"
           }
         }
       }
@@ -6351,6 +6939,34 @@
         }
       }
     },
+    "Try again": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reintentar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réessayer"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다시 시도"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试"
+          }
+        }
+      }
+    },
     "Tuning, Plots & Testing": {
       "extractionState": "stale",
       "localizations": {
@@ -6433,6 +7049,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "不可用的传感器不显示读数。消息速率反映 comma 界面观察到的更新。"
+          }
+        }
+      }
+    },
+    "Update StarPilot on your comma to use phone notifications.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualiza StarPilot en tu comma para usar las notificaciones del teléfono."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mettez à jour StarPilot sur votre comma pour utiliser les notifications du téléphone."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰 알림을 사용하려면 comma의 StarPilot을 업데이트하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在 comma 上更新 StarPilot 以使用手机通知。"
           }
         }
       }
@@ -6692,6 +7336,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "方向盘控制"
+          }
+        }
+      }
+    },
+    "When iOS asks, tap **Pair**, then allow **Share System Notifications** (or **Allow Notifications**).": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuando iOS lo pida, toca **Enlazar** y luego permite **Compartir notificaciones del sistema** (o **Permitir notificaciones**)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lorsque iOS le demande, touchez **Jumeler**, puis autorisez **Partager les notifications du système** (ou **Autoriser les notifications**)."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS에서 요청하면 **페어링**을 탭한 다음 **시스템 알림 공유**(또는 **알림 허용**)를 허용하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS 询问时，轻点**配对**，然后允许**共享系统通知**（或**允许通知**）。"
           }
         }
       }
@@ -7701,6 +8373,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "继续前往目的地"
+          }
+        }
+      }
+    },
+    "Your iPhone hasn't seen comma's new Bluetooth features yet. Turn Bluetooth off and on, reconnect, then try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tu iPhone aún no detecta las nuevas funciones Bluetooth de comma. Apaga y enciende el Bluetooth, vuelve a conectarte e inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre iPhone ne voit pas encore les nouvelles fonctions Bluetooth de comma. Désactivez puis réactivez le Bluetooth, reconnectez-vous et réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone이 아직 comma의 새 Bluetooth 기능을 인식하지 못했습니다. Bluetooth를 껐다 켜고 다시 연결한 후 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的 iPhone 尚未识别 comma 的新蓝牙功能。请关闭再打开蓝牙，重新连接后重试。"
+          }
+        }
+      }
+    },
+    "Your iPhone's saved pairing with comma has changed. In **Settings → Bluetooth**, tap ⓘ next to comma, choose **Forget This Device**, then reconnect and try again.": {
+      "localizations": {
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El enlace guardado entre tu iPhone y comma ha cambiado. En **Ajustes → Bluetooth**, toca ⓘ junto a comma, elige **Omitir este dispositivo**, vuelve a conectarte e inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le jumelage enregistré entre votre iPhone et comma a changé. Dans **Réglages → Bluetooth**, touchez ⓘ à côté de comma, choisissez **Oublier cet appareil**, puis reconnectez-vous et réessayez."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iPhone에 저장된 comma 페어링이 변경되었습니다. **설정 → Bluetooth**에서 comma 옆의 ⓘ를 탭하고 **이 기기 지우기**를 선택한 다음 다시 연결하고 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你的 iPhone 与 comma 保存的配对已更改。在**设置 → 蓝牙**中，轻点 comma 旁边的 ⓘ，选择**忽略此设备**，然后重新连接并重试。"
           }
         }
       }

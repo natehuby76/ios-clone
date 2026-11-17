@@ -14,6 +14,7 @@ struct ConnectionSettingsView: View {
     @ObservedObject var audio: AudioPairing
     @ObservedObject private var sentry = SentryPush.shared
     @ObservedObject private var tunnel: TunnelTransport
+    @ObservedObject var notifications: NotificationSharing
     let returningFromGalaxy: Bool
     let select: (CompanionTab) -> Void
     let submitReport: () -> Void
@@ -34,6 +35,7 @@ struct ConnectionSettingsView: View {
     @State private var openAfterReconnect = false
     @State private var connectingCommaID: String?
     @State private var showHotspotJoin = false
+    @State private var showNotifications = false
 
     private var accent: Color { colorScheme == .dark ? Color(red: 0.68, green: 0.48, blue: 0.96) : Color(red: 0.45, green: 0.26, blue: 0.73) }
     private var background: Color { colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.078) : Color(red: 0.93, green: 0.90, blue: 0.98) }
@@ -75,6 +77,7 @@ struct ConnectionSettingsView: View {
         bluetooth = model.bluetooth; lan = model.lan; assets = model.assets; server = model.server
         tunnel = model.tunnel
         discovery = model.discovery; location = model.phoneLocation; audio = model.audioPairing
+        notifications = model.notificationSharing
     }
 
     var body: some View {
@@ -127,6 +130,9 @@ struct ConnectionSettingsView: View {
                 }.presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showTunnel) { TunnelSetupView(model: model) }
+            .sheet(isPresented: $showNotifications, onDismiss: { notifications.dismiss() }) {
+                NotificationSharingSheet(sharing: notifications, bluetoothConnected: bluetooth.connected) { showNotifications = false }
+            }
             .tint(accent)
             .alert("Join comma’s hotspot", isPresented: $showHotspotJoin) {
                 Button("OK", role: .cancel) {}
@@ -466,6 +472,10 @@ struct ConnectionSettingsView: View {
         VStack(spacing: extraSpacing) {
             row("music.note", title: "Phone music", subtitle: pairing ? "Waiting for app pairing" : audio.summary) {
                 Button("Set up") { model.startAudioPairing() }.disabled(!connected || pairing).font(.system(size: 12)).frame(minHeight: 44)
+            }
+            separator
+            row("bell.badge", title: "Phone notifications", subtitle: pairing ? "Waiting for app pairing" : notifications.summary(bluetoothConnected: bluetooth.connected)) {
+                Button("Set up") { showNotifications = true }.disabled(pairing).font(.system(size: 12)).frame(minHeight: 44)
             }
             separator
             toggleRow("location", title: "Share phone location", subtitle: location.status.isEmpty ? "Optional" : location.status,

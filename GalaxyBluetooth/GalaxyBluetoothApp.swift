@@ -87,6 +87,17 @@ final class AppModel: ObservableObject {
     private var audioWindowOpen = false
     private let claimer = ClaimTransport()
     lazy var audioPairing = AudioPairing(transport: { [weak self] in self?.transport })
+    lazy var notificationSharing: NotificationSharing = {
+        let value = NotificationSharing(transport: { [weak self] in self?.bluetooth },
+            supported: { [weak self] in self?.bluetooth.notificationBondSupported ?? false },
+            bond: { [weak self] in
+                guard let self else { throw NotificationBondError.disconnected }
+                try await self.bluetooth.readNotificationBond()
+            },
+            device: { UserDefaults.standard.string(forKey: "galaxy.bluetooth.device") })
+        value.onEvent = { [weak self] in self?.connectionLog.record($0) }
+        return value
+    }()
     lazy var phoneLocation: PhoneLocation = {
         let value = PhoneLocation(transport: { [weak self] in self?.transport })
         value.onEvent = { [weak self] in self?.connectionLog.record("GPS: " + $0) }

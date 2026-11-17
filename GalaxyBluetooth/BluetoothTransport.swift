@@ -82,6 +82,13 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     private var rx: CBCharacteristic?
     private var tx: CBCharacteristic?
     private var notify: CBCharacteristic?
+    private var bond: CBCharacteristic?
+    private var bondRead: CheckedContinuation<Void, Error>?
+    private var bondReadID: UUID?
+    private var bondReadSent = false
+    private var bondTimeout: Task<Void, Never>?
+    private var healthNotificationBond = false
+    var notificationBondSupported: Bool { healthNotificationBond || bond != nil }
     private var key: SymmetricKey?
     private var keyText = ""
     private var session = ""
@@ -248,11 +255,14 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         connected = false
         connecting = false
         failAll(BridgeError.message("Bluetooth connection closed."))
+        finishBondRead(.failure(NotificationBondError.disconnected))
         if let peripheral { central.cancelPeripheralConnection(peripheral) }
         peripheral = nil
         rx = nil
         tx = nil
         notify = nil
+        bond = nil
+        healthNotificationBond = false
         session = ""
         counter = 0
         priorityStreak = 0
@@ -375,6 +385,8 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
     }
 
     private func pump() {
+        // Hold new requests so the pairing sheet cannot stall a transfer's acknowledgements.
+        if active == nil, bondRead != nil { sendBondRead(); return }
         guard active == nil, !queue.isEmpty, let peripheral, let key, !session.isEmpty else { return }
         let index = Self.nextRequestIndex(methods: queue.map(\.method), paths: queue.map(\.path), priorityStreak: priorityStreak)
         active = queue.remove(at: index)
@@ -455,6 +467,62 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         pump()
     }
 
+    /// Reading this encrypted characteristic makes iOS bond the LE link, which lets comma receive notifications over ANCS.
+    func readNotificationBond() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard connected, peripheral != nil else { continuation.resume(throwing: NotificationBondError.disconnected); return }
+                guard bond != nil else { continuation.resume(throwing: NotificationBondError.unavailable); return }
+                guard bondRead == nil else { continuation.resume(throwing: NotificationBondError.busy); return }
+                bondRead = continuation
+                bondReadID = id
+                bondReadSent = false
+                onEvent?("Notification bond read queued; active request=\(active != nil)")
+                bondTimeout = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    guard !Task.isCancelled, let self, self.bondReadID == id else { return }
+                    self.finishBondRead(.failure(NotificationBondError.timedOut))
+                }
+                pump()
+            }
+        }, onCancel: { [weak self] in
+            DispatchQueue.main.async { if self?.bondReadID == id { self?.finishBondRead(.failure(CancellationError())) } }
+        })
+    }
+
+    private func sendBondRead() {
+        guard !bondReadSent, let peripheral, let bond else { return }
+        bondReadSent = true
+        onEvent?("Notification bond read sent")
+        peripheral.readValue(for: bond)
+    }
+
+    private func finishBondRead(_ result: Result<Void, Error>) {
+        bondTimeout?.cancel()
+        bondTimeout = nil
+        guard let continuation = bondRead else { return }
+        bondRead = nil
+        bondReadID = nil
+        bondReadSent = false
+        switch result {
+        case .success: onEvent?("Notification bond read finished: bonded")
+        case .failure(let error): onEvent?("Notification bond read failed: \(error)")
+        }
+        continuation.resume(with: result)
+        pump()
+    }
+
+    nonisolated static func bondFailure(_ error: Error) -> NotificationBondError {
+        let error = error as NSError
+        if error.domain == CBATTErrorDomain, [CBATTError.insufficientAuthentication.rawValue, CBATTError.insufficientEncryption.rawValue,
+                                               CBATTError.insufficientAuthorization.rawValue].contains(error.code) { return .declined }
+        if error.domain == CBErrorDomain, error.code == CBError.Code.peerRemovedPairingInformation.rawValue { return .staleBond }
+        if error.domain == CBErrorDomain, error.code == CBError.Code.encryptionTimedOut.rawValue { return .timedOut }
+        return .failed
+    }
+
     private func failAll(_ error: Error) {
         timeoutTask?.cancel()
         notificationTimeout?.cancel()
@@ -514,6 +582,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         guard peripheral == self.peripheral else { return }
+        if let error, Self.bondFailure(error) == .staleBond { finishBondRead(.failure(NotificationBondError.staleBond)) }
         recordConnectionFailure()
         disconnect(reason: "Bluetooth peer disconnected: \(error.map { LANTransport.failureCode($0) } ?? "no OS error supplied")")
         connectionFailed = error != nil && central.state == .poweredOn
@@ -527,7 +596,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         }
         beginConnectionPhase("characteristics")
         onEvent?("Bluetooth Galaxy service found; discovering characteristics")
-        peripheral.discoverCharacteristics([CBUUID(string: Wire.rx), CBUUID(string: Wire.tx), CBUUID(string: Wire.info), CBUUID(string: Wire.notify)], for: service)
+        peripheral.discoverCharacteristics([CBUUID(string: Wire.rx), CBUUID(string: Wire.tx), CBUUID(string: Wire.info), CBUUID(string: Wire.notify), CBUUID(string: Wire.bond)], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -536,10 +605,11 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
         rx = service.characteristics?.first { $0.uuid == CBUUID(string: Wire.rx) }
         tx = service.characteristics?.first { $0.uuid == CBUUID(string: Wire.tx) }
         notify = service.characteristics?.first { $0.uuid == CBUUID(string: Wire.notify) }
+        bond = service.characteristics?.first { $0.uuid == CBUUID(string: Wire.bond) }
         guard rx != nil, tx != nil, let info = service.characteristics?.first(where: { $0.uuid == CBUUID(string: Wire.info) }) else {
             failConnection("The comma bridge has incompatible Bluetooth characteristics."); return
         }
-        onEvent?("Bluetooth capabilities: characteristics=\(service.characteristics?.count ?? 0); RX properties=\(rx?.properties.rawValue ?? 0); TX properties=\(tx?.properties.rawValue ?? 0); notify present=\(notify != nil); write limit=\(peripheral.maximumWriteValueLength(for: .withResponse))")
+        onEvent?("Bluetooth capabilities: characteristics=\(service.characteristics?.count ?? 0); RX properties=\(rx?.properties.rawValue ?? 0); TX properties=\(tx?.properties.rawValue ?? 0); notify present=\(notify != nil); notification bond present=\(bond != nil); write limit=\(peripheral.maximumWriteValueLength(for: .withResponse))")
         beginConnectionPhase("challenge")
         onEvent?("Bluetooth characteristics ready; reading handshake challenge")
         peripheral.readValue(for: info)
@@ -567,6 +637,15 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral == self.peripheral else { return }
+        if characteristic.uuid == CBUUID(string: Wire.bond) {
+            if let error {
+                onEvent?("Notification bond read error: \(LANTransport.failureCode(error))")
+                finishBondRead(.failure(Self.bondFailure(error)))
+            } else {
+                finishBondRead(characteristic.value == Data([1]) ? .success(()) : .failure(NotificationBondError.failed))
+            }
+            return
+        }
         if let error { failConnection("Bluetooth operation failed: \(LANTransport.failureCode(error))"); return }
         guard let data = characteristic.value else { failConnection("Empty Bluetooth response."); return }
         if characteristic.uuid == CBUUID(string: Wire.notify) {
@@ -593,6 +672,7 @@ final class BluetoothTransport: NSObject, ObservableObject, GalaxyRequestTranspo
                     }
                     self.catalogSHA256 = health.catalogSHA256
                     self.supportsReadStream = health.readStream == true
+                    self.healthNotificationBond = health.notificationBond == true
                     self.pairingVerified = true
                     if health.notificationStream == true, let notify = self.notify, notify.properties.contains(.notify) {
                         self.beginConnectionPhase("notification subscription")

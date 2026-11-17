@@ -165,7 +165,8 @@ final class SentryAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { SentryPush.shared.registrationFailed() }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                            withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
-        Task { @MainActor in completion(SentryPush.shared.enabled ? [.banner, .sound, .list] : []) }
+        let test = notification.request.content.userInfo["type"] as? String == NotificationSharing.testType
+        Task { @MainActor in completion(test ? [.banner, .list] : SentryPush.shared.enabled ? [.banner, .sound, .list] : []) }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                            withCompletionHandler completion: @escaping () -> Void) {

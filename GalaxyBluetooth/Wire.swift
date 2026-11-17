@@ -36,6 +36,7 @@ struct BridgeHealth: Decodable {
     let transport: String
     let readStream: Bool?
     let notificationStream: Bool?
+    let notificationBond: Bool?
     let catalogSHA256: String?
 }
 
@@ -53,6 +54,7 @@ enum Wire {
     static let tx = "bd490003-6dc1-4de7-a7d0-6cdb441f7650"
     static let info = "bd490004-6dc1-4de7-a7d0-6cdb441f7650"
     static let notify = "bd490005-6dc1-4de7-a7d0-6cdb441f7650"
+    static let bond = "bd490006-6dc1-4de7-a7d0-6cdb441f7650"
     static let notificationWindow = 8
     static let maxFrame = 2 * 1024 * 1024
     static let maxBody = 1024 * 1024

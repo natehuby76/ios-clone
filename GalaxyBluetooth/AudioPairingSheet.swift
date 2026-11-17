@@ -26,6 +26,8 @@ struct AudioPairingSheet: View {
                 }
             case .done:
                 Text("Bluetooth music paired. In Control Center, choose comma as the audio output.").multilineTextAlignment(.center)
+                Text("Next, set up **Phone notifications** in Settings to see iPhone notifications on your car screen.")
+                    .font(.callout).multilineTextAlignment(.center)
             case .connected:
                 Text("Music connected. This iPhone is already using comma as its Bluetooth audio output.").multilineTextAlignment(.center)
             case .message(let text):
