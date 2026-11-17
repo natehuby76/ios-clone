@@ -217,7 +217,7 @@ struct ConnectionSettingsView: View {
                 } }
             }.disabled(model.loadingLegacyURL || pairing)
             Link("Support", destination: URL(string: "https://wiki.firestar.link/ticketsystem/")!)
-            Link("Privacy", destination: URL(string: "https://github.com/natehuby76/ios-clone/blob/codex/secretgood-galaxy/docs/privacy.md")!)
+            Link("Privacy", destination: URL(string: "https://github.com/natehuby76/starpilot-galaxy-ios/blob/ios-companion-release/docs/privacy.md")!)
         }.font(.system(size: 12)).frame(minHeight: 44)
     }
 

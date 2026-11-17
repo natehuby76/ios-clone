@@ -383,7 +383,7 @@ it never changes their ownership or destination.
 
 POST `/v1/ios/dashboard/reports`, `/commits`, or `/import` (and Android equivalents)
 uses the same bearer authentication as build notices. The GitHub sources are
-fixed server-side to `natehuby76/ios-clone` / `integrated-latest` and
+fixed server-side to `natehuby76/starpilot-galaxy-ios` / `ios-companion-dev` and
 `dirwin31/StarPilotAndroid` / `Play-Dev`. Only commit SHA, subject, date and canonical
 GitHub link are returned. Public GitHub reads require no extra connection; optional
 GITHUB_READ_TOKEN can increase rate limits. The browser cannot select arbitrary

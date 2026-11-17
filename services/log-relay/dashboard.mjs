@@ -1,6 +1,6 @@
 import {getReportThread,nextReportTags,discordTags,supportTags} from './thread-tags.mjs';
 import {dashboardHTML} from './dashboard-ui.mjs';
-export const dashboardRepos={ios:{repo:'natehuby76/ios-clone',branch:'integrated-latest'},android:{repo:'dirwin31/StarPilotAndroid',branch:'Play-Dev'}};
+export const dashboardRepos={ios:{repo:'natehuby76/starpilot-galaxy-ios',branch:'ios-companion-dev'},android:{repo:'dirwin31/StarPilotAndroid',branch:'Play-Dev'}};
 export function dashboardPage(){
  const nonce=crypto.randomUUID().replaceAll('-','');
  return new Response(dashboardHTML.replaceAll('{{nonce}}',nonce),{headers:{'Content-Type':'text/html;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+"'; connect-src 'self' https://api.github.com; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"}});

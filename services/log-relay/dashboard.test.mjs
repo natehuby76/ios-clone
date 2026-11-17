@@ -114,7 +114,7 @@ test('GitHub uses only configured platform branches and sanitizes output fields'
  const {env}=environment(),old=globalThis.fetch,urls=[];
  globalThis.fetch=async (url,options)=>{assert.equal(options.redirect,'manual');urls.push(String(url));return Response.json([{sha:'a'.repeat(40),html_url:'https://evil.test',commit:{message:'Fix tunnel\nprivate trailing text',committer:{date:'2026-11-05T00:00:00Z'}}}]);};
  try {for(const p of ['ios','android']){const result=await (await worker.fetch(req(p+'/dashboard/commits',{repo:'evil/repo'},p==='ios'?env.IOS_RELEASE_KEY:env.ANDROID_RELEASE_KEY),env)).json();assert.ok(result.commits[0].url.startsWith('https://github.com/'));assert.equal(result.commits[0].title,'Fix tunnel');}
- assert.ok(urls[0].includes('natehuby76/ios-clone/commits?sha=integrated-latest'));assert.ok(urls[1].includes('dirwin31/StarPilotAndroid/commits?sha=Play-Dev'));
+ assert.ok(urls[0].includes('natehuby76/starpilot-galaxy-ios/commits?sha=ios-companion-dev'));assert.ok(urls[1].includes('dirwin31/StarPilotAndroid/commits?sha=Play-Dev'));
  }finally{globalThis.fetch=old;}
 });
 test('dashboard shell has no embedded secrets, no persistent browser key storage, and valid JS',async()=>{

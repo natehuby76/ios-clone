@@ -6,7 +6,7 @@ use the SecretGood version of the app with a comma running the matching Bluetoot
 
 open your TestFlight invitation on the iPhone and install the build offered there.
 
-to build it yourself, open `openpilot/starpilot/companion/ios/GalaxyBluetooth.xcodeproj` from the repo in Xcode. choose your signing team, connect your iPhone, select it as the destination and press Run. Follow the phone's trust and Developer Mode prompts if shown.
+To build it yourself, open `GalaxyBluetooth.xcodeproj` at the root of this repo in Xcode. Choose your signing team, connect your iPhone, select it as the destination and press Run. Follow the phone's trust and Developer Mode prompts if shown.
 
 ## pair
 
@@ -20,7 +20,7 @@ the app and phone music pair in the same window. **Forget** on a Bluetooth devic
 
 ## choose a connection
 
-- **Automatic:** uses reachable local Wi-Fi, with Bluetooth fallback.
+- **Automatic:** uses the first available connection in your saved order. Tap **Set order** to arrange Wi-Fi, Tunnel and Bluetooth.
 - **Bluetooth only:** nearby settings access without a network on either device.
 - **Wi-Fi only:** both devices must be able to reach each other on the local network.
 
